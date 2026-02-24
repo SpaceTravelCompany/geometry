@@ -8,6 +8,19 @@ import "core:mem"
 
 import "core:math/fixed"
 
+
+@private make_non_zeroed_slice :: proc($T:typeid/[]$E, #any_int len: int, allocator := context.allocator, loc := #caller_location) -> (res:T, err: runtime.Allocator_Error) #optional_allocator_error {
+    runtime.make_slice_error_loc(loc, len)
+    data : []byte
+	data, err = runtime.mem_alloc_non_zeroed(size_of(E) * len, align_of(E), allocator, loc)
+	if data == nil && size_of(E) != 0 {
+		return nil, err
+	}
+	(^runtime.Raw_Slice)(&res).data = raw_data(data)
+	(^runtime.Raw_Slice)(&res).len  = len
+	return
+}
+
 //Cover MAX 741455 * 741455
 @private FIXED_SHIFT :: 24
 FixedDef :: fixed.Fixed(i64, FIXED_SHIFT)
@@ -200,10 +213,10 @@ raw_shapei64_free :: proc (self:raw_shapei64, allocator := context.allocator) {
 }
 
 raw_shapei64_clone :: proc (self:raw_shapei64, allocator := context.allocator) -> (res:raw_shapei64, err: runtime.Allocator_Error) #optional_allocator_error {
-    res.vertices = mem.make_non_zeroed_slice([]shape_vertex2di64, len(self.vertices), allocator) or_return
+    res.vertices = make_non_zeroed_slice([]shape_vertex2di64, len(self.vertices), allocator) or_return
     defer if err != nil do delete(res.vertices, allocator)
 
-    res.indices = mem.make_non_zeroed_slice([]u32, len(self.indices), allocator) or_return
+    res.indices = make_non_zeroed_slice([]u32, len(self.indices), allocator) or_return
 
     intrinsics.mem_copy_non_overlapping(&res.vertices[0], &self.vertices[0], len(self.vertices) * size_of(shape_vertex2d))
     intrinsics.mem_copy_non_overlapping(&res.indices[0], &self.indices[0], len(self.indices) * size_of(u32))
@@ -217,10 +230,10 @@ raw_shape_clone :: proc (self:^raw_shape, allocator := context.allocator) -> (re
         res = nil
     }
 
-    res.vertices = mem.make_non_zeroed_slice([]shape_vertex2d, len(self.vertices), allocator) or_return
+    res.vertices = make_non_zeroed_slice([]shape_vertex2d, len(self.vertices), allocator) or_return
     defer if err != nil do delete(res.vertices, allocator)
 
-    res.indices = mem.make_non_zeroed_slice([]u32, len(self.indices), allocator) or_return
+    res.indices = make_non_zeroed_slice([]u32, len(self.indices), allocator) or_return
 
     intrinsics.mem_copy_non_overlapping(&res.vertices[0], &self.vertices[0], len(self.vertices) * size_of(shape_vertex2d))
     intrinsics.mem_copy_non_overlapping(&res.indices[0], &self.indices[0], len(self.indices) * size_of(u32))
@@ -701,9 +714,9 @@ LineSplitLine :: proc "contextless" (pts:[2][$N]$T, t:T) -> (outPts1:[2][N]T, ou
 }
 
 cvt_raw_shapei64_to_raw_shape :: proc(raw64:raw_shapei64, allocator := context.allocator) ->  (res:raw_shape, err:runtime.Allocator_Error) #optional_allocator_error {
-	res.vertices = mem.make_non_zeroed([]shape_vertex2d, len(raw64.vertices), allocator) or_return
+	res.vertices = make_non_zeroed_slice([]shape_vertex2d, len(raw64.vertices), allocator) or_return
 	defer if err != nil do delete(res.vertices, allocator)
-	res.indices = mem.make_non_zeroed([]u32, len(raw64.indices), allocator) or_return
+	res.indices = make_non_zeroed_slice([]u32, len(raw64.indices), allocator) or_return
 	defer if err != nil do delete(res.indices, allocator)// not working
 
 	for v, i in raw64.vertices {
@@ -719,9 +732,9 @@ cvt_raw_shapei64_to_raw_shape :: proc(raw64:raw_shapei64, allocator := context.a
 }
 
 cvt_raw_shape_to_raw_shapei64 :: proc(raw:raw_shape, allocator := context.allocator) ->  (res:raw_shapei64, err:runtime.Allocator_Error) #optional_allocator_error {
-	res.vertices = mem.make_non_zeroed([]shape_vertex2di64, len(raw.vertices), allocator) or_return
+	res.vertices = make_non_zeroed_slice([]shape_vertex2di64, len(raw.vertices), allocator) or_return
 	defer if err != nil do delete(res.vertices, allocator)
-	res.indices = mem.make_non_zeroed([]u32, len(raw.indices), allocator) or_return
+	res.indices = make_non_zeroed_slice([]u32, len(raw.indices), allocator) or_return
 	defer if err != nil do delete(res.indices, allocator)// not working
 
 	for v, i in raw.vertices {
@@ -738,18 +751,18 @@ cvt_raw_shape_to_raw_shapei64 :: proc(raw:raw_shape, allocator := context.alloca
 
 cvt_shapes_to_shapesi64 :: proc(poly:shapes, allocator := context.allocator) ->  (poly64:shapesi64, err:runtime.Allocator_Error) #optional_allocator_error {
 	poly64 = shapesi64{
-		nodes = mem.make_non_zeroed([]shape_nodei64, len(poly.nodes), allocator) or_return
+		nodes = make_non_zeroed_slice([]shape_nodei64, len(poly.nodes), allocator) or_return
 	}
 
 	for n, i in poly.nodes {
-		poly64.nodes[i].pts = mem.make_non_zeroed([][2]FixedDef, len(n.pts), allocator)
+		poly64.nodes[i].pts = make_non_zeroed_slice([][2]FixedDef, len(n.pts), allocator)
 		for p, j in n.pts {
             fixed.init_from_f64(&poly64.nodes[i].pts[j].x, f64(p.x))
             fixed.init_from_f64(&poly64.nodes[i].pts[j].y, f64(p.y))
 		}
 
 		if n.curve_pts_ids != nil {
-			poly64.nodes[i].curve_pts_ids = mem.make_non_zeroed([]u32, len(n.curve_pts_ids), allocator)
+			poly64.nodes[i].curve_pts_ids = make_non_zeroed_slice([]u32, len(n.curve_pts_ids), allocator)
 			mem.copy_non_overlapping(raw_data(poly64.nodes[i].curve_pts_ids), raw_data(n.curve_pts_ids), len(n.curve_pts_ids) * size_of(u32))
 		} else {
 			poly64.nodes[i].curve_pts_ids = nil
@@ -765,18 +778,18 @@ cvt_shapes_to_shapesi64 :: proc(poly:shapes, allocator := context.allocator) -> 
 
 cvt_shapesi64_to_shapes :: proc(poly:shapesi64, allocator := context.allocator) -> (poly32:shapes, err:runtime.Allocator_Error) #optional_allocator_error {
 	poly32 = shapes{
-		nodes = mem.make_non_zeroed([]shape_node, len(poly.nodes), allocator) or_return
+		nodes = make_non_zeroed_slice([]shape_node, len(poly.nodes), allocator) or_return
 	}
 
 	for n, i in poly.nodes {
-		poly32.nodes[i].pts = mem.make_non_zeroed([]linalg.point, len(n.pts), allocator)
+		poly32.nodes[i].pts = make_non_zeroed_slice([]linalg.point, len(n.pts), allocator)
 		for p, j in n.pts {
 			poly32.nodes[i].pts[j].x = f32(fixed.to_f64(p.x))
 			poly32.nodes[i].pts[j].y = f32(fixed.to_f64(p.y))
 		}
 
 		if n.curve_pts_ids != nil {
-			poly32.nodes[i].curve_pts_ids = mem.make_non_zeroed([]u32, len(n.curve_pts_ids), allocator)
+			poly32.nodes[i].curve_pts_ids = make_non_zeroed_slice([]u32, len(n.curve_pts_ids), allocator)
 			mem.copy_non_overlapping(raw_data(poly32.nodes[i].curve_pts_ids), raw_data(n.curve_pts_ids), len(n.curve_pts_ids) * size_of(u32))
 		} else {
 			poly32.nodes[i].curve_pts_ids = nil
@@ -792,18 +805,18 @@ cvt_shapesi64_to_shapes :: proc(poly:shapesi64, allocator := context.allocator) 
 
 shapes_compute_polygon :: proc(poly:shapes, allocator := context.allocator) -> (res:raw_shape, err:shape_error = nil) {
 	poly64 := shapesi64{
-		nodes = mem.make_non_zeroed([]shape_nodei64, len(poly.nodes), context.temp_allocator) or_return
+		nodes = make_non_zeroed_slice([]shape_nodei64, len(poly.nodes), context.temp_allocator) or_return
 	}
 
 	for n, i in poly.nodes {
-		poly64.nodes[i].pts = mem.make_non_zeroed([]FixedDef, len(n.pts), context.temp_allocator)
+		poly64.nodes[i].pts = make_non_zeroed_slice([]FixedDef, len(n.pts), context.temp_allocator)
 		for p, j in n.pts {
 			poly64.nodes[i].pts[j].x = i64(f64(p.x) * PRECISIONF)
 			poly64.nodes[i].pts[j].y = i64(f64(p.y) * PRECISIONF)
 		}
 
 		if n.curve_pts_ids != nil {
-			poly64.nodes[i].curve_pts_ids = mem.make_non_zeroed([]u32, len(n.curve_pts_ids), context.temp_allocator)
+			poly64.nodes[i].curve_pts_ids = make_non_zeroed_slice([]u32, len(n.curve_pts_ids), context.temp_allocator)
 			mem.copy_non_overlapping(raw_data(poly64.nodes[i].curve_pts_ids), raw_data(n.curve_pts_ids), len(n.curve_pts_ids) * size_of(u32))
 		} else {
 			poly64.nodes[i].curve_pts_ids = nil
@@ -817,9 +830,9 @@ shapes_compute_polygon :: proc(poly:shapes, allocator := context.allocator) -> (
 
 	res64 := shapes_compute_polygoni64(poly64, context.temp_allocator) or_return
 
-	res.vertices = mem.make_non_zeroed([]shape_vertex2d, len(res64.vertices), allocator) or_return
+	res.vertices = make_non_zeroed_slice([]shape_vertex2d, len(res64.vertices), allocator) or_return
 	defer if err != nil do delete(res.vertices, allocator)
-	res.indices = mem.make_non_zeroed([]u32, len(res64.indices), allocator) or_return
+	res.indices = make_non_zeroed_slice([]u32, len(res64.indices), allocator) or_return
 	defer if err != nil do delete(res.indices, allocator)// not working
 
 	for v, i in res64.vertices {

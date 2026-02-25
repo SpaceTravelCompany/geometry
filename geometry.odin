@@ -1,3 +1,4 @@
+#+feature using-stmt
 package geometry
 
 import "base:intrinsics"
@@ -7,7 +8,6 @@ import "core:math/linalg"
 import "core:mem"
 
 import "core:math/fixed"
-
 
 @private make_non_zeroed_slice :: proc($T:typeid/[]$E, #any_int len: int, allocator := context.allocator, loc := #caller_location) -> (res:T, err: runtime.Allocator_Error) #optional_allocator_error {
     runtime.make_slice_error_loc(loc, len)
@@ -21,25 +21,61 @@ import "core:math/fixed"
 	return
 }
 
+// digit-by-digit integer sqrt (port of C sqrt_i64) https://github.com/chmike/fpsqrt
+@private sqrt_i64 :: proc "contextless" (v: i64) -> i64 {
+    b := u64(1) << 62
+    q: u64 = 0
+    r := u64(v)
+    for b > r do b >>= 2
+    for b > 0 {
+        t := q + b
+        q >>= 1
+        if r >= t {
+            r -= t
+            q += b
+        }
+        b >>= 2
+    }
+    return i64(q)
+}
+
+// Flip the sign (positive ↔ negative)
+@(private, require_results)
+sign :: proc "contextless" (v: $T/fixed.Fixed($Backing, $Fraction_Width)) -> (r: T) {
+	r.i = -r.i
+	return
+}
+
 //Cover MAX 741455 * 741455
-@private FIXED_SHIFT :: 24
+FIXED_SHIFT :: 24
 FixedDef :: fixed.Fixed(i64, FIXED_SHIFT)
-@private OneFixed :: fixed.Fixed(i64, FIXED_SHIFT){i = 1 << FIXED_SHIFT}
-@private TwoFixed :: fixed.Fixed(i64, FIXED_SHIFT){i = 2 << FIXED_SHIFT}
-@private ThreeFixed :: fixed.Fixed(i64, FIXED_SHIFT){i = 3 << FIXED_SHIFT}
-@private Div3Fixed :: fixed.Fixed(i64, FIXED_SHIFT){i = (2 << FIXED_SHIFT) / 3}
-@private Div3Mul2Fixed :: fixed.Fixed(i64, FIXED_SHIFT){i = (1 << FIXED_SHIFT) / 3}
+@private Fixed1 :: fixed.Fixed(i64, FIXED_SHIFT){i = 1 << FIXED_SHIFT}
+@private Fixed2 :: fixed.Fixed(i64, FIXED_SHIFT){i = 2 << FIXED_SHIFT}
+@private Fixed3 :: fixed.Fixed(i64, FIXED_SHIFT){i = 3 << FIXED_SHIFT}
+@private Div2Fixed :: fixed.Fixed(i64, FIXED_SHIFT){i = (1 << FIXED_SHIFT) / 2}
+@private Div3Fixed :: fixed.Fixed(i64, FIXED_SHIFT){i = (1 << FIXED_SHIFT) / 3}
+@private Div3Mul2Fixed :: fixed.Fixed(i64, FIXED_SHIFT){i = (2 << FIXED_SHIFT) / 3}
+
+// [2]FixedDef vector difference
+@private sub2_fixed :: proc "contextless" (a, b: [2]FixedDef) -> [2]FixedDef {
+    return {fixed.sub(a.x, b.x), fixed.sub(a.y, b.y)}
+}
+
+// squared length (x*x + y*y), fixed-Vector2f32
+@private length2_fixed :: proc "contextless" (v: [2]FixedDef) -> FixedDef {
+    return fixed.add(fixed.mul(v.x, v.x), fixed.mul(v.y, v.y))
+}
 
 shape_vertex2di64 :: struct #align(1) {
     pos: [2]FixedDef,
-    uvw: linalg.point3d,
-    color: linalg.point3dw,
+    uvw: linalg.Vector3f32,
+    color: linalg.Vector4f32,
 };
 
 shape_vertex2d :: struct #align(1) {
-    pos: linalg.point,
-    uvw: linalg.point3d,
-    color: linalg.point3dw,
+    pos: linalg.Vector2f32,
+    uvw: linalg.Vector3f32,
+    color: linalg.Vector4f32,
 };
 
 raw_shape :: struct {
@@ -74,10 +110,10 @@ shape_error :: union #shared_nil {
 }
 
 shape_node :: struct {
-    pts: []linalg.point,
+    pts: []linalg.Vector2f32,
 	curve_pts_ids: []u32,
-    color: linalg.point3dw,
-    stroke_color: linalg.point3dw,
+    color: linalg.Vector4f32,
+    stroke_color: linalg.Vector4f32,
     thickness: f64,
 	is_closed: bool,
 }
@@ -90,8 +126,8 @@ shape_nodei64 :: struct {
     pts: [][2]FixedDef,
 	n_polys:[]u32,
 	curve_pts_ids: []u32,
-    color: linalg.point3dw,
-    stroke_color: linalg.point3dw,
+    color: linalg.Vector4f32,
+    stroke_color: linalg.Vector4f32,
     thickness: FixedDef,
 	is_closed: bool,
 }
@@ -100,19 +136,18 @@ shapesi64 :: struct {
     nodes: []shape_nodei64,
 }
 
-
-CvtQuadraticToCubic0 :: #force_inline proc "contextless" (_start : linalg.point, _control : linalg.point) -> linalg.point {
-    return linalg.point{ _start.x + (2.0/3.0) * (_control.x - _start.x), _start.y + (2.0/3.0) * (_control.y - _start.y) }
+CvtQuadraticToCubic0 :: #force_inline proc "contextless" (_start : linalg.Vector2f32, _control : linalg.Vector2f32) -> linalg.Vector2f32 {
+    return linalg.Vector2f32{ _start.x + (2.0/3.0) * (_control.x - _start.x), _start.y + (2.0/3.0) * (_control.y - _start.y) }
 }
-CvtQuadraticToCubic1 :: #force_inline proc "contextless" (_end : linalg.point, _control : linalg.point) -> linalg.point {
+CvtQuadraticToCubic1 :: #force_inline proc "contextless" (_end : linalg.Vector2f32, _control : linalg.Vector2f32) -> linalg.Vector2f32 {
     return CvtQuadraticToCubic0(_end, _control)
 }
 
-rect_line_init :: proc "contextless" (_rect: linalg.rect) -> [4]linalg.point {
-	return [4]linalg.point{linalg.point{_rect.left, _rect.top}, linalg.point{_rect.left, _rect.bottom}, linalg.point{_rect.right, _rect.bottom}, linalg.point{_rect.right, _rect.top}}
+rect_line_init :: proc "contextless" (_rect: Rectf32) -> [4]linalg.Vector2f32 {
+	return [4]linalg.Vector2f32{linalg.Vector2f32{_rect.left, _rect.top}, linalg.Vector2f32{_rect.left, _rect.bottom}, linalg.Vector2f32{_rect.right, _rect.bottom}, linalg.Vector2f32{_rect.right, _rect.top}}
 }
 
-round_rect_line_init :: proc "contextless" (_rect: linalg.rect, _radius: f32) -> (pts:[16]linalg.point, curve_pts_ids:[8]u32) {
+round_rect_line_init :: proc "contextless" (_rect: Rectf32, _radius: f32) -> (pts:[16]linalg.Vector2f32, curve_pts_ids:[8]u32) {
 	r := _radius
 	// Clamp radius to fit within rect
 	half_width := (_rect.right - _rect.left) * 0.5
@@ -123,82 +158,82 @@ round_rect_line_init :: proc "contextless" (_rect: linalg.rect, _radius: f32) ->
 	tt := t * r
 	
 	// Corner centers
-	top_left := linalg.point{_rect.left + r, _rect.top + r}
-	top_right := linalg.point{_rect.right - r, _rect.top + r}
-	bottom_right := linalg.point{_rect.right - r, _rect.bottom - r}
-	bottom_left := linalg.point{_rect.left + r, _rect.bottom - r}
+	top_left := linalg.Vector2f32{_rect.left + r, _rect.top + r}
+	top_right := linalg.Vector2f32{_rect.right - r, _rect.top + r}
+	bottom_right := linalg.Vector2f32{_rect.right - r, _rect.bottom - r}
+	bottom_left := linalg.Vector2f32{_rect.left + r, _rect.bottom - r}
 	
-	return [16]linalg.point{
+	return [16]linalg.Vector2f32{
 		// Top-left corner (cubic) - counter-clockwise: from top to left
 		// Note: y increases upward, _rect.top is top (larger y), _rect.bottom is bottom (smaller y)
-			linalg.point{_rect.left + r, _rect.top},
-			linalg.point{_rect.left + r - tt, _rect.top},
-			linalg.point{_rect.left, _rect.top - r + tt},
+			linalg.Vector2f32{_rect.left + r, _rect.top},
+			linalg.Vector2f32{_rect.left + r - tt, _rect.top},
+			linalg.Vector2f32{_rect.left, _rect.top - r + tt},
 		// Left line - counter-clockwise: from top to bottom (y decreases)
-			linalg.point{_rect.left, _rect.top - r},
+			linalg.Vector2f32{_rect.left, _rect.top - r},
 		// Bottom-left corner (cubic) - counter-clockwise: from left to bottom
-			linalg.point{_rect.left, _rect.bottom + r},
-			linalg.point{_rect.left, _rect.bottom + r - tt},
-			linalg.point{_rect.left + r - tt, _rect.bottom},
+			linalg.Vector2f32{_rect.left, _rect.bottom + r},
+			linalg.Vector2f32{_rect.left, _rect.bottom + r - tt},
+			linalg.Vector2f32{_rect.left + r - tt, _rect.bottom},
 		// Bottom line - counter-clockwise: from left to right
-			linalg.point{_rect.left + r, _rect.bottom},
+			linalg.Vector2f32{_rect.left + r, _rect.bottom},
 		// Bottom-right corner (cubic) - counter-clockwise: from bottom to right
-			linalg.point{_rect.right - r, _rect.bottom},
-			linalg.point{_rect.right - r + tt, _rect.bottom},
-			linalg.point{_rect.right, _rect.bottom + r - tt},
+			linalg.Vector2f32{_rect.right - r, _rect.bottom},
+			linalg.Vector2f32{_rect.right - r + tt, _rect.bottom},
+			linalg.Vector2f32{_rect.right, _rect.bottom + r - tt},
 		// Right line - counter-clockwise: from bottom to top (y increases)
-			linalg.point{_rect.right, _rect.bottom + r},
+			linalg.Vector2f32{_rect.right, _rect.bottom + r},
 		// Top-right corner (cubic) - counter-clockwise: from right to top
-			linalg.point{_rect.right, _rect.top - r},
-			linalg.point{_rect.right, _rect.top - r + tt},
-			linalg.point{_rect.right - r + tt, _rect.top},
+			linalg.Vector2f32{_rect.right, _rect.top - r},
+			linalg.Vector2f32{_rect.right, _rect.top - r + tt},
+			linalg.Vector2f32{_rect.right - r + tt, _rect.top},
 		// Top line - counter-clockwise: from right to left
-			linalg.point{_rect.right - r, _rect.top},
+			linalg.Vector2f32{_rect.right - r, _rect.top},
 	}, [8]u32{1,2, 5,6, 9,10, 13,14}
 }
 
-circle_cubic_init :: proc "contextless" (_center: linalg.point, _r: f32) -> (pts:[12]linalg.point, curve_pts_ids:[8]u32) {
+circle_cubic_init :: proc "contextless" (_center: linalg.Vector2f32, _r: f32) -> (pts:[12]linalg.Vector2f32, curve_pts_ids:[8]u32) {
 	t: f32 = (4.0 / 3.0) * math.tan_f32(math.PI / 8.0)
 	tt := t * _r
-	return [12]linalg.point{
-			linalg.point{_center.x - _r, _center.y},
-			linalg.point{_center.x - _r, _center.y - tt},
-			linalg.point{_center.x - tt, _center.y - _r},
+	return [12]linalg.Vector2f32{
+			linalg.Vector2f32{_center.x - _r, _center.y},
+			linalg.Vector2f32{_center.x - _r, _center.y - tt},
+			linalg.Vector2f32{_center.x - tt, _center.y - _r},
 
-			linalg.point{_center.x, _center.y - _r},
-			linalg.point{_center.x + tt, _center.y - _r},
-			linalg.point{_center.x + _r, _center.y - tt},
+			linalg.Vector2f32{_center.x, _center.y - _r},
+			linalg.Vector2f32{_center.x + tt, _center.y - _r},
+			linalg.Vector2f32{_center.x + _r, _center.y - tt},
 
-			linalg.point{_center.x + _r, _center.y},
-			linalg.point{_center.x + _r, _center.y + tt},
-			linalg.point{_center.x + tt, _center.y + _r},
+			linalg.Vector2f32{_center.x + _r, _center.y},
+			linalg.Vector2f32{_center.x + _r, _center.y + tt},
+			linalg.Vector2f32{_center.x + tt, _center.y + _r},
 
-			linalg.point{_center.x, _center.y + _r},
-			linalg.point{_center.x - tt, _center.y + _r},
-			linalg.point{_center.x - _r, _center.y + tt},
+			linalg.Vector2f32{_center.x, _center.y + _r},
+			linalg.Vector2f32{_center.x - tt, _center.y + _r},
+			linalg.Vector2f32{_center.x - _r, _center.y + tt},
 	}, [8]u32{1,2, 4,5, 7,8, 10,11}
 }
 
-ellipse_cubic_init :: proc "contextless" (_center: linalg.point, _rxy: linalg.point) -> (pts:[12]linalg.point, curve_pts_ids:[8]u32) {
+ellipse_cubic_init :: proc "contextless" (_center: linalg.Vector2f32, _rxy: linalg.Vector2f32) -> (pts:[12]linalg.Vector2f32, curve_pts_ids:[8]u32) {
 	t: f32 = (4.0 / 3.0) * math.tan_f32(math.PI / 8.0)
 	ttx := t * _rxy.x
 	tty := t * _rxy.y
-	return [12]linalg.point{
-			linalg.point{_center.x - _rxy.x, _center.y},
-			linalg.point{_center.x - _rxy.x, _center.y - tty},
-			linalg.point{_center.x - ttx, _center.y - _rxy.y},
+	return [12]linalg.Vector2f32{
+			linalg.Vector2f32{_center.x - _rxy.x, _center.y},
+			linalg.Vector2f32{_center.x - _rxy.x, _center.y - tty},
+			linalg.Vector2f32{_center.x - ttx, _center.y - _rxy.y},
 
-			linalg.point{_center.x, _center.y - _rxy.y},
-			linalg.point{_center.x + ttx, _center.y - _rxy.y},
-			linalg.point{_center.x + _rxy.x, _center.y - tty},
+			linalg.Vector2f32{_center.x, _center.y - _rxy.y},
+			linalg.Vector2f32{_center.x + ttx, _center.y - _rxy.y},
+			linalg.Vector2f32{_center.x + _rxy.x, _center.y - tty},
 
-			linalg.point{_center.x + _rxy.x, _center.y},
-			linalg.point{_center.x + _rxy.x, _center.y + tty},
-			linalg.point{_center.x + ttx, _center.y + _rxy.y},
+			linalg.Vector2f32{_center.x + _rxy.x, _center.y},
+			linalg.Vector2f32{_center.x + _rxy.x, _center.y + tty},
+			linalg.Vector2f32{_center.x + ttx, _center.y + _rxy.y},
 
-			linalg.point{_center.x, _center.y + _rxy.y},
-			linalg.point{_center.x - ttx, _center.y + _rxy.y},
-			linalg.point{_center.x - _rxy.x, _center.y + tty},
+			linalg.Vector2f32{_center.x, _center.y + _rxy.y},
+			linalg.Vector2f32{_center.x - ttx, _center.y + _rxy.y},
+			linalg.Vector2f32{_center.x - _rxy.x, _center.y + tty},
 	}, [8]u32{1,2, 4,5, 7,8, 10,11}
 }
 
@@ -240,41 +275,33 @@ raw_shape_clone :: proc (self:^raw_shape, allocator := context.allocator) -> (re
     return
 }
 
-GetCubicCurveType :: proc "contextless" (_start:[2]$T, _control0:[2]T, _control1:[2]T, _end:[2]T) ->
-(type:curve_type = .Unknown, err:shape_error = nil, outD:[3]T) where intrinsics.type_is_numeric(T) {
-    if _start == _control0 && _control0 == _control1 && _control1 == _end {
+GetCubicCurveType :: proc "contextless" (start:[2]$T, control0:[2]T, control1:[2]T, end:[2]T) ->
+(type:curve_type = .Unknown, d0:T, d1:T, d2:T, err:shape_error = nil) where intrinsics.type_is_float(T) || intrinsics.type_is_specialization_of(T, fixed.Fixed) {
+    if start == control0 && control0 == control1 && control1 == end {
         err = .IsPointNotLine
         return
     }
 
-    start := [2]T{_start[0], _start[1]}
-    c0    := [2]T{_control0[0], _control0[1]}
-    c1    := [2]T{_control1[0], _control1[1]}
-    end   := [2]T{_end[0], _end[1]}
+	when intrinsics.type_is_specialization_of(T, fixed.Fixed) {
+        using fixed
+		cross_1 := [3]T{sub(end.y, control1.y),     sub(control1.x, end.x),     sub(mul(end.x, control1.y), mul(end.y, control1.x))}
+		cross_2 := [3]T{sub(start.y, end.y),  sub(end.x, start.x),  sub(mul(start.x, end.y), mul(start.y, end.x))}
+		cross_3 := [3]T{sub(control0.y, start.y),   sub(start.x, control0.x),   sub(mul(control0.x, start.y), mul(control0.y, start.x))}
 
-	when intrinsics.type_is_integer(T) {
-		cross_1 := [3]T{end.y - c1.y,     c1.x - end.x,     (end.x * c1.y / PRECISION) - (end.y * c1.x / PRECISION)}
-		cross_2 := [3]T{start.y - end.y,  end.x - start.x,  (start.x * end.y / PRECISION) - (start.y * end.x / PRECISION)}
-		cross_3 := [3]T{c0.y - start.y,   start.x - c0.x,   (c0.x * start.y / PRECISION) - (c0.y * start.x / PRECISION)}
+		a1 := add(add(mul(start.x, cross_1.x), mul(start.y, cross_1.y)), cross_1.z)
+		a2 := add(add(mul(control0.x, cross_2.x), mul(control0.y, cross_2.y)), cross_2.z)
+		a3 := add(add(mul(control1.x, cross_3.x), mul(control1.y, cross_3.y)), cross_3.z)
 
-		a1 := (start.x * cross_1.x / PRECISION)  + (start.y * cross_1.y / PRECISION)  + cross_1.z
-		a2 := (c0.x * cross_2.x / PRECISION)   + (c0.y * cross_2.y / PRECISION)       + cross_2.z
-		a3 := (c1.x * cross_3.x / PRECISION)   + (c1.y * cross_3.y / PRECISION)       + cross_3.z
+		d0 = T{i=a1.i - 2 * a2.i + 3 * a3.i}
+		d1 = T{i=-a2.i + 3 * a3.i}
+		d2 = T{i=3 * a3.i}
 
-		d0 := a1 - 2 * a2 + 3 * a3
-		d1 := -a2 + 3 * a3
-		d2 := 3 * a3
+		D     := T{i=3 * mul(d1, d1).i - 4 * mul(d2, d0).i}
+		discr := mul(mul(d0, d0), D) 
 
-		outD.x = d0
-		outD.y = d1
-		outD.z = d2
-
-		D     := 3 * d1 * d1 / PRECISION - 4 * d2 * d0 / PRECISION
-		discr := d0 * d0 / PRECISION * D / PRECISION 
-
-		if discr == 0 {
-			if d0 == 0 && d1 == 0 {
-				if d2 == 0 {
+		if discr.i == 0 {
+			if d0.i == 0 && d1.i == 0 {
+				if d2.i == 0 {
 					type = .Line
 					return
 				}
@@ -284,7 +311,7 @@ GetCubicCurveType :: proc "contextless" (_start:[2]$T, _control0:[2]T, _control1
 			type = .Cusp
 			return
 		}
-		if discr > 0 {
+		if discr.i > 0 {
 			type = .Serpentine
 			return
 		}
@@ -292,26 +319,23 @@ GetCubicCurveType :: proc "contextless" (_start:[2]$T, _control0:[2]T, _control1
 	} else {// float
 		cross_1 := [3]T{end.y - c1.y,     c1.x - end.x,     end.x * c1.y - end.y * c1.x}
 		cross_2 := [3]T{start.y - end.y,  end.x - start.x,  start.x * end.y - start.y * end.x}
-		cross_3 := [3]T{c0.y - start.y,   start.x - c0.x,   c0.x * start.y - c0.y * start.x}
+		cross_3 := [3]T{control0.y - start.y,   start.x - control0.x,   control0.x * start.y - control0.y * start.x}
 
-		a1 := start.x * cross_1.x  + start.y * cross_1.y  + cross_1.z
-		a2 := c0.x * cross_2.x     + c0.y * cross_2.y     + cross_2.z
-		a3 := c1.x * cross_3.x     + c1.y * cross_3.y     + cross_3.z
+		a1 := start.x * cross_1.x  + start.y * cross_1.y  + cross_1.z//9
+		a2 := control0.x * cross_2.x     + control0.y * cross_2.y     + cross_2.z//7
+		a3 := control1.x * cross_3.x     + control1.y * cross_3.y     + cross_3.z//7
 
-		d0 := a1 - 2 * a2 + 3 * a3
-		d1 := -a2 + 3 * a3
-		d2 := 3 * a3
+		d0 = a1 - 2 * a2 + 3 * a3//27
+		d1 = -a2 + 3 * a3//16
+		d2 = 3 * a3//8
 
-		outD.x = d0
-		outD.y = d1
-		outD.z = d2
+		D     := 3 * d1 * d1 - 4 * d2 * d0//33 + 36 + 1 = 70
+		discr := d0 * d0 * D//27 + 27 + 70 = 124
 
-		D     := 3 * d1 * d1 - 4 * d2 * d0
-		discr := d0 * d0 * D
-
-		if discr >= -math.epsilon(T) && discr <= math.epsilon(T) {
-			if  d0 >= -math.epsilon(T) && d0 <= math.epsilon(T) &&  d1 >= -math.epsilon(T) && d1 <= math.epsilon(T) {
-				if d2 >= -math.epsilon(T) && d2 <= math.epsilon(T) {
+        EP :: math.epsilon(T) * 250// about count float operations
+		if discr >= -EP && discr <= EP {
+			if  d0 >= -EP && d0 <= EP &&  d1 >= -EP && d1 <= EP {
+				if d2 >= -EP && d2 <= EP {
 					type = .Line
 					return
 				}
@@ -321,7 +345,7 @@ GetCubicCurveType :: proc "contextless" (_start:[2]$T, _control0:[2]T, _control1
 			type = .Cusp
 			return
 		}
-		if discr > math.epsilon(T) {
+		if discr > EP {
 			type = .Serpentine
 			return
 		}
@@ -330,61 +354,30 @@ GetCubicCurveType :: proc "contextless" (_start:[2]$T, _control0:[2]T, _control1
     return
 }
 
-LineSplitCubic :: proc "contextless" (pts:[4][$N]$T, t:T) -> (outPts1:[4][N]T, outPts2:[4][N]T) where intrinsics.type_is_numeric(T) {
-    outPts1[0] = pts[0]
-    outPts2[3] = pts[3]
-    outPts1[1] = linalg.lerp(pts[0], pts[1], t)
-    outPts2[2] = linalg.lerp(pts[2], pts[3], t)
-    p11 := linalg.lerp(pts[1], pts[2], t)
-    outPts1[2] = linalg.lerp(outPts1[1], p11, t)
-    outPts2[1] = linalg.lerp(p11, outPts2[2], t)
-    outPts1[3] = linalg.lerp(outPts1[2], outPts2[1], t)
-    outPts2[0] = outPts1[3]
-    return
-}
-
-LineSplitQuadratic :: proc "contextless" (pts:[3][$N]$T, t:T) -> (outPts1:[3][N]T, outPts2:[3][N]T) where intrinsics.type_is_numeric(T) {
-    outPts1[0] = pts[0]
-    outPts2[2] = pts[2]
-    outPts1[1] = linalg.lerp(pts[0], pts[1], t)
-    outPts2[1] = linalg.lerp(pts[1], pts[2], t)
-    outPts1[2] = pts[1]
-    outPts2[0] = pts[1]
-    return
-}
-
-LineSplitLine :: proc "contextless" (pts:[2][$N]$T, t:T) -> (outPts1:[2][N]T, outPts2:[2][N]T) where intrinsics.type_is_numeric(T) {
-    outPts1[0] = pts[0]
-    outPts1[1] = linalg.lerp(pts[0], pts[1], t)
-    outPts2[0] = outPts1[1]
-    outPts2[1] = pts[1]
-    return
-}
-
 @(private="file") _Shapes_ComputeLine :: proc(
     vertList:^[dynamic]shape_vertex2di64,
     indList:^[dynamic]u32,
-    outPoly:^[dynamic]CurveStruct,
-    color:linalg.point3dw,
-    pts:[]linalg.pointi64,
+    color:linalg.Vector4f32,
+    pts:[][2]FixedDef,
     type:curve_type,
-    _subdiv :i64 = 0,
+    _subdiv :FixedDef = {},
     _repeat :int = -1) -> shape_error {
 
-    assert(_subdiv >= 0)
+    using fixed
+    assert(_subdiv.i >= 0)
 
     curveType := type
     err:shape_error = nil
 
     reverse := false
-    outD:[3]i64 = {0, 0, 0}
+    d0,d1,d2:FixedDef
     if curveType != .Line && curveType != .Quadratic {
-        curveType, err, outD = GetCubicCurveType(pts[0], pts[1], pts[2], pts[3])
+        curveType, d0,d1,d2, err = GetCubicCurveType(pts[0], pts[1], pts[2], pts[3])
         if err != nil do return err
     } else if curveType == .Quadratic && len(pts) == 3 {
-		if _subdiv == 0 {
+		if _subdiv.i == 0 {
             vlen :u32 = u32(len(vertList))
-            if linalg.GetPolygonOrientation(pts) == .CounterClockwise {
+            if GetPolygonOrientation(pts) == .CounterClockwise {
                 non_zero_append(vertList, shape_vertex2di64{
                     uvw = {0,0,-100},//-100 check this is not cubic curve
                     pos = pts[0],
@@ -420,140 +413,145 @@ LineSplitLine :: proc "contextless" (pts:[2][$N]$T, t:T) -> (outPts1:[2][N]T, ou
             non_zero_append(indList, vlen, vlen + 1, vlen + 2)
 		} else {
 			// 반으로 나눈다.
-            x01 := (pts[1].x - pts[0].x) * _subdiv / PRECISION + pts[0].x
-            y01 := (pts[1].y - pts[0].y) * _subdiv / PRECISION + pts[0].y
-            x12 := (pts[2].x - pts[1].x) * _subdiv / PRECISION + pts[1].x
-            y12 := (pts[2].y - pts[1].y) * _subdiv / PRECISION + pts[1].y
+            pt01 := [2]FixedDef{
+                add(pts[0].x, mul(sub(pts[1].x, pts[0].x), _subdiv)),
+                add(pts[0].y, mul(sub(pts[1].y, pts[0].y), _subdiv)),
+            }
+            pt12 := [2]FixedDef{
+                add(pts[1].x, mul(sub(pts[2].x, pts[1].x), _subdiv)),
+                add(pts[1].y, mul(sub(pts[2].y, pts[1].y), _subdiv)),
+            }
+            pt012 := [2]FixedDef{
+                add(pt01.x, mul(sub(pt12.x, pt01.x), _subdiv)),
+                add(pt01.y, mul(sub(pt12.y, pt01.y), _subdiv)),
+            }
 
-            x012 := (x12 - x01) * _subdiv / PRECISION + x01
-            y012 := (y12 - y01) * _subdiv / PRECISION + y01
-
-            err := _Shapes_ComputeLine(vertList, indList, outPoly, color,{pts[0], { x01, y01 }, { x012, y012 }}, .Quadratic, 0, 0)
+            subdivZero := FixedDef{}
+            err := _Shapes_ComputeLine(vertList, indList, color, {pts[0], pt01, pt012}, .Quadratic, subdivZero, 0)
             if err != nil do return err
-            err = _Shapes_ComputeLine(vertList, indList, outPoly, color,{{ x012, y012 }, { x12, y12 }, pts[2]}, .Quadratic, 0, 0)
+            err = _Shapes_ComputeLine(vertList, indList, color, {pt012, pt12, pts[2]}, .Quadratic, subdivZero, 0)
             if err != nil do return err
         }
         return nil
     }
 
-    F :matrix[4,3]i64
+    F :[4][3]FixedDef
 
-    reverseOrientation :: #force_inline proc "contextless" (F:matrix[4,3]i64) -> matrix[4,3]i64 {
-        return {
-            -F[0,0], -F[0,1], F[0,2],
-            -F[1,0], -F[1,1], F[1,2],
-            -F[2,0], -F[2,1], F[2,2],
-            -F[3,0], -F[3,1], F[3,2],
+    reverseOrientation :: #force_inline proc "contextless" (F:[4][3]FixedDef) -> [4][3]FixedDef {
+        return [4][3]FixedDef{
+            {sign(F[0][0]), sign(F[0][1]), F[0][2]},
+            {sign(F[1][0]), sign(F[1][1]), F[1][2]},
+            {sign(F[2][0]), sign(F[2][1]), F[2][2]},
+            {sign(F[3][0]), sign(F[3][1]), F[3][2]},
         }
     }
 	repeat := 0
-    subdiv :i64 = 0
+    subdiv :FixedDef = {}
 
-	// digit-by-digit integer sqrt (port of C sqrt_i64) https://github.com/chmike/fpsqrt
-	sqrt_i64 :: proc "contextless" (v: i64) -> i64 {
-		b := u64(1) << 62
-		q: u64 = 0
-		r := u64(v)
-		for b > r do b >>= 2
-		for b > 0 {
-			t := q + b
-			q >>= 1
-			if r >= t {
-				r -= t
-				q += b
-			}
-			b >>= 2
-		}
-		return i64(q)
-	}
-    if _subdiv == 0.0 {
+    if _subdiv.i == 0 {
         switch curveType {
             case .Line:
                 return nil
             case .Quadratic:
-                F = {
-                    0,					0,				0,      
-                    PRECISION / 3,		0,				PRECISION / 3,
-                    2 * PRECISION / 3,	PRECISION / 3, 	2 * PRECISION / 3,
-                    1 * PRECISION,		1 * PRECISION,	1 * PRECISION,
+                F = {{{}, {}, {}},	    
+                    {Div3Fixed, {},	Div3Fixed},
+                    {Div3Mul2Fixed,	Div3Fixed, 	Div3Mul2Fixed},
+                    {Fixed1, Fixed1, Fixed1},
                 }
-                if outD[2] < 0 do reverse = true
+                if d2.i < 0 do reverse = true
             case .Serpentine:
-                t1 := sqrt_i64((9 * outD[1] * outD[1] / PRECISION - 12 * outD[0] * outD[2] / PRECISION) * PRECISION)//mul PRECISION for sqrt
-                ls := 3.0 * outD[1] - t1
-                lt := 6.0 * outD[0]
-                ms := 3.0 * outD[1] + t1
+                t1 := FixedDef{i=sqrt_i64((9 * mul(d1, d1).i - 12 * mul(d0, d2).i) << FIXED_SHIFT)}//mul PRECISION for sqrt
+                ls := FixedDef{i=3 * d1.i - t1.i}
+                lt := FixedDef{i=6 * d0.i}
+                ms := FixedDef{i=3 * d1.i + t1.i}
                 mt := lt
-                ltMinusLs := lt - ls
-                mtMinusMs := mt - ms
+                ltMinusLs := sub(lt, ls)
+                mtMinusMs := sub(mt, ms)
+
+                lsls := mul(ls, ls)
+                msms := mul(ms, ms)
     
-                F = {
-                    ls * ms / PRECISION,
-					ls * ls / PRECISION * ls / PRECISION,
-					ms * ms / PRECISION * ms / PRECISION,
+                F = {{mul(ls, ms),
+					mul(lsls, ls),
+					mul(msms, ms)},
 
-                    (3 * ls * ms / PRECISION - ls * mt / PRECISION - lt * ms / PRECISION) / PRECISION / 3,
-					ls * ls / PRECISION * (ls - lt) / PRECISION,
-					ms * ms / PRECISION * (ms - mt) / PRECISION,
+                    {FixedDef{i=3 * mul(ls, ms).i - mul(ls, mt).i - mul(lt, ms).i / 3},
+					mul(lsls, sub(ls, lt)),
+					mul(lsls, sub(ms, mt))},
 
-                    (lt * (mt - 2 * ms) / PRECISION + ls * (3 * ms - 2 * mt) / PRECISION) / PRECISION / 3,
-					ltMinusLs * ltMinusLs / PRECISION * ls / PRECISION,
-					mtMinusMs * mtMinusMs / PRECISION * ms / PRECISION,
+                    {FixedDef{i=(mul(lt, FixedDef{i=(mt.i - 2 * ms.i)}).i + mul(ls, FixedDef{i=(3 * ms.i - 2 * mt.i)}).i) / 3},
+					mul(mul(ltMinusLs, ltMinusLs), ls),
+					mul(mul(mtMinusMs, mtMinusMs), ms)},
 
-                    ltMinusLs * mtMinusMs / PRECISION,
-					-(ltMinusLs * ltMinusLs / PRECISION * ltMinusLs / PRECISION),
-					-(mtMinusMs * mtMinusMs / PRECISION * mtMinusMs / PRECISION),
+                    {mul(ltMinusLs, mtMinusMs),
+					sign(mul(mul(ltMinusLs, ltMinusLs), ltMinusLs)),
+					sign(mul(mul(mtMinusMs, mtMinusMs), mtMinusMs))},
                 }
     
-                if outD[0] < 0 do reverse = true
+                if d0.i < 0 do reverse = true
             case .Loop:
-                t1 := sqrt_i64((4 * outD[0] * outD[2] / PRECISION - 3 * outD[1] * outD[1] / PRECISION) * PRECISION)
-                ls := outD[1] - t1
-                lt := 2 * outD[0]
-                ms := outD[1] + t1
+                t1 := FixedDef{i=sqrt_i64((4 * d0.i * d2.i - 3 * d1.i * d1.i) << FIXED_SHIFT)}
+                ls := sub(d1, t1)
+                lt := mul(Fixed2, d0)
+                ms := add(d1, t1)
                 mt := lt
     
-                ql := ls * PRECISION / lt
-                qm := ms * PRECISION / mt
+                ql := div(ls, lt)
+                qm := div(ms, mt)
                
-                if _repeat == -1 && 0 < ql && ql < 1 {
+                if _repeat == -1 && 0 < ql.i && ql.i < 1 {
                     repeat = 1
                     subdiv = ql
-                } else if _repeat == -1 && 0 < qm && qm < 1 {
+                } else if _repeat == -1 && 0 < qm.i && qm.i < 1 {
                     repeat = 2
                     subdiv = qm
                 } else {
-                    ltMinusLs := lt - ls
-                    mtMinusMs := mt - ms
+                    ltMinusLs := sub(lt, ls)
+                    mtMinusMs := sub(mt, ms)
     
+                    lsms := mul(ls, ms)
+                    ltms := mul(lt, ms)
                     F = {
-                        ls * ms / PRECISION,
-                        ls * ls / PRECISION * ms / PRECISION,
-                        ls * ms / PRECISION * ms / PRECISION,
+                        {lsms,
+                        mul(ls, lsms),
+                        mul(ms, lsms)},
 
-                        (-ls * mt - lt * ms + 3 * ls * ms) / PRECISION / 3,
-                        -(ls * (mt - 3 * ms) + 2 * lt * ms) / PRECISION * ls / PRECISION / 3,
-                        -(ls * (2 * mt - 3 * ms) + lt * ms) / PRECISION * ms / PRECISION / 3,
+                        {div( add( sub(mul(sign(ls), mt), ltms), mul(Fixed3, lsms) ), Fixed3),//(-ls * mt - ltms + 3 * lsms) / 3
+                        div(mul(sign(add(mul(ls, (sub(mt, mul(Fixed3, ms)))), mul(Fixed2, ltms))), ls), Fixed3),//-(ls * (mt - 3 * ms) + 2 * ltms) * ls / 3
+                        div(mul(sign(add(mul(ls, (sub(mul(Fixed2, mt), mul(Fixed3, ms)))), ltms)), ms), Fixed3)},//-(ls * (2 * mt - 3 * ms) + ltms) * ms / 3
 
-                        (lt * (mt - 2.0 * ms) + ls * (3.0 * ms - 2.0 * mt)) / PRECISION / 3,
-                        (ls * (2.0 * mt - 3.0 * ms) + lt * ms) / PRECISION / ltMinusLs / PRECISION / 3,
-                        (ls * (mt - 3.0 * ms) + 2.0 * lt * ms) / PRECISION / mtMinusMs / PRECISION / 3,
+                        {div(add(mul(lt, sub(mt, mul(Fixed2, ms))), mul(ls, sub(mul(Fixed3, ms), mul(Fixed2, mt)))), Fixed3),//(lt * (mt - 2.0 * ms) + ls * (3.0 * ms - 2.0 * mt)) / 3
+                        div(div(add(mul(ls, sub(mul(Fixed2, mt), mul(Fixed3, ms))), ltms), ltMinusLs), Fixed3),//(ls * (2.0 * mt - 3.0 * ms) + ltms) / ltMinusLs / 3
+                        div(div(add(mul(ls, sub(mt, mul(Fixed3, ms))), mul(Fixed2, ltms)), mtMinusMs), Fixed3)},//(ls * (mt - 3.0 * ms) + 2.0 * ltms) / mtMinusMs / 3
 
-                        ltMinusLs * mtMinusMs / PRECISION, 
-						-(ltMinusLs * ltMinusLs) / PRECISION * mtMinusMs / PRECISION,
-						-ltMinusLs * mtMinusMs / PRECISION * mtMinusMs / PRECISION,
+                        {mul(ltMinusLs, mtMinusMs),
+						sign(mul(mul(ltMinusLs, ltMinusLs), mtMinusMs)),
+						sign(mul(ltMinusLs, mul(mtMinusMs, mtMinusMs)))},
                     }
-                    reverse = (outD[0] > 0 && F[1,0] < 0) || (outD[0] < 0 && F[1,0] > 0)
+                    reverse = (d0.i > 0 && F[1][0].i < 0) || (d0.i < 0 && F[1][0].i > 0)
                 }
             case .Cusp:
-                ls := outD[2]
-                lt := 3 * outD[1]
-                lsMinusLt := ls - lt
+                ls := d2
+                lt := mul(Fixed3, d1)
+                lsMinusLt := sub(ls, lt)
+                lsls := mul(ls, ls)
+                lsMinusLtSq := mul(lsMinusLt, lsMinusLt)
                 F = {
-                    ls,                         ls * ls / PRECISION * ls / PRECISION,                       PRECISION,
-                    ls - lt / 3,    			ls * ls / PRECISION * lsMinusLt / PRECISION,                PRECISION,
-                    ls - 2 * lt / 3,      		lsMinusLt * lsMinusLt / PRECISION * ls / PRECISION,         PRECISION,
-                    lsMinusLt,                  lsMinusLt * lsMinusLt / PRECISION * lsMinusLt / PRECISION,  PRECISION,
+                    {ls,
+                    div(mul(lsls, ls), mul(Fixed1, Fixed1)),
+                    Fixed1},
+
+                    {sub(ls, div(lt, Fixed3)),
+                    div(mul(lsls, lsMinusLt), mul(Fixed1, Fixed1)),
+                    Fixed1},
+
+                    {sub(ls, div(mul(Fixed2, lt), Fixed3)),
+                    div(mul(lsMinusLtSq, ls), mul(Fixed1, Fixed1)),
+                    Fixed1},
+
+                    {lsMinusLt,
+                    div(mul(lsMinusLtSq, lsMinusLt), mul(Fixed1, Fixed1)),
+                    Fixed1},
                 }
                 //reverse = true
             case .Unknown:
@@ -562,50 +560,45 @@ LineSplitLine :: proc "contextless" (pts:[2][$N]$T, t:T) -> (outPts1:[2][N]T, ou
     }
    
 	//반으로 나눈다.
-    if repeat > 0 || _subdiv != 0 {
-        if subdiv == 0 {
+    if repeat > 0 || _subdiv.i != 0 {
+        if subdiv.i == 0 {
             subdiv = _subdiv
         }
-        x01 := (pts[1].x - pts[0].x) * subdiv / PRECISION + pts[0].x
-        y01 := (pts[1].y - pts[0].y) * subdiv / PRECISION + pts[0].y
-        x12 := (pts[2].x - pts[1].x) * subdiv / PRECISION + pts[1].x
-        y12 := (pts[2].y - pts[1].y) * subdiv / PRECISION + pts[1].y
+        pt01 := [2]FixedDef{
+            add(pts[0].x, mul(sub(pts[1].x, pts[0].x), subdiv)),
+            add(pts[0].y, mul(sub(pts[1].y, pts[0].y), subdiv)),
+        }
+        pt12 := [2]FixedDef{
+            add(pts[1].x, mul(sub(pts[2].x, pts[1].x), subdiv)),
+            add(pts[1].y, mul(sub(pts[2].y, pts[1].y), subdiv)),
+        }
+        pt23 := [2]FixedDef{
+            add(pts[2].x, mul(sub(pts[3].x, pts[2].x), subdiv)),
+            add(pts[2].y, mul(sub(pts[3].y, pts[2].y), subdiv)),
+        }
+        pt012 := [2]FixedDef{
+            add(pt01.x, mul(sub(pt12.x, pt01.x), subdiv)),
+            add(pt01.y, mul(sub(pt12.y, pt01.y), subdiv)),
+        }
+        pt123 := [2]FixedDef{
+            add(pt12.x, mul(sub(pt23.x, pt12.x), subdiv)),
+            add(pt12.y, mul(sub(pt23.y, pt12.y), subdiv)),
+        }
+        pt0123 := [2]FixedDef{
+            add(pt012.x, mul(sub(pt123.x, pt012.x), subdiv)),
+            add(pt012.y, mul(sub(pt123.y, pt012.y), subdiv)),
+        }
 
-        x23 := (pts[3].x - pts[2].x) * subdiv / PRECISION + pts[2].x
-        y23 := (pts[3].y - pts[2].y) * subdiv / PRECISION + pts[2].y
-
-        x012 := (x12 - x01) * subdiv / PRECISION + x01
-        y012 := (y12 - y01) * subdiv / PRECISION + y01
-
-        x123 := (x23 - x12) * subdiv / PRECISION + x12
-        y123 := (y23 - y12) * subdiv / PRECISION + y12
-
-        x0123 := (x123 - x012) * subdiv / PRECISION + x012
-        y0123 := (y123 - y012) * subdiv / PRECISION + y012
-
-        //TODO (xfitgd) 일단은 무조건 곡선을 분할하는 코드를 작성함. 추후에는 필요한 부분만 분할하는 코드로 수정하는 최적화 필요
-        if repeat == 2 {//loop에서 분할해야하는경우 일단 2개로만 분할한다.
-            err := _Shapes_ComputeLine(vertList, indList, outPoly, color,{pts[0], { x01, y01 }, { x012, y012 }, { x0123, y0123 }}, type, 0, 1)
+        if repeat == 2 {
+            err := _Shapes_ComputeLine(vertList, indList, color, {pts[0], pt01, pt012, pt0123}, type, {}, 1)
             if err != nil do return err
-            err = _Shapes_ComputeLine(vertList, indList, outPoly, color,{{ x0123, y0123 }, { x123, y123 }, { x23, y23 }, pts[3]}, type, 0, 0)
+            err = _Shapes_ComputeLine(vertList, indList, color, {pt0123, pt123, pt23, pts[3]}, type, {}, 0)
             if err != nil do return err
         } else if repeat == 1 {
-            err := _Shapes_ComputeLine(vertList, indList, outPoly, color,{pts[0], { x01, y01 }, { x012, y012 }, { x0123, y0123 }}, type, 0, 0)
+            err := _Shapes_ComputeLine(vertList, indList, color, {pts[0], pt01, pt012, pt0123}, type, {}, 0)
             if err != nil do return err
-            err = _Shapes_ComputeLine(vertList, indList, outPoly, color,{{ x0123, y0123 }, { x123, y123 }, { x23, y23 }, pts[3]}, type, 0, 1)
+            err = _Shapes_ComputeLine(vertList, indList, color, {pt0123, pt123, pt23, pts[3]}, type, {}, 1)
             if err != nil do return err
-        } else {
-            if _repeat == 3 {//4개로 분할한다.
-                err := _Shapes_ComputeLine(vertList, indList, outPoly, color,{pts[0], { x01, y01 }, { x012, y012 }, { x0123, y0123 }}, type, 0, 0)
-                if err != nil do return err
-                err = _Shapes_ComputeLine(vertList, indList, outPoly, color,{{ x0123, y0123 }, { x123, y123 }, { x23, y23 }, pts[3]}, type, 0, 0)
-                if err != nil do return err
-            } else {
-                err := _Shapes_ComputeLine(vertList, indList, outPoly, color,{pts[0], { x01, y01 }, { x012, y012 }, { x0123, y0123 }}, type, PRECISION / 2, 3)
-                if err != nil do return err
-                err = _Shapes_ComputeLine(vertList, indList, outPoly, color,{{ x0123, y0123 }, { x123, y123 }, { x23, y23 }, pts[3]}, type, PRECISION / 2, 3)
-                if err != nil do return err
-            }
         }
         return nil
     }
@@ -617,25 +610,25 @@ LineSplitLine :: proc "contextless" (pts:[2][$N]$T, t:T) -> (outPts1:[2][N]T, ou
       F = reverseOrientation(F)
     }
 
-    appendLine :: proc (vertList:^[dynamic]shape_vertex2di64, indList:^[dynamic]u32, color:linalg.point3dw, pts:[]linalg.pointi64, F:matrix[4,3]i64) {
+    appendLine :: proc (vertList:^[dynamic]shape_vertex2di64, indList:^[dynamic]u32, color:linalg.Vector4f32, pts:[][2]FixedDef, F:[4][3]FixedDef) {
         if len(pts) == 2 {
             return
         }
         start :u32 = u32(len(vertList))
         non_zero_append(vertList, shape_vertex2di64{
-            uvw = {f32(f64(F[0,0])/PRECISIONF), f32(f64(F[0,1])/PRECISIONF), f32(f64(F[0,2])/PRECISIONF)},
+            uvw = {f32(to_f64(F[0][0])), f32(to_f64(F[0][1])), f32(to_f64(F[0][2]))},
             color = color,
         })
         non_zero_append(vertList, shape_vertex2di64{
-            uvw = {f32(f64(F[1,0])/PRECISIONF), f32(f64(F[1,1])/PRECISIONF), f32(f64(F[1,2])/PRECISIONF)},
+            uvw = {f32(to_f64(F[1][0])), f32(to_f64(F[1][1])), f32(to_f64(F[1][2]))},
             color = color,
         })
         non_zero_append(vertList, shape_vertex2di64{
-            uvw = {f32(f64(F[2,0])/PRECISIONF), f32(f64(F[2,1])/PRECISIONF), f32(f64(F[2,2])/PRECISIONF)},
+            uvw = {f32(to_f64(F[2][0])), f32(to_f64(F[2][1])), f32(to_f64(F[2][2]))},
             color = color,
         })
         non_zero_append(vertList, shape_vertex2di64{
-            uvw = {f32(f64(F[3,0])/PRECISIONF), f32(f64(F[3,1])/PRECISIONF), f32(f64(F[3,2])/PRECISIONF)},
+            uvw = {f32(to_f64(F[3][0])), f32(to_f64(F[3][1])), f32(to_f64(F[3][2]))},
             color = color,
         })
         vertList[start].pos = pts[0]
@@ -668,7 +661,7 @@ LineSplitLine :: proc "contextless" (pts:[2][$N]$T, t:T) -> (outPts1:[2][N]T, ou
                     idx += 1
                 }
             }
-            if linalg.PointInTriangle_Int(vertList[start + i].pos, vertList[indices[0]].pos, vertList[indices[1]].pos, vertList[indices[2]].pos, PRECISION) {
+            if linalg.PointInTriangle_Fixed(vertList[start + i].pos, vertList[indices[0]].pos, vertList[indices[1]].pos, vertList[indices[2]].pos) {
                 for k:u32 = 0; k < 3; k += 1 {
                     non_zero_append(indList, indices[k])
                     non_zero_append(indList, indices[(k + 1)%3])
@@ -680,7 +673,7 @@ LineSplitLine :: proc "contextless" (pts:[2][$N]$T, t:T) -> (outPts1:[2][N]T, ou
 
         b := linalg.LinesIntersect(vertList[start].pos, vertList[start + 2].pos, vertList[start + 1].pos, vertList[start + 3].pos)
         if b {
-            if linalg.length2(vertList[start + 2].pos - vertList[start].pos) < linalg.length2(vertList[start + 3].pos - vertList[start + 1].pos) {
+            if length2_fixed(sub2_fixed(vertList[start + 2].pos, vertList[start].pos)).i < length2_fixed(sub2_fixed(vertList[start + 3].pos, vertList[start + 1].pos)).i {
                 non_zero_append(indList, start, start + 1, start + 2, start, start + 2, start + 3)
             } else {
                 non_zero_append(indList, start, start + 1, start + 3, start + 1, start + 2, start + 3)
@@ -689,26 +682,20 @@ LineSplitLine :: proc "contextless" (pts:[2][$N]$T, t:T) -> (outPts1:[2][N]T, ou
         }
         b = linalg.LinesIntersect(vertList[start].pos, vertList[start + 3].pos, vertList[start + 1].pos, vertList[start + 2].pos)
         if b {
-            if linalg.length2(vertList[start + 3].pos - vertList[start].pos) < linalg.length2(vertList[start + 2].pos - vertList[start + 1].pos) {
+            if length2_fixed(sub2_fixed(vertList[start + 3].pos, vertList[start].pos)).i < length2_fixed(sub2_fixed(vertList[start + 2].pos, vertList[start + 1].pos)).i {
                 non_zero_append(indList, start, start + 1, start + 3, start, start + 3, start + 2)
             } else {
                 non_zero_append(indList, start, start + 1, start + 2, start + 2, start + 1, start + 3)
             }
             return
         }
-        if linalg.length2(vertList[start + 1].pos - vertList[start].pos) < linalg.length2(vertList[start + 3].pos - vertList[start + 2].pos) {
+        if length2_fixed(sub2_fixed(vertList[start + 1].pos, vertList[start].pos)).i < length2_fixed(sub2_fixed(vertList[start + 3].pos, vertList[start + 2].pos)).i {
             non_zero_append(indList, start, start + 2, start + 1, start, start + 1, start + 3)
         } else {
             non_zero_append(indList, start, start + 2, start + 3, start + 3, start + 2, start + 1)
         }
     }
     appendLine(vertList, indList, color, pts[:len(pts)], F)
-
-    if len(pts) == 3 {
-        non_zero_append(outPoly, CurveStruct{pts[0], false}, CurveStruct{pts[1], true})
-    } else {
-        non_zero_append(outPoly, CurveStruct{pts[0], false}, CurveStruct{pts[1], true}, CurveStruct{pts[2], true})
-    }
 
     return nil
 }
@@ -782,7 +769,7 @@ cvt_shapesi64_to_shapes :: proc(poly:shapesi64, allocator := context.allocator) 
 	}
 
 	for n, i in poly.nodes {
-		poly32.nodes[i].pts = make_non_zeroed_slice([]linalg.point, len(n.pts), allocator)
+		poly32.nodes[i].pts = make_non_zeroed_slice([]linalg.Vector2f32, len(n.pts), allocator)
 		for p, j in n.pts {
 			poly32.nodes[i].pts[j].x = f32(fixed.to_f64(p.x))
 			poly32.nodes[i].pts[j].y = f32(fixed.to_f64(p.y))
@@ -809,10 +796,10 @@ shapes_compute_polygon :: proc(poly:shapes, allocator := context.allocator) -> (
 	}
 
 	for n, i in poly.nodes {
-		poly64.nodes[i].pts = make_non_zeroed_slice([]FixedDef, len(n.pts), context.temp_allocator)
+		poly64.nodes[i].pts = make_non_zeroed_slice([][2]FixedDef, len(n.pts), context.temp_allocator)
 		for p, j in n.pts {
-			poly64.nodes[i].pts[j].x = i64(f64(p.x) * PRECISIONF)
-			poly64.nodes[i].pts[j].y = i64(f64(p.y) * PRECISIONF)
+			fixed.init_from_f64(&poly64.nodes[i].pts[j].x, f64(p.x))
+			fixed.init_from_f64(&poly64.nodes[i].pts[j].y, f64(p.y))
 		}
 
 		if n.curve_pts_ids != nil {
@@ -823,7 +810,7 @@ shapes_compute_polygon :: proc(poly:shapes, allocator := context.allocator) -> (
 		}
 
 		poly64.nodes[i].is_closed = n.is_closed
-		poly64.nodes[i].thickness = i64(f64(n.thickness) * PRECISIONF)
+        fixed.init_from_f64(&poly64.nodes[i].thickness, f64(n.thickness))
 		poly64.nodes[i].color = n.color
 		poly64.nodes[i].stroke_color = n.stroke_color
 	}
@@ -836,8 +823,8 @@ shapes_compute_polygon :: proc(poly:shapes, allocator := context.allocator) -> (
 	defer if err != nil do delete(res.indices, allocator)// not working
 
 	for v, i in res64.vertices {
-		res.vertices[i].pos.x = f32(f64(v.pos.x) / PRECISIONF)
-		res.vertices[i].pos.y = f32(f64(v.pos.y) / PRECISIONF)
+        res.vertices[i].pos.x = f32(fixed.to_f64(v.pos.x))
+		res.vertices[i].pos.y = f32(fixed.to_f64(v.pos.y))
 
 		res.vertices[i].color = v.color
 		res.vertices[i].uvw = v.uvw
@@ -848,10 +835,10 @@ shapes_compute_polygon :: proc(poly:shapes, allocator := context.allocator) -> (
 }
 
 @private CURVE_STRUCT :: struct {
-	start:linalg.pointi64,
-	ctl0:linalg.pointi64,
-	ctl1:linalg.pointi64,
-	end:linalg.pointi64,
+	start:[2]FixedDef,
+	ctl0:[2]FixedDef,
+	ctl1:[2]FixedDef,
+	end:[2]FixedDef,
 	type:curve_type,
 }
 
@@ -861,10 +848,10 @@ shapes_compute_polygoni64 :: proc(poly:shapesi64, allocator := context.allocator
 
     shapes_compute_polygon_in :: proc(vertList:^[dynamic]shape_vertex2di64, indList:^[dynamic]u32, poly:shapesi64, allocator : runtime.Allocator) -> (err:shape_error = nil) {	
         for node, nidx in poly.nodes {
-			non_curves:[dynamic]linalg.pointi64 = make([dynamic]linalg.pointi64, context.temp_allocator)
-			curves:[dynamic]CURVE_STRUCT = make([dynamic]CURVE_STRUCT, context.temp_allocator)
-
 			if node.color.a > 0 {
+                non_curves:[dynamic][2]FixedDef = make([dynamic][2]FixedDef, context.temp_allocator)
+			    curves:[dynamic]CURVE_STRUCT = make([dynamic]CURVE_STRUCT, context.temp_allocator)
+
 				curve_idx := 0
 				for pt, i in node.pts {
 					//TODO
@@ -909,6 +896,9 @@ shapes_compute_polygoni64 :: proc(poly:shapesi64, allocator := context.allocator
 						non_zero_append(&non_curves, pt)
 					}
 				}
+                for cur,i in curves {
+
+                } 
 			}
 		}
 		return
@@ -919,8 +909,8 @@ shapes_compute_polygoni64 :: proc(poly:shapesi64, allocator := context.allocator
 poly_transform_matrix :: proc "contextless" (inout_poly: ^shapes, F: linalg.matrix44) {
 	for &node in inout_poly.nodes {
 		for &pts in node.pts {
-			out := linalg.mul(F, linalg.point3dw{pts.x, pts.y, 0, 1})
-			pts = linalg.point{out.x, out.y} / out.w
+			out := linalg.mul(F, linalg.Vector4f32{pts.x, pts.y, 0, 1})
+			pts = linalg.Vector2f32{out.x, out.y} / out.w
 		}
 	}
 }

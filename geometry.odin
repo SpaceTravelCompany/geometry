@@ -9,42 +9,6 @@ import "core:mem"
 
 import "core:math/fixed"
 
-@private make_non_zeroed_slice :: proc($T:typeid/[]$E, #any_int len: int, allocator := context.allocator, loc := #caller_location) -> (res:T, err: runtime.Allocator_Error) #optional_allocator_error {
-    runtime.make_slice_error_loc(loc, len)
-    data : []byte
-	data, err = runtime.mem_alloc_non_zeroed(size_of(E) * len, align_of(E), allocator, loc)
-	if data == nil && size_of(E) != 0 {
-		return nil, err
-	}
-	(^runtime.Raw_Slice)(&res).data = raw_data(data)
-	(^runtime.Raw_Slice)(&res).len  = len
-	return
-}
-
-// digit-by-digit integer sqrt (port of C sqrt_i64) https://github.com/chmike/fpsqrt
-@private sqrt_i64 :: proc "contextless" (v: i64) -> i64 {
-    b := u64(1) << 62
-    q: u64 = 0
-    r := u64(v)
-    for b > r do b >>= 2
-    for b > 0 {
-        t := q + b
-        q >>= 1
-        if r >= t {
-            r -= t
-            q += b
-        }
-        b >>= 2
-    }
-    return i64(q)
-}
-
-// Flip the sign (positive ↔ negative)
-@(private, require_results)
-sign :: proc "contextless" (v: $T/fixed.Fixed($Backing, $Fraction_Width)) -> (r: T) {
-	r.i = -r.i
-	return
-}
 
 //Cover MAX 741455 * 741455
 FIXED_SHIFT :: 24
@@ -56,15 +20,6 @@ FixedDef :: fixed.Fixed(i64, FIXED_SHIFT)
 @private Div3Fixed :: fixed.Fixed(i64, FIXED_SHIFT){i = (1 << FIXED_SHIFT) / 3}
 @private Div3Mul2Fixed :: fixed.Fixed(i64, FIXED_SHIFT){i = (2 << FIXED_SHIFT) / 3}
 
-// [2]FixedDef vector difference
-@private sub2_fixed :: proc "contextless" (a, b: [2]FixedDef) -> [2]FixedDef {
-    return {fixed.sub(a.x, b.x), fixed.sub(a.y, b.y)}
-}
-
-// squared length (x*x + y*y), fixed-Vector2f32
-@private length2_fixed :: proc "contextless" (v: [2]FixedDef) -> FixedDef {
-    return fixed.add(fixed.mul(v.x, v.x), fixed.mul(v.y, v.y))
-}
 
 shape_vertex2di64 :: struct #align(1) {
     pos: [2]FixedDef,
@@ -661,7 +616,7 @@ GetCubicCurveType :: proc "contextless" (start:[2]$T, control0:[2]T, control1:[2
                     idx += 1
                 }
             }
-            if linalg.PointInTriangle_Fixed(vertList[start + i].pos, vertList[indices[0]].pos, vertList[indices[1]].pos, vertList[indices[2]].pos) {
+            if PointInTriangle(vertList[start + i].pos, vertList[indices[0]].pos, vertList[indices[1]].pos, vertList[indices[2]].pos) {
                 for k:u32 = 0; k < 3; k += 1 {
                     non_zero_append(indList, indices[k])
                     non_zero_append(indList, indices[(k + 1)%3])
@@ -671,7 +626,7 @@ GetCubicCurveType :: proc "contextless" (start:[2]$T, control0:[2]T, control1:[2
             }
         }
 
-        b := linalg.LinesIntersect(vertList[start].pos, vertList[start + 2].pos, vertList[start + 1].pos, vertList[start + 3].pos)
+        b := LinesIntersect(vertList[start].pos, vertList[start + 2].pos, vertList[start + 1].pos, vertList[start + 3].pos)
         if b {
             if length2_fixed(sub2_fixed(vertList[start + 2].pos, vertList[start].pos)).i < length2_fixed(sub2_fixed(vertList[start + 3].pos, vertList[start + 1].pos)).i {
                 non_zero_append(indList, start, start + 1, start + 2, start, start + 2, start + 3)
@@ -680,7 +635,7 @@ GetCubicCurveType :: proc "contextless" (start:[2]$T, control0:[2]T, control1:[2
             }
             return
         }
-        b = linalg.LinesIntersect(vertList[start].pos, vertList[start + 3].pos, vertList[start + 1].pos, vertList[start + 2].pos)
+        b = LinesIntersect(vertList[start].pos, vertList[start + 3].pos, vertList[start + 1].pos, vertList[start + 2].pos)
         if b {
             if length2_fixed(sub2_fixed(vertList[start + 3].pos, vertList[start].pos)).i < length2_fixed(sub2_fixed(vertList[start + 2].pos, vertList[start + 1].pos)).i {
                 non_zero_append(indList, start, start + 1, start + 3, start, start + 3, start + 2)
@@ -906,7 +861,7 @@ shapes_compute_polygoni64 :: proc(poly:shapesi64, allocator := context.allocator
 	return
 }
 
-poly_transform_matrix :: proc "contextless" (inout_poly: ^shapes, F: linalg.matrix44) {
+poly_transform_matrix :: proc "contextless" (inout_poly: ^shapes, F: linalg.Matrix4x4f32) {
 	for &node in inout_poly.nodes {
 		for &pts in node.pts {
 			out := linalg.mul(F, linalg.Vector4f32{pts.x, pts.y, 0, 1})

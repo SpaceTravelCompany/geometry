@@ -29,8 +29,6 @@ Rect_ :: struct($T: typeid) where intrinsics.type_is_numeric(T) {
 	bottom: T,
 }
 
-// Rect_Init2 :: #force_inline proc "contextless"(x: $T, y: T, width: T, height: T) -> Rect_(T) {
-// }
 
 Rect_Init :: #force_inline proc "contextless"(left: $T, right: T, top: T, bottom: T) -> Rect_(T) {
 	res: Rect_(T)
@@ -41,28 +39,10 @@ Rect_Init :: #force_inline proc "contextless"(left: $T, right: T, top: T, bottom
 	return res
 }
 
-//returns a Rectf32 whose centre linalg.Vector2f32 is the position
-// Rect_GetFromCenter :: #force_inline proc "contextless" (_pos: [2]$T, _size: [2]T) -> Rect_(T)  {
-// 	res: Rect_(T)
-// 	res.pos = _pos - _size / 2
-// 	res.size = _size
-// 	return res
-// }
-
-Check_Rect :: #force_inline proc "contextless" (_pts:[4][$N]f32) -> bool where N >= 2 {
+Check_Rect :: #force_inline proc "contextless" (_pts:[4][$N]$T) -> bool where N >= 2 && intrinsics.type_is_numeric(T) {
 	return !(_pts[0].y != _pts[1].y || _pts[2].y != _pts[3].y || _pts[0].x != _pts[2].x || _pts[1].x != _pts[3].x)
 }
 
-/*
-Multiplies a rectangle by a matrix. FAILED IF RESULT POINTS IS NOT RECTANGLE.
-Inputs:
-- _r: Rectangle to multiply
-- _mat: matrix44 to multiply
-
-Returns:
-- Rectangle multiplied by the matrix
-- bool: true if the result is a rectangle, false if the result is a polygon
-*/
 Rect_MulMatrix :: proc "contextless" (_r: Rectf32, _mat: linalg.Matrix4x4f32) -> (Rectf32, bool) {
 	tps := __Rect_MulMatrix(_r, _mat)
 
@@ -291,7 +271,7 @@ PointInLine :: proc "contextless" (p:[2]$T, l0:[2]T, l1:[2]T) -> (bool, T) where
 		B := l0.y - A * l0.x
 
 		pY := A * p.x + B
-		EP :: math.epsilon(T) * 18// about count float operations
+		EP :: math.epsilon(T) * 20// about count float operations
 		res := p.y >= pY - EP && p.y <= pY + EP
 		t :T = 0.0
 		if res {
@@ -307,12 +287,11 @@ PointInLine :: proc "contextless" (p:[2]$T, l0:[2]T, l1:[2]T) -> (bool, T) where
 			p.y <= max(l0.y, l1.y), t
 	} else {
 		A :T = fixed.div(fixed.sub(l0.y, l1.y), fixed.sub(l0.x, l1.x))
-		B :T = l0.y - A * l0.x
+		B :T = fixed.sub(l0.y, fixed.mul(A, l0.x))
 
-		pY :T = A * p.x + B
-		res :T = p.y >= pY - epsilon(T) && p.y <= pY + epsilon(T) 
-		t :T = 0.0
-		if res {
+		pY :T = fixed.add(fixed.mul(A, p.x), B)
+		t :T = {}
+		if p.y.i == pY.i {
 			minX :T = min(l0.x, l1.x)
 			maxX :T = max(l0.x, l1.x)
 			t = (p.x - minX) / (maxX - minX)
@@ -332,76 +311,135 @@ min_fixed :: proc "contextless" (v0:$T, v1:T) -> T where intrinsics.type_is_spec
 
 max_fixed :: proc "contextless" (v0:$T, v1:T) -> T where intrinsics.type_is_specialization_of(T, fixed.Fixed) {
 	return v0.i > v1.i ? v0 : v1
-} 
-
-PointDeltaInLine :: proc "contextless" (p:[2]$T, l0:[2]T, l1:[2]T) -> T where intrinsics.type_is_float(T) {
-	A := (l0.y - l1.y) / (l0.x - l1.x)
-	B := l0.y - A * l0.x
-
-	pp := NearestPointBetweenPointAndLine(p, l0, l1)
-
-	pY := A * pp.x + B
-	t :T = 0.0
-	minX := min(l0.x, l1.x)
-	maxX := max(l0.x, l1.x)
-	t = (p.x - minX) / (maxX - minX)
-
-	return t
 }
 
-PointInVector :: proc "contextless" (p:[2]$T, v0:[2]T, v1:[2]T) -> (bool, T) where intrinsics.type_is_float(T) {
-	a := v1.y - v0.y
-	b := v0.x - v1.x
-	c := v1.x * v0.y + v0.x * v1.y
-	res := a * p.x + b * p.y + c
-	return res == 0, res
+// Fixed-point version of linalg.lerp: result = a + t*(b - a). t is typically in [0, 1].
+// Single proc with type_is_array branch: scalar Fixed or [N]Fixed (component-wise with scalar t).
+lerp_fixed :: proc "contextless" (a, b, t: $T) -> T where intrinsics.type_is_specialization_of(intrinsics.type_elem_type(T), fixed.Fixed) #no_bounds_check {
+	when intrinsics.type_is_array(T) {
+		res: T
+		#unroll for i in 0..<len(T) {
+			res[i] = lerp_fixed(a[i], b[i], t[i])
+		}
+		return res
+	} else {
+		return fixed.add(a, fixed.mul(t, fixed.sub(b, a)))
+	}
 }
 
-PointLineLeftOrRight :: #force_inline proc "contextless" (p : [2]$T, l0 : [2]T, l1 : [2]T) -> T where intrinsics.type_is_float(T) {
-	return (l1.x - l0.x) * (p.y - l0.y) - (p.x - l0.x) * (l1.y - l0.y)
+PointDeltaInLine :: proc "contextless" (p:[2]$T, l0:[2]T, l1:[2]T) -> T where intrinsics.type_is_float(T) || intrinsics.type_is_specialization_of(T, fixed.Fixed) {
+	when intrinsics.type_is_float(T) {
+		pp := NearestPointBetweenPointAndLine(p, l0, l1)
+		t := linalg.lerp(l0.x, l1.x, pp.x)
+		return t
+	} else {
+		pp := NearestPointBetweenPointAndLine(p, l0, l1)
+		t := lerp_fixed(l0.x, l1.x, pp.x)
+		return t
+	}
 }
 
-PointInPolygon :: proc "contextless" (p: [2]$T, polygon:[][2]T) -> bool where intrinsics.type_is_float(T) {
-	crossProduct :: proc "contextless" (p1: [2]$T, p2 : [2]T, p3 : [2]T) -> T {
-		return (p2.x - p1.x) * (p3.y - p1.y) - (p2.y - p1.y) * (p3.x - p1.x)
+PointInVector :: proc "contextless" (p:[2]$T, v0:[2]T, v1:[2]T) -> (bool, T) where intrinsics.type_is_float(T) || intrinsics.type_is_specialization_of(T, fixed.Fixed) {
+	when intrinsics.type_is_float(T) {
+		a := v1.y - v0.y
+		b := v0.x - v1.x
+		c := v1.x * v0.y + v0.x * v1.y
+		res := a * p.x + b * p.y + c
+		return res == 0, res
+	} else {
+		a := fixed.sub(v1.y, v0.y)
+		b := fixed.sub(v0.x, v1.x)
+		c := fixed.add(fixed.mul(v1.x, v0.y), fixed.mul(v0.x, v1.y))
+		res := fixed.add(fixed.add(fixed.mul(a, p.x), fixed.mul(b, p.y)), c)
+		return res.i == 0, res
 	}
-	isPointOnSegment :: proc "contextless" (p: [2]$T, p1 : [2]T, p2 : [2]T) -> bool {
-		return crossProduct(p1, p2, p) == 0 && p.x >= min(p1.x, p2.x) && p.x <= max(p1.x, p2.x) && p.y >= min(p1.y, p2.y) && p.y <= max(p1.y, p2.y)
-	}
-	windingNumber := 0
-	for i in  0..<len(polygon) {
-		p1 := polygon[i]
-        p2 := polygon[(i + 1) % len(polygon)]
-
-        if (isPointOnSegment(p, p1, p2)) {
-            return false
-        }
-
-        if (p1.y <= p.y) {
-            if (p2.y > p.y && crossProduct(p1, p2, p) > 0) {
-                windingNumber += 1
-            }
-        } else {
-            if (p2.y <= p.y && crossProduct(p1, p2, p) < 0) {
-                windingNumber -= 1
-            }
-        }
-	}
-	return windingNumber != 0
 }
 
-CenterPointInPolygon :: proc "contextless" (polygon : [][2]$T) -> [2]T where intrinsics.type_is_float(T) {
-	area :f32 = 0
-	p : [2]T = {0,0}
-	for i in 0..<len(polygon) {
-		j := (i + 1) % len(polygon)
-		factor := linalg.vector_cross2(polygon[i], polygon[j])
-		area += factor
-		p = (polygon[i] + polygon[j]) * splat_2(factor) + p
+PointLineLeftOrRight :: #force_inline proc "contextless" (p : [2]$T, l0 : [2]T, l1 : [2]T) -> T where intrinsics.type_is_float(T) || intrinsics.type_is_specialization_of(T, fixed.Fixed) {
+	when intrinsics.type_is_float(T) {
+		return (l1.x - l0.x) * (p.y - l0.y) - (p.x - l0.x) * (l1.y - l0.y)
+	} else {
+		return fixed.sub(fixed.mul(fixed.sub(l1.x, l0.x), fixed.sub(p.y, l0.y)), fixed.mul(fixed.sub(p.x, l0.x), fixed.sub(l1.y, l0.y)))
 	}
-	area = area / 2 * 6
-	p *= splat_2(1 / area)
-	return p
+}
+
+PointInPolygon :: proc "contextless" (p: [2]$T, polygon:[][2]T) -> bool where intrinsics.type_is_float(T) || intrinsics.type_is_specialization_of(T, fixed.Fixed) {
+	when intrinsics.type_is_float(T) {
+		crossProduct :: proc "contextless" (p1: [2]$T, p2 : [2]T, p3 : [2]T) -> T {
+			return (p2.x - p1.x) * (p3.y - p1.y) - (p2.y - p1.y) * (p3.x - p1.x)
+		}
+		isPointOnSegment :: proc "contextless" (p: [2]$T, p1 : [2]T, p2 : [2]T) -> bool {
+			return crossProduct(p1, p2, p) == 0 && p.x >= min(p1.x, p2.x) && p.x <= max(p1.x, p2.x) && p.y >= min(p1.y, p2.y) && p.y <= max(p1.y, p2.y)
+		}
+		windingNumber := 0
+		for i in 0..<len(polygon) {
+			p1 := polygon[i]
+			p2 := polygon[(i + 1) % len(polygon)]
+			if isPointOnSegment(p, p1, p2) do return false
+			if p1.y <= p.y {
+				if p2.y > p.y && crossProduct(p1, p2, p) > 0 do windingNumber += 1
+			} else {
+				if p2.y <= p.y && crossProduct(p1, p2, p) < 0 do windingNumber -= 1
+			}
+		}
+		return windingNumber != 0
+	} else {
+		crossProduct :: proc "contextless" (p1: [2]$T, p2 : [2]T, p3 : [2]T) -> T {
+			return fixed.sub(fixed.mul(fixed.sub(p2.x, p1.x), fixed.sub(p3.y, p1.y)), fixed.mul(fixed.sub(p2.y, p1.y), fixed.sub(p3.x, p1.x)))
+		}
+		isPointOnSegment :: proc "contextless" (p: [2]$T, p1 : [2]T, p2 : [2]T) -> bool {
+			cp := crossProduct(p1, p2, p)
+			return cp.i == 0 && p.x.i >= min_fixed(p1.x, p2.x).i && p.x.i <= max_fixed(p1.x, p2.x).i && p.y.i >= min_fixed(p1.y, p2.y).i && p.y.i <= max_fixed(p1.y, p2.y).i
+		}
+		windingNumber := 0
+		for i in 0..<len(polygon) {
+			p1 :T= polygon[i]
+			p2 :T= polygon[(i + 1) % len(polygon)]
+			if isPointOnSegment(p, p1, p2) do return false
+			if p1.y.i <= p.y.i {
+				if p2.y.i > p.y.i && crossProduct(p1, p2, p).i > 0 do windingNumber += 1
+			} else {
+				if p2.y.i <= p.y.i && crossProduct(p1, p2, p).i < 0 do windingNumber -= 1
+			}
+		}
+		return windingNumber != 0
+	}
+}
+
+vector_cross2_fixed :: #force_inline proc "contextless" (a, b: [2]$E) -> E where intrinsics.type_is_specialization_of(E, fixed.Fixed) {
+	return fixed.sub(fixed.mul(a.x, b.y), fixed.mul(a.y, b.x))
+}
+
+CenterPointInPolygon :: proc "contextless" (polygon : [][2]$T) -> [2]T where intrinsics.type_is_float(T) || intrinsics.type_is_specialization_of(T, fixed.Fixed) {
+	when intrinsics.type_is_float(T) {
+		area: f32 = 0
+		p: [2]T = {0, 0}
+		for i in 0..<len(polygon) {
+			j := (i + 1) % len(polygon)
+			factor := linalg.vector_cross2(polygon[i], polygon[j])
+			area += factor
+			p = (polygon[i] + polygon[j]) * math.splat_2(factor) + p
+		}
+		area = area / 2 * 6
+		p /= math.splat_2(area)
+		return p
+	} else {
+		F :: intrinsics.type_polymorphic_record_parameter_value(T, 1)
+		area: T = {}
+		p: [2]T = {}
+		for i in 0..<len(polygon) {
+			j := (i + 1) % len(polygon)
+			factor := vector_cross2_fixed(polygon[i], polygon[j])
+			area = fixed.add(area, factor)
+			sum_pt := [2]T{fixed.add(polygon[i].x, polygon[j].x), fixed.add(polygon[i].y, polygon[j].y)}
+			p.x = fixed.add(p.x, fixed.mul(sum_pt.x, factor))
+			p.y = fixed.add(p.y, fixed.mul(sum_pt.y, factor))
+		}
+		area = fixed.mul(area, T{i = 3 << F})
+		p.x = fixed.div(p.x, area)
+		p.y = fixed.div(p.y, area)
+		return p
+	}
 }
 
 GetPolygonOrientation :: proc "contextless" (polygon : [][2]$T) -> PolyOrientation where intrinsics.type_is_float(T) || intrinsics.type_is_specialization_of(T, fixed.Fixed) {
@@ -452,7 +490,7 @@ LinesIntersect :: proc "contextless" (a1 : [2]$T, a2 : [2]T, b1: [2]T, b2 : [2]T
 			crossProduct := (p2.y - p1.y) * (p3.x - p2.x) - (p3.y - p2.y) * (p2.x - p1.x)
 			return (crossProduct < 0.0) ? -1 : ((crossProduct > 0.0) ? 1 : 0)
 		} else {
-			crossProduct := fixed.sub(fixed.mul(fixed.sub(p2.y, p1.y) * fixed.sub(p3.x, p2.x)), fixed.mul(fixed.sub(p3.y, p2.y), fixed.sub(p2.x, p1.x)))
+			crossProduct :T = fixed.sub(fixed.mul(fixed.sub(p2.y, p1.y), fixed.sub(p3.x, p2.x)), fixed.mul(fixed.sub(p3.y, p2.y), fixed.sub(p2.x, p1.x)))
 			return (crossProduct.i < 0) ? -1 : ((crossProduct.i > 0) ? 1 : 0)
 		}
 	}

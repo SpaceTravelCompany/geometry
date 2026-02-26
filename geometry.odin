@@ -48,6 +48,7 @@ raw_shapei64 :: struct {
     Unknown,
     Serpentine,
     Loop,
+   // LoopReverse,
     Cusp,
     Quadratic,
 }
@@ -270,9 +271,14 @@ GetCubicCurveType :: proc "contextless" (start:[2]$T, control0:[2]T, control1:[2
 			type = .Serpentine
 			return
 		}
+		t1 := T{i = sqrt_i64((4 * d0.i * d2.i - 3 * d1.i * d1.i) << FIXED_SHIFT)}
+		ls := sub(d1, t1)
+		lt := mul(Fixed2, d0)
+		ql := div(ls, lt)
 		type = .Loop
+		return
 	} else {// float
-		cross_1 := [3]T{end.y - c1.y,     c1.x - end.x,     end.x * c1.y - end.y * c1.x}
+		cross_1 := [3]T{end.y - control1.y,     control1.x - end.x,     end.x * control1.y - end.y * control1.x}
 		cross_2 := [3]T{start.y - end.y,  end.x - start.x,  start.x * end.y - start.y * end.x}
 		cross_3 := [3]T{control0.y - start.y,   start.x - control0.x,   control0.x * start.y - control0.y * start.x}
 
@@ -304,7 +310,13 @@ GetCubicCurveType :: proc "contextless" (start:[2]$T, control0:[2]T, control1:[2
 			type = .Serpentine
 			return
 		}
+		t1 := math.sqrt(f64(4 * d0 * d2 - 3 * d1 * d1))
+		ls := d1 - T(t1)
+		lt := 2 * d0
+		ql := ls / lt
+		EP2 :: math.epsilon(T) * 2
 		type = .Loop
+		return
 	}
     return
 }
@@ -315,14 +327,15 @@ GetCubicCurveType :: proc "contextless" (start:[2]$T, control0:[2]T, control1:[2
     color:linalg.Vector4f32,
     pts:[][2]FixedDef,
     type:curve_type,
-    _subdiv :FixedDef = {},
-    _repeat :int = -1) -> shape_error {
+    _subdiv :FixedDef = {}) -> shape_error {
 
     using fixed
     assert(_subdiv.i >= 0)
 
     curveType := type
     err:shape_error = nil
+	//loop_reverse := false
+	//if curveType == .LoopReverse do loop_reverse = true
 
     reverse := false
     d0,d1,d2:FixedDef
@@ -330,63 +343,41 @@ GetCubicCurveType :: proc "contextless" (start:[2]$T, control0:[2]T, control1:[2
         curveType, d0,d1,d2, err = GetCubicCurveType(pts[0], pts[1], pts[2], pts[3])
         if err != nil do return err
     } else if curveType == .Quadratic && len(pts) == 3 {
-		if _subdiv.i == 0 {
-            vlen :u32 = u32(len(vertList))
-            if GetPolygonOrientation(pts) == .CounterClockwise {
-                non_zero_append(vertList, shape_vertex2di64{
-                    uvw = {0,0,-100},//-100 check this is not cubic curve
-                    pos = pts[0],
-                    color = color,
-                })
-                non_zero_append(vertList, shape_vertex2di64{
-                    uvw = {-0.5,0,-100},
-                    pos = pts[1],
-                    color = color,
-                })
-                non_zero_append(vertList, shape_vertex2di64{
-                    uvw = {-1,-1,-100},
-                    pos = pts[2],
-                    color = color,
-                })
-            } else {
-                non_zero_append(vertList, shape_vertex2di64{
-                    uvw = {0,0,-100},
-                    pos = pts[0],
-                    color = color,
-                })
-                non_zero_append(vertList, shape_vertex2di64{
-                    uvw = {0.5,0,-100},
-                    pos = pts[1],
-                    color = color,
-                })
-                non_zero_append(vertList, shape_vertex2di64{
-                    uvw = {1,1,-100},
-                    pos = pts[2],
-                    color = color,
-                })
-            }
-            non_zero_append(indList, vlen, vlen + 1, vlen + 2)
+		vlen :u32 = u32(len(vertList))
+		if GetPolygonOrientation(pts) == .CounterClockwise {
+			non_zero_append(vertList, shape_vertex2di64{
+				uvw = {0,0,-100},//-100 check this is not cubic curve
+				pos = pts[0],
+				color = color,
+			})
+			non_zero_append(vertList, shape_vertex2di64{
+				uvw = {-0.5,0,-100},
+				pos = pts[1],
+				color = color,
+			})
+			non_zero_append(vertList, shape_vertex2di64{
+				uvw = {-1,-1,-100},
+				pos = pts[2],
+				color = color,
+			})
 		} else {
-			// 반으로 나눈다.
-            pt01 := [2]FixedDef{
-                add(pts[0].x, mul(sub(pts[1].x, pts[0].x), _subdiv)),
-                add(pts[0].y, mul(sub(pts[1].y, pts[0].y), _subdiv)),
-            }
-            pt12 := [2]FixedDef{
-                add(pts[1].x, mul(sub(pts[2].x, pts[1].x), _subdiv)),
-                add(pts[1].y, mul(sub(pts[2].y, pts[1].y), _subdiv)),
-            }
-            pt012 := [2]FixedDef{
-                add(pt01.x, mul(sub(pt12.x, pt01.x), _subdiv)),
-                add(pt01.y, mul(sub(pt12.y, pt01.y), _subdiv)),
-            }
-
-            subdivZero := FixedDef{}
-            err := _Shapes_ComputeLine(vertList, indList, color, {pts[0], pt01, pt012}, .Quadratic, subdivZero, 0)
-            if err != nil do return err
-            err = _Shapes_ComputeLine(vertList, indList, color, {pt012, pt12, pts[2]}, .Quadratic, subdivZero, 0)
-            if err != nil do return err
-        }
+			non_zero_append(vertList, shape_vertex2di64{
+				uvw = {0,0,-100},
+				pos = pts[0],
+				color = color,
+			})
+			non_zero_append(vertList, shape_vertex2di64{
+				uvw = {0.5,0,-100},
+				pos = pts[1],
+				color = color,
+			})
+			non_zero_append(vertList, shape_vertex2di64{
+				uvw = {1,1,-100},
+				pos = pts[2],
+				color = color,
+			})
+		}
+		non_zero_append(indList, vlen, vlen + 1, vlen + 2)
         return nil
     }
 
@@ -400,9 +391,6 @@ GetCubicCurveType :: proc "contextless" (start:[2]$T, control0:[2]T, control1:[2
             {sign(F[3][0]), sign(F[3][1]), F[3][2]},
         }
     }
-	repeat := 0
-    subdiv :FixedDef = {}
-
     if _subdiv.i == 0 {
         switch curveType {
             case .Line:
@@ -450,41 +438,32 @@ GetCubicCurveType :: proc "contextless" (start:[2]$T, control0:[2]T, control1:[2
                 lt := mul(Fixed2, d0)
                 ms := add(d1, t1)
                 mt := lt
-    
+
                 ql := div(ls, lt)
                 qm := div(ms, mt)
-               
-                if _repeat == -1 && 0 < ql.i && ql.i < 1 {
-                    repeat = 1
-                    subdiv = ql
-                } else if _repeat == -1 && 0 < qm.i && qm.i < 1 {
-                    repeat = 2
-                    subdiv = qm
-                } else {
-                    ltMinusLs := sub(lt, ls)
-                    mtMinusMs := sub(mt, ms)
-    
-                    lsms := mul(ls, ms)
-                    ltms := mul(lt, ms)
-                    F = {
-                        {lsms,
-                        mul(ls, lsms),
-                        mul(ms, lsms)},
+                ltMinusLs := sub(lt, ls)
+                mtMinusMs := sub(mt, ms)
 
-                        {div( add( sub(mul(sign(ls), mt), ltms), mul(Fixed3, lsms) ), Fixed3),//(-ls * mt - ltms + 3 * lsms) / 3
-                        div(mul(sign(add(mul(ls, (sub(mt, mul(Fixed3, ms)))), mul(Fixed2, ltms))), ls), Fixed3),//-(ls * (mt - 3 * ms) + 2 * ltms) * ls / 3
-                        div(mul(sign(add(mul(ls, (sub(mul(Fixed2, mt), mul(Fixed3, ms)))), ltms)), ms), Fixed3)},//-(ls * (2 * mt - 3 * ms) + ltms) * ms / 3
+                lsms := mul(ls, ms)
+                ltms := mul(lt, ms)
+                F = {
+                    {lsms,
+                    mul(ls, lsms),
+                    mul(ms, lsms)},
 
-                        {div(add(mul(lt, sub(mt, mul(Fixed2, ms))), mul(ls, sub(mul(Fixed3, ms), mul(Fixed2, mt)))), Fixed3),//(lt * (mt - 2.0 * ms) + ls * (3.0 * ms - 2.0 * mt)) / 3
-                        div(div(add(mul(ls, sub(mul(Fixed2, mt), mul(Fixed3, ms))), ltms), ltMinusLs), Fixed3),//(ls * (2.0 * mt - 3.0 * ms) + ltms) / ltMinusLs / 3
-                        div(div(add(mul(ls, sub(mt, mul(Fixed3, ms))), mul(Fixed2, ltms)), mtMinusMs), Fixed3)},//(ls * (mt - 3.0 * ms) + 2.0 * ltms) / mtMinusMs / 3
+                    {div( add( sub(mul(sign(ls), mt), ltms), mul(Fixed3, lsms) ), Fixed3),//(-ls * mt - ltms + 3 * lsms) / 3
+                    div(mul(sign(add(mul(ls, (sub(mt, mul(Fixed3, ms)))), mul(Fixed2, ltms))), ls), Fixed3),//-(ls * (mt - 3 * ms) + 2 * ltms) * ls / 3
+                    div(mul(sign(add(mul(ls, (sub(mul(Fixed2, mt), mul(Fixed3, ms)))), ltms)), ms), Fixed3)},//-(ls * (2 * mt - 3 * ms) + ltms) * ms / 3
 
-                        {mul(ltMinusLs, mtMinusMs),
-						sign(mul(mul(ltMinusLs, ltMinusLs), mtMinusMs)),
-						sign(mul(ltMinusLs, mul(mtMinusMs, mtMinusMs)))},
-                    }
-                    reverse = (d0.i > 0 && F[1][0].i < 0) || (d0.i < 0 && F[1][0].i > 0)
+                    {div(add(mul(lt, sub(mt, mul(Fixed2, ms))), mul(ls, sub(mul(Fixed3, ms), mul(Fixed2, mt)))), Fixed3),//(lt * (mt - 2.0 * ms) + ls * (3.0 * ms - 2.0 * mt)) / 3
+                    div(div(add(mul(ls, sub(mul(Fixed2, mt), mul(Fixed3, ms))), ltms), ltMinusLs), Fixed3),//(ls * (2.0 * mt - 3.0 * ms) + ltms) / ltMinusLs / 3
+                    div(div(add(mul(ls, sub(mt, mul(Fixed3, ms))), mul(Fixed2, ltms)), mtMinusMs), Fixed3)},//(ls * (mt - 3.0 * ms) + 2.0 * ltms) / mtMinusMs / 3
+
+                    {mul(ltMinusLs, mtMinusMs),
+                    sign(mul(mul(ltMinusLs, ltMinusLs), mtMinusMs)),
+                    sign(mul(ltMinusLs, mul(mtMinusMs, mtMinusMs)))},
                 }
+                reverse = (d0.i > 0 && F[1][0].i < 0) || (d0.i < 0 && F[1][0].i > 0)
             case .Cusp:
                 ls := d2
                 lt := mul(Fixed3, d1)
@@ -514,53 +493,7 @@ GetCubicCurveType :: proc "contextless" (start:[2]$T, control0:[2]T, control1:[2
         }
     }
    
-	//반으로 나눈다.
-    if repeat > 0 || _subdiv.i != 0 {
-        if subdiv.i == 0 {
-            subdiv = _subdiv
-        }
-        pt01 := [2]FixedDef{
-            add(pts[0].x, mul(sub(pts[1].x, pts[0].x), subdiv)),
-            add(pts[0].y, mul(sub(pts[1].y, pts[0].y), subdiv)),
-        }
-        pt12 := [2]FixedDef{
-            add(pts[1].x, mul(sub(pts[2].x, pts[1].x), subdiv)),
-            add(pts[1].y, mul(sub(pts[2].y, pts[1].y), subdiv)),
-        }
-        pt23 := [2]FixedDef{
-            add(pts[2].x, mul(sub(pts[3].x, pts[2].x), subdiv)),
-            add(pts[2].y, mul(sub(pts[3].y, pts[2].y), subdiv)),
-        }
-        pt012 := [2]FixedDef{
-            add(pt01.x, mul(sub(pt12.x, pt01.x), subdiv)),
-            add(pt01.y, mul(sub(pt12.y, pt01.y), subdiv)),
-        }
-        pt123 := [2]FixedDef{
-            add(pt12.x, mul(sub(pt23.x, pt12.x), subdiv)),
-            add(pt12.y, mul(sub(pt23.y, pt12.y), subdiv)),
-        }
-        pt0123 := [2]FixedDef{
-            add(pt012.x, mul(sub(pt123.x, pt012.x), subdiv)),
-            add(pt012.y, mul(sub(pt123.y, pt012.y), subdiv)),
-        }
-
-        if repeat == 2 {
-            err := _Shapes_ComputeLine(vertList, indList, color, {pts[0], pt01, pt012, pt0123}, type, {}, 1)
-            if err != nil do return err
-            err = _Shapes_ComputeLine(vertList, indList, color, {pt0123, pt123, pt23, pts[3]}, type, {}, 0)
-            if err != nil do return err
-        } else if repeat == 1 {
-            err := _Shapes_ComputeLine(vertList, indList, color, {pts[0], pt01, pt012, pt0123}, type, {}, 0)
-            if err != nil do return err
-            err = _Shapes_ComputeLine(vertList, indList, color, {pt0123, pt123, pt23, pts[3]}, type, {}, 1)
-            if err != nil do return err
-        }
-        return nil
-    }
-    if repeat == 1 {
-        reverse = !reverse
-    }
-
+	//if loop_reverse do reverse = !reverse
     if reverse {
       F = reverseOrientation(F)
     }
@@ -809,25 +742,6 @@ shapes_compute_polygoni64 :: proc(poly:shapesi64, allocator := context.allocator
 
 				curve_idx := 0
 				for pt, i in node.pts {
-					//TODO
-					// pts : [4]linalg.pointi64
-					// _Shapes_ComputeLine(
-					// 	vertList,
-					// 	indList,
-					// 	&outPoly[poly_idx],
-					// 	node.color,
-					// 	pts[:3],
-					// 	.Quadratic, PRECISION / 2) or_return
-					// if err != nil do return
-
-					// _Shapes_ComputeLine(
-					// 	vertList,
-					// 	indList,
-					// 	&outPoly[poly_idx],
-					// 	node.color,
-					// 	pts[:4],
-					// 	.Unknown, PRECISION / 2) or_return//TODO (xfitgd) 일단은 0.5로 고정
-
 					if curve_idx < len(node.curve_pts_ids) && node.curve_pts_ids[curve_idx] == u32(i) {//곡선 점이면
 						if curve_idx + 1 < len(node.curve_pts_ids) && node.curve_pts_ids[curve_idx + 1] == u32(i) {//큐빅인지 확인
 							non_zero_append(&curves, CURVE_STRUCT{
@@ -851,9 +765,77 @@ shapes_compute_polygoni64 :: proc(poly:shapesi64, allocator := context.allocator
 						non_zero_append(&non_curves, pt)
 					}
 				}
-                for cur,i in curves {
-
-                } 
+				// First pass: .Loop cubic curves - subdivide at ql/qm when in (0,1).
+				using fixed
+				for i in 0..<len(curves) {
+					c := curves[i]
+					if c.type != .Quadratic {
+						curveType, d0, d1, d2, _ := GetCubicCurveType(c.start, c.ctl0, c.ctl1, c.end)
+						if curveType == .Loop {
+							t1 := FixedDef{i = sqrt_i64((4 * d0.i * d2.i - 3 * d1.i * d1.i) << FIXED_SHIFT)}
+							ls := sub(d1, t1)
+							lt := mul(Fixed2, d0)
+							ms := add(d1, t1)
+							mt := lt
+							ql := div(ls, lt)
+							qm := div(ms, mt)
+							subdiv_at: FixedDef
+							if (0 < ql.i && ql.i < Fixed1.i) {
+								subdiv_at = ql
+							} else if 0 < qm.i && qm.i < Fixed1.i {
+								subdiv_at = qm
+							} else {
+								continue
+							}
+							pt01, pt12, pt23, pt012, pt123, pt0123 := SubdivCubicBezier([4][2]FixedDef{c.start, c.ctl0, c.ctl1, c.end}, subdiv_at)
+							new_curves: [dynamic]CURVE_STRUCT = make([dynamic]CURVE_STRUCT, context.temp_allocator)
+							for k in 0..<len(curves) {
+								if k == i {
+									non_zero_append(&new_curves, CURVE_STRUCT{start = c.start, ctl0 = pt01, ctl1 = pt012, end = pt0123, type = .Unknown})
+									non_zero_append(&new_curves, CURVE_STRUCT{start = pt0123, ctl0 = pt123, ctl1 = pt23, end = c.end, type = .Unknown})
+								} else {
+									non_zero_append(&new_curves, curves[k])
+								}
+							}
+							curves = new_curves
+						}
+					}
+				}
+				// Second pass: polygon overlap check and subdivision.
+				subdiv_t := Div2Fixed
+				overlap_done := false
+				for i in 0..<len(curves) {
+					if overlap_done do break
+					for j in i + 1..<len(curves) {
+						cur := curves[i]
+						cur2 := curves[j]
+						poly1 := cur.type == .Quadratic ? [][2]FixedDef{cur.start, cur.ctl0, cur.end} : [][2]FixedDef{cur.start, cur.ctl0, cur.ctl1, cur.end}
+						poly2 := cur2.type == .Quadratic ? [][2]FixedDef{cur2.start, cur2.ctl0, cur2.end} : [][2]FixedDef{cur2.start, cur2.ctl0, cur2.ctl1, cur2.end}
+						overlap := PolygonOverlapsPolygon(poly1, poly2)
+						if overlap {
+							new_curves: [dynamic]CURVE_STRUCT = make([dynamic]CURVE_STRUCT, context.temp_allocator)
+							for k in 0..<len(curves) {
+								if k == i || k == j {
+									c := curves[k]
+									if c.type == .Quadratic {
+										pt01, pt12, pt012 := SubdivQuadraticBezier([3][2]FixedDef{c.start, c.ctl0, c.end}, subdiv_t)
+										non_zero_append(&new_curves, CURVE_STRUCT{start = c.start, ctl0 = pt01, end = pt012, type = .Quadratic})
+										non_zero_append(&new_curves, CURVE_STRUCT{start = pt012, ctl0 = pt12, end = c.end, type = .Quadratic})
+									} else {
+										pt01, pt12, pt23, pt012, pt123, pt0123 := SubdivCubicBezier([4][2]FixedDef{c.start, c.ctl0, c.ctl1, c.end}, subdiv_t)
+										non_zero_append(&new_curves, CURVE_STRUCT{start = c.start, ctl0 = pt01, ctl1 = pt012, end = pt0123, type = .Unknown})
+										non_zero_append(&new_curves, CURVE_STRUCT{start = pt0123, ctl0 = pt123, ctl1 = pt23, end = c.end, type = .Unknown})
+									}
+								} else {
+									non_zero_append(&new_curves, curves[k])
+								}
+							}
+							curves = new_curves
+							overlap_done = true
+							break
+						}
+					}
+				} 
 			}
 		}
 		return

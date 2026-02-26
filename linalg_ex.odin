@@ -208,6 +208,74 @@ Rect_PointIn :: #force_inline proc "contextless" (_r: Rect_($T), p: [2]T) -> boo
 	return p.x >= _r.left && p.x <= _r.right && (_r.top > _r.bottom ? (p.y <= _r.top && p.y >= _r.bottom) : (p.y >= _r.top && p.y <= _r.bottom))
 }
 
+TriangleOverlapsRect :: proc "contextless" (a, b, c: [2]$T, r: Rect_(T)) -> bool where intrinsics.type_is_float(T) || intrinsics.type_is_specialization_of(T, fixed.Fixed) {
+	if !Rect_OverlapsRect(Rect_FromPoints3(a, b, c), r) do return false
+	if PointInTriangle([2]T{r.left, r.top}, a, b, c) || PointInTriangle([2]T{r.right, r.top}, a, b, c) ||
+	   PointInTriangle([2]T{r.right, r.bottom}, a, b, c) || PointInTriangle([2]T{r.left, r.bottom}, a, b, c) {
+		return true
+	}
+	if Rect_PointIn(r, a) || Rect_PointIn(r, b) || Rect_PointIn(r, c) do return true
+	ok, _ := LinesIntersect2(a, b, [2]T{r.left, r.top}, [2]T{r.right, r.top})
+	if ok do return true
+	ok, _ = LinesIntersect2(a, b, [2]T{r.right, r.top}, [2]T{r.right, r.bottom})
+	if ok do return true
+	ok, _ = LinesIntersect2(a, b, [2]T{r.right, r.bottom}, [2]T{r.left, r.bottom})
+	if ok do return true
+	ok, _ = LinesIntersect2(a, b, [2]T{r.left, r.bottom}, [2]T{r.left, r.top})
+	if ok do return true
+	ok, _ = LinesIntersect2(b, c, [2]T{r.left, r.top}, [2]T{r.right, r.top})
+	if ok do return true
+	ok, _ = LinesIntersect2(b, c, [2]T{r.right, r.top}, [2]T{r.right, r.bottom})
+	if ok do return true
+	ok, _ = LinesIntersect2(b, c, [2]T{r.right, r.bottom}, [2]T{r.left, r.bottom})
+	if ok do return true
+	ok, _ = LinesIntersect2(b, c, [2]T{r.left, r.bottom}, [2]T{r.left, r.top})
+	if ok do return true
+	ok, _ = LinesIntersect2(c, a, [2]T{r.left, r.top}, [2]T{r.right, r.top})
+	if ok do return true
+	ok, _ = LinesIntersect2(c, a, [2]T{r.right, r.top}, [2]T{r.right, r.bottom})
+	if ok do return true
+	ok, _ = LinesIntersect2(c, a, [2]T{r.right, r.bottom}, [2]T{r.left, r.bottom})
+	if ok do return true
+	ok, _ = LinesIntersect2(c, a, [2]T{r.left, r.bottom}, [2]T{r.left, r.top})
+	return ok
+}
+
+TriangleOverlapsTriangle :: proc "contextless" (a1, b1, c1, a2, b2, c2: [2]$T) -> bool where intrinsics.type_is_float(T) || intrinsics.type_is_specialization_of(T, fixed.Fixed) {
+	if !Rect_OverlapsRect(Rect_FromPoints3(a1, b1, c1), Rect_FromPoints3(a2, b2, c2)) do return false
+	if PointInTriangle(a1, a2, b2, c2) || PointInTriangle(b1, a2, b2, c2) || PointInTriangle(c1, a2, b2, c2) do return true
+	if PointInTriangle(a2, a1, b1, c1) || PointInTriangle(b2, a1, b1, c1) || PointInTriangle(c2, a1, b1, c1) do return true
+	edges1 := [][2][2]T{{a1, b1}, {b1, c1}, {c1, a1}}
+	edges2 := [][2][2]T{{a2, b2}, {b2, c2}, {c2, a2}}
+	for e1 in edges1 {
+		for e2 in edges2 {
+			if LinesIntersect(e1[0], e1[1], e2[0], e2[1]) do return true
+		}
+	}
+	return false
+}
+
+// Polygon-polygon overlap: vertex containment or edge intersection.
+PolygonOverlapsPolygon :: proc "contextless" (poly1, poly2: [][2]$T) -> bool where intrinsics.type_is_float(T) || intrinsics.type_is_specialization_of(T, fixed.Fixed) {
+	if len(poly1) < 3 || len(poly2) < 3 do return false
+	for p in poly1 {
+		if PointInPolygon(p, poly2) do return true
+	}
+	for p in poly2 {
+		if PointInPolygon(p, poly1) do return true
+	}
+	for i in 0..<len(poly1) {
+		a1 := poly1[i]
+		b1 := poly1[(i + 1) % len(poly1)]
+		for j in 0..<len(poly2) {
+			a2 := poly2[j]
+			b2 := poly2[(j + 1) % len(poly2)]
+			if LinesIntersect(a1, b1, a2, b2) do return true
+		}
+	}
+	return false
+}
+
 Rect_Move :: #force_inline proc "contextless" (_r: Rect_($T), p: [2]T) -> Rect_(T) #no_bounds_check {
 	res: Rect_(T)
 	res.left = _r.left + p.x
@@ -313,6 +381,51 @@ max_fixed :: proc "contextless" (v0:$T, v1:T) -> T where intrinsics.type_is_spec
 	return v0.i > v1.i ? v0 : v1
 }
 
+
+SubdivLine :: proc "contextless" (pts: [2][2]$T, subdiv: T) -> (pt01: [2]T) where intrinsics.type_is_float(T) || intrinsics.type_is_specialization_of(T, fixed.Fixed) {
+	when intrinsics.type_is_float(T) {
+		pt01 = linalg.lerp(pts[0], pts[1], subdiv)
+	} else {
+		subdiv2 := splat_2_fixed(subdiv)
+		pt01 = lerp_fixed(pts[0], pts[1], subdiv2)
+	}
+	return
+}
+
+SubdivQuadraticBezier :: proc "contextless" (pts: [3][2]$T, subdiv: T) -> (pt01, pt12, pt012: [2]T) where intrinsics.type_is_float(T) || intrinsics.type_is_specialization_of(T, fixed.Fixed) {
+	when intrinsics.type_is_float(T) {
+		pt01 = linalg.lerp(pts[0], pts[1], subdiv)
+		pt12 = linalg.lerp(pts[1], pts[2], subdiv)
+		pt012 = linalg.lerp(pt01, pt12, subdiv)
+	} else {
+		subdiv2 := splat_2_fixed(subdiv)
+		pt01 = lerp_fixed(pts[0], pts[1], subdiv2)
+		pt12 = lerp_fixed(pts[1], pts[2], subdiv2)
+		pt012 = lerp_fixed(pt01, pt12, subdiv2)
+	}
+	return
+}
+
+SubdivCubicBezier :: proc "contextless" (pts: [4][2]$T, subdiv: T) -> (pt01, pt12, pt23, pt012, pt123, pt0123: [2]T) where intrinsics.type_is_float(T) || intrinsics.type_is_specialization_of(T, fixed.Fixed) {
+	when intrinsics.type_is_float(T) {
+		pt01 = linalg.lerp(pts[0], pts[1], subdiv)
+		pt12 = linalg.lerp(pts[1], pts[2], subdiv)
+		pt23 = linalg.lerp(pts[2], pts[3], subdiv)
+		pt012 = linalg.lerp(pt01, pt12, subdiv)
+		pt123 = linalg.lerp(pt12, pt23, subdiv)
+		pt0123 = linalg.lerp(pt012, pt123, subdiv)
+	} else {
+		subdiv2 := splat_2_fixed(subdiv)
+		pt01 = lerp_fixed(pts[0], pts[1], subdiv2)
+		pt12 = lerp_fixed(pts[1], pts[2], subdiv2)
+		pt23 = lerp_fixed(pts[2], pts[3], subdiv2)
+		pt012 = lerp_fixed(pt01, pt12, subdiv2)
+		pt123 = lerp_fixed(pt12, pt23, subdiv2)
+		pt0123 = lerp_fixed(pt012, pt123, subdiv2)
+	}
+	return
+}
+
 // Fixed-point version of linalg.lerp: result = a + t*(b - a). t is typically in [0, 1].
 // Single proc with type_is_array branch: scalar Fixed or [N]Fixed (component-wise with scalar t).
 lerp_fixed :: proc "contextless" (a, b, t: $T) -> T where intrinsics.type_is_specialization_of(intrinsics.type_elem_type(T), fixed.Fixed) #no_bounds_check {
@@ -393,8 +506,8 @@ PointInPolygon :: proc "contextless" (p: [2]$T, polygon:[][2]T) -> bool where in
 		}
 		windingNumber := 0
 		for i in 0..<len(polygon) {
-			p1 :T= polygon[i]
-			p2 :T= polygon[(i + 1) % len(polygon)]
+			p1 := polygon[i]
+			p2 := polygon[(i + 1) % len(polygon)]
 			if isPointOnSegment(p, p1, p2) do return false
 			if p1.y.i <= p.y.i {
 				if p2.y.i > p.y.i && crossProduct(p1, p2, p).i > 0 do windingNumber += 1
@@ -687,6 +800,11 @@ sr_2d_matrix2 :: proc "contextless" (s: linalg.Vector2f32, r: f32, cp:linalg.Vec
     return nil
 }
 
+
+@(require_results)
+splat_2_fixed :: #force_inline proc "contextless" (v: $T) -> [2]T where intrinsics.type_is_specialization_of(T, fixed.Fixed) {
+	return [2]T{v, v}
+}
 
 @(require_results)
 vector_dot_fixed :: proc "contextless" (a, b: $T/[$N]$E) -> (c: E) where intrinsics.type_is_specialization_of(E, fixed.Fixed) #no_bounds_check {

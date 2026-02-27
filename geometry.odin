@@ -392,7 +392,7 @@ GetCubicCurveType :: proc "contextless" (start:[2]$T, control0:[2]T, control1:[2
         }
     }
     if _subdiv.i == 0 {
-        switch curveType {
+        #partial switch curveType {
             case .Line:
                 return nil
             case .Quadratic:
@@ -488,8 +488,8 @@ GetCubicCurveType :: proc "contextless" (start:[2]$T, control0:[2]T, control1:[2
                     Fixed1},
                 }
                 //reverse = true
-            case .Unknown:
-                unreachable()
+            // case .Unknown:
+            //     unreachable()
         }
     }
    

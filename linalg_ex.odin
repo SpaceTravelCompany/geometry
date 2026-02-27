@@ -333,7 +333,7 @@ PointInTriangle :: proc "contextless" (p : [2]$T, a : [2]T, b : [2]T, c : [2]T) 
 	}
 }
 
-PointInLine :: proc "contextless" (p:[2]$T, l0:[2]T, l1:[2]T) -> (bool, T) where intrinsics.type_is_float(T) || intrinsics.type_is_specialization_of(T, fixed.Fixed){
+PointInLine :: proc "contextless" (p:[2]$T, l0:[2]T, l1:[2]T) -> (T, bool) where intrinsics.type_is_float(T) || intrinsics.type_is_specialization_of(T, fixed.Fixed){
 	when intrinsics.type_is_float(T) {
 		A := (l0.y - l1.y) / (l0.x - l1.x)
 		B := l0.y - A * l0.x
@@ -360,16 +360,16 @@ PointInLine :: proc "contextless" (p:[2]$T, l0:[2]T, l1:[2]T) -> (bool, T) where
 		pY :T = fixed.add(fixed.mul(A, p.x), B)
 		t :T = {}
 		if p.y.i == pY.i {
-			minX :T = min(l0.x, l1.x)
-			maxX :T = max(l0.x, l1.x)
-			t = (p.x - minX) / (maxX - minX)
+			minX :T = min_fixed(l0.x, l1.x)
+			maxX :T = max_fixed(l0.x, l1.x)
+			t = fixed.div(fixed.sub(p.x, minX), fixed.sub(maxX, minX))
 		}
 
-		return res &&
+		return t, p.y.i == pY.i &&
 			p.x.i >= min_fixed(l0.x, l1.x).i &&
 			p.x.i <= max_fixed(l0.x, l1.x).i &&
 			p.y.i >= min_fixed(l0.y, l1.y).i &&
-			p.y.i <= max_fixed(l0.y, l1.y).i, t
+			p.y.i <= max_fixed(l0.y, l1.y).i
 	}
 }
 

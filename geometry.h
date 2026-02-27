@@ -13,24 +13,28 @@ typedef struct { float x, y; } Geometry_Vec2;
 typedef struct { float x, y, z; } Geometry_Vec3;
 typedef struct { float x, y, z, w; } Geometry_Vec4;
 
+/* Geometry_Slice matches Odin runtime.Raw_Slice { data, len } - no copy needed */
+typedef struct {
+    void* data;
+    ssize_t len;
+} Geometry_Slice;
+
+#pragma pack(push, 1)
 typedef struct {
     Geometry_Vec2 pos;
     Geometry_Vec3 uvw;
     Geometry_Vec4 color;
 } Geometry_Vertex;
+#pragma pack(pop)
 
 typedef struct {
-    Geometry_Vertex* vertices;
-    uint32_t* indices;
-    size_t vertex_count;
-    size_t index_count;
+    Geometry_Slice vertices;
+    Geometry_Slice indices;
 } Geometry_RawShape;
 
 typedef struct {
-    Geometry_Vec2* pts;
-    size_t pts_count;
-    uint32_t* curve_pts_ids;
-    size_t curve_pts_ids_count;
+    Geometry_Slice pts;
+    Geometry_Slice curve_pts_ids;
     Geometry_Vec4 color;
     Geometry_Vec4 stroke_color;
     double thickness;
@@ -38,8 +42,7 @@ typedef struct {
 } Geometry_Node;
 
 typedef struct {
-    Geometry_Node* nodes;
-    size_t node_count;
+    Geometry_Slice nodes;
 } Geometry_Shapes;
 
 /* Fixed-point: 24 fractional bits, 1.0 = 1<<24 = 16777216 */
@@ -50,24 +53,23 @@ typedef struct {
     Geometry_Fixed x, y;
 } Geometry_Vec2_Fixed;
 
+#pragma pack(push, 1)
 typedef struct {
     Geometry_Fixed pos[2];
     Geometry_Vec3 uvw;
     Geometry_Vec4 color;
 } Geometry_Vertex_Fixed;
+#pragma pack(pop)
 
 typedef struct {
-    Geometry_Vertex_Fixed* vertices;
-    uint32_t* indices;
-    size_t vertex_count;
-    size_t index_count;
+    Geometry_Slice vertices;
+    Geometry_Slice indices;
 } Geometry_RawShape_Fixed;
 
 typedef struct {
-    Geometry_Vec2_Fixed* pts;
-    size_t pts_count;
-    uint32_t* curve_pts_ids;
-    size_t curve_pts_ids_count;
+    Geometry_Slice pts;
+    Geometry_Slice n_polys;
+    Geometry_Slice curve_pts_ids;
     Geometry_Vec4 color;
     Geometry_Vec4 stroke_color;
     Geometry_Fixed thickness;
@@ -75,8 +77,7 @@ typedef struct {
 } Geometry_Node_Fixed;
 
 typedef struct {
-    Geometry_Node_Fixed* nodes;
-    size_t node_count;
+    Geometry_Slice nodes;
 } Geometry_Shapes_Fixed;
 
 typedef enum {

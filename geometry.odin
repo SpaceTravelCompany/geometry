@@ -735,11 +735,15 @@ shapes_compute_polygoni64 :: proc(poly:shapesi64, allocator := context.allocator
     indList:[dynamic]u32 = make([dynamic]u32, context.temp_allocator)
 
     shapes_compute_polygon_in :: proc(vertList:^[dynamic]shape_vertex2di64, indList:^[dynamic]u32, poly:shapesi64, allocator : runtime.Allocator) -> (err:shape_error = nil) {	
+		using fixed
+
+		non_curves:[dynamic][2]FixedDef = make([dynamic][2]FixedDef, context.temp_allocator)
+		curves:[dynamic]CURVE_STRUCT = make([dynamic]CURVE_STRUCT, context.temp_allocator)
+		insert_ar := make([dynamic][2]FixedDef, context.temp_allocator)
+
         for node, nidx in poly.nodes {
 			if node.color.a > 0 {
-                non_curves:[dynamic][2]FixedDef = make([dynamic][2]FixedDef, context.temp_allocator)
-			    curves:[dynamic]CURVE_STRUCT = make([dynamic]CURVE_STRUCT, context.temp_allocator)
-
+				//
 				curve_idx := 0
 				for pt, i in node.pts {
 					if curve_idx < len(node.curve_pts_ids) && node.curve_pts_ids[curve_idx] == u32(i) {//곡선 점이면
@@ -765,9 +769,8 @@ shapes_compute_polygoni64 :: proc(poly:shapesi64, allocator := context.allocator
 						non_zero_append(&non_curves, pt)
 					}
 				}
-				// First pass: .Loop cubic curves - subdivide at ql/qm when in (0,1).
-				using fixed
-				for i in 0..<len(curves) {
+				//
+				for i := 0 ;i<len(curves);i += 1 {
 					c := curves[i]
 					if c.type != .Quadratic {
 						curveType, d0, d1, d2, _ := GetCubicCurveType(c.start, c.ctl0, c.ctl1, c.end)
@@ -788,54 +791,93 @@ shapes_compute_polygoni64 :: proc(poly:shapesi64, allocator := context.allocator
 								continue
 							}
 							pt01, pt12, pt23, pt012, pt123, pt0123 := SubdivCubicBezier([4][2]FixedDef{c.start, c.ctl0, c.ctl1, c.end}, subdiv_at)
-							new_curves: [dynamic]CURVE_STRUCT = make([dynamic]CURVE_STRUCT, context.temp_allocator)
-							for k in 0..<len(curves) {
-								if k == i {
-									non_zero_append(&new_curves, CURVE_STRUCT{start = c.start, ctl0 = pt01, ctl1 = pt012, end = pt0123, type = .Unknown})
-									non_zero_append(&new_curves, CURVE_STRUCT{start = pt0123, ctl0 = pt123, ctl1 = pt23, end = c.end, type = .Unknown})
-								} else {
-									non_zero_append(&new_curves, curves[k])
-								}
-							}
-							curves = new_curves
+							curves[i] = CURVE_STRUCT{start = c.start, ctl0 = pt01, ctl1 = pt012, end = pt0123, type = .Unknown}
+							non_zero_inject_at_elem(&curves, i + 1, CURVE_STRUCT{start = pt0123, ctl0 = pt123, ctl1 = pt23, end = c.end, type = .Unknown})
+							i += 1//i add extra 1
 						}
 					}
 				}
-				// Second pass: polygon overlap check and subdivision.
-				subdiv_t := Div2Fixed
-				overlap_done := false
-				for i in 0..<len(curves) {
-					if overlap_done do break
-					for j in i + 1..<len(curves) {
-						cur := curves[i]
-						cur2 := curves[j]
-						poly1 := cur.type == .Quadratic ? [][2]FixedDef{cur.start, cur.ctl0, cur.end} : [][2]FixedDef{cur.start, cur.ctl0, cur.ctl1, cur.end}
-						poly2 := cur2.type == .Quadratic ? [][2]FixedDef{cur2.start, cur2.ctl0, cur2.end} : [][2]FixedDef{cur2.start, cur2.ctl0, cur2.ctl1, cur2.end}
-						overlap := PolygonOverlapsPolygon(poly1, poly2)
-						if overlap {
-							new_curves: [dynamic]CURVE_STRUCT = make([dynamic]CURVE_STRUCT, context.temp_allocator)
-							for k in 0..<len(curves) {
-								if k == i || k == j {
-									c := curves[k]
-									if c.type == .Quadratic {
-										pt01, pt12, pt012 := SubdivQuadraticBezier([3][2]FixedDef{c.start, c.ctl0, c.end}, subdiv_t)
-										non_zero_append(&new_curves, CURVE_STRUCT{start = c.start, ctl0 = pt01, end = pt012, type = .Quadratic})
-										non_zero_append(&new_curves, CURVE_STRUCT{start = pt012, ctl0 = pt12, end = c.end, type = .Quadratic})
-									} else {
-										pt01, pt12, pt23, pt012, pt123, pt0123 := SubdivCubicBezier([4][2]FixedDef{c.start, c.ctl0, c.ctl1, c.end}, subdiv_t)
-										non_zero_append(&new_curves, CURVE_STRUCT{start = c.start, ctl0 = pt01, ctl1 = pt012, end = pt0123, type = .Unknown})
-										non_zero_append(&new_curves, CURVE_STRUCT{start = pt0123, ctl0 = pt123, ctl1 = pt23, end = c.end, type = .Unknown})
-									}
+				//
+				has_overlap := false
+				for {
+					for i := 0 ;i<len(curves);i += 1 {
+						for j := 0 ;j<len(curves);j += 1 {
+							if i == j do continue
+							cur := curves[i]
+							cur2 := curves[j]
+							poly1 := cur.type == .Quadratic ? [][2]FixedDef{cur.start, cur.ctl0, cur.end} : [][2]FixedDef{cur.start, cur.ctl0, cur.ctl1, cur.end}
+							poly2 := cur2.type == .Quadratic ? [][2]FixedDef{cur2.start, cur2.ctl0, cur2.end} : [][2]FixedDef{cur2.start, cur2.ctl0, cur2.ctl1, cur2.end}
+							overlap := PolygonOverlapsPolygon(poly1, poly2)
+							if overlap {
+								subdiv_t : FixedDef
+								if cur2.type == .Quadratic {
+									subdiv_t , _ = PointInLine(cur2.ctl0, cur.start, cur.end)
 								} else {
-									non_zero_append(&new_curves, curves[k])
+									subdiv_t , _ = PointInLine(lerp_fixed(cur2.ctl0, cur2.ctl1, splat_2_fixed(Div2Fixed)), cur.start, cur.end)
 								}
+								
+								if cur.type == .Quadratic {
+									pt01, pt12, pt012 := SubdivQuadraticBezier([3][2]FixedDef{cur.start, cur.ctl0, cur.end}, subdiv_t)
+									curves[i] = CURVE_STRUCT{start = cur.start, ctl0 = pt01, end = pt012, type = .Quadratic}
+									non_zero_inject_at_elem(&curves, i + 1, CURVE_STRUCT{start = pt012, ctl0 = pt12,  end = cur.end, type = .Quadratic})
+								} else {
+									pt01, pt12, pt23, pt012, pt123, pt0123 := SubdivCubicBezier([4][2]FixedDef{cur.start, cur.ctl0, cur.ctl1, cur.end}, subdiv_t)
+									curves[i] = CURVE_STRUCT{start = cur.start, ctl0 = pt01, ctl1 = pt012, end = pt0123, type = .Unknown}
+									non_zero_inject_at_elem(&curves, i + 1, CURVE_STRUCT{start = pt0123, ctl0 = pt123, ctl1 = pt23, end = cur.end, type = .Unknown})
+								}
+								has_overlap = true
+								if i < j do j += 1
+								i += 1
+								break
 							}
-							curves = new_curves
-							overlap_done = true
-							break
 						}
 					}
-				} 
+					if !has_overlap do break
+					has_overlap = false
+				}
+				//
+				curve_idx = 0
+				for i := 0; i < len(non_curves); {
+					non := non_curves[i]
+					next := (i + 1) % len(non_curves)
+					non_next := non_curves[next]
+					if non == curves[curve_idx].start {
+						j := curve_idx + 1
+						for ; j < len(curves) && non_next != curves[j].start; j += 1 {}
+						non_zero_resize(&insert_ar, 0)
+
+						if PointInPolygon(curves[curve_idx].ctl0, non_curves[:]) {
+							non_zero_append(&insert_ar, curves[curve_idx].ctl0)
+						}
+						if curves[curve_idx].type != .Quadratic {
+							if PointInPolygon(curves[curve_idx].ctl1, non_curves[:]) {
+								non_zero_append(&insert_ar, curves[curve_idx].ctl1)
+							}
+						}
+						for e := curve_idx + 1; e < j; e += 1 {
+							non_zero_append(&insert_ar, curves[e].start)
+							if PointInPolygon(curves[e].ctl0, non_curves[:]) {
+								non_zero_append(&insert_ar, curves[e].ctl0)
+							}
+							if curves[e].type != .Quadratic {
+								if PointInPolygon(curves[e].ctl1, non_curves[:]) {
+									non_zero_append(&insert_ar, curves[e].ctl1)
+								}
+							}
+						}
+						non_zero_inject_at_elems(&non_curves, next, ..insert_ar[:])
+
+						if j >= len(curves) do break
+						curve_idx = j
+
+						i = next + len(insert_ar)
+					} else {
+						i += 1
+					}
+				}
+				//TODO non_curves trianglation
+
+				//TODO curves _Shapes_ComputeLine
 			}
 		}
 		return

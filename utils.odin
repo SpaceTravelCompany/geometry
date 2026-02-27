@@ -54,3 +54,52 @@ sign :: proc "contextless" (v: $T/fixed.Fixed($Backing, $Fraction_Width)) -> (r:
 @private length2_fixed :: proc "contextless" (v: [2]FixedDef) -> FixedDef {
     return fixed.add(fixed.mul(v.x, v.x), fixed.mul(v.y, v.y))
 }
+
+// `inject_at_elem` injects an element in a dynamic array at a specified index and moves the previous elements after that index "across"
+@private
+non_zero_inject_at_elem :: proc(array: ^$T/[dynamic]$E, #any_int index: int, #no_broadcast arg: E, loc := #caller_location) -> (ok: bool, err: runtime.Allocator_Error) #no_bounds_check #optional_allocator_error {
+	when !ODIN_NO_BOUNDS_CHECK {
+		ensure(index >= 0, "Index must be positive.", loc)
+	}
+	if array == nil {
+		return
+	}
+	n := max(len(array), index)
+	m :: 1
+	new_size := n + m
+
+	non_zero_resize(array, new_size, loc) or_return
+	when size_of(E) != 0 {
+		copy(array[index + m:], array[index:])
+		array[index] = arg
+	}
+	ok = true
+	return
+}
+
+// `inject_at_elems` injects multiple elements in a dynamic array at a specified index and moves the previous elements after that index "across"
+@private
+non_zero_inject_at_elems :: proc(array: ^$T/[dynamic]$E, #any_int index: int, #no_broadcast args: ..E, loc := #caller_location) -> (ok: bool, err: runtime.Allocator_Error) #no_bounds_check #optional_allocator_error {
+	when !ODIN_NO_BOUNDS_CHECK {
+		ensure(index >= 0, "Index must be positive.", loc)
+	}
+	if array == nil {
+		return
+	}
+	if len(args) == 0 {
+		ok = true
+		return
+	}
+
+	n := max(len(array), index)
+	m := len(args)
+	new_size := n + m
+
+	non_zero_resize(array, new_size, loc) or_return
+	when size_of(E) != 0 {
+		copy(array[index + m:], array[index:])
+		copy(array[index:], args)
+	}
+	ok = true
+	return
+}

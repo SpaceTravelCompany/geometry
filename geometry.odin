@@ -185,14 +185,14 @@ GetCubicCurveType :: proc "contextless" (start:[2]$T, control0:[2]T, control1:[2
 		a2 := control0.x * cross_2.x     + control0.y * cross_2.y     + cross_2.z//7
 		a3 := control1.x * cross_3.x     + control1.y * cross_3.y     + cross_3.z//7
 
-		d0 = a1 - 2 * a2 + 3 * a3//27
-		d1 = -a2 + 3 * a3//16
-		d2 = 3 * a3//8
+		d0 = a1 - 2.0 * a2 + 3.0 * a3//27
+		d1 = -a2 + 3.0 * a3//16
+		d2 = 3.0 * a3//8
 
-		D     := 3 * d1 * d1 - 4 * d2 * d0//33 + 36 + 1 = 70
+		D     := 3.0 * d1 * d1 - 4.0 * d2 * d0//33 + 36 + 1 = 70
 		discr := d0 * d0 * D//27 + 27 + 70 = 124
 
-        EP :: math.epsilon(T) * 250// about count float operations
+        EP :: math.epsilon(T) * 250.0// about count float operations
 		if discr >= -EP && discr <= EP {
 			if  d0 >= -EP && d0 <= EP &&  d1 >= -EP && d1 <= EP {
 				if d2 >= -EP && d2 <= EP {
@@ -209,11 +209,11 @@ GetCubicCurveType :: proc "contextless" (start:[2]$T, control0:[2]T, control1:[2
 			type = .Serpentine
 			return
 		}
-		t1 := math.sqrt(f64(4 * d0 * d2 - 3 * d1 * d1))
+		t1 := math.sqrt(f64(4.0 * d0 * d2 - 3.0 * d1 * d1))
 		ls := d1 - T(t1)
-		lt := 2 * d0
+		lt := 2.0 * d0
 		ql := ls / lt
-		EP2 :: math.epsilon(T) * 2
+
 		type = .Loop
 		return
 	}
@@ -245,33 +245,33 @@ GetCubicCurveType :: proc "contextless" (start:[2]$T, control0:[2]T, control1:[2
 		vlen :u32 = u32(len(vertList))
 		if GetPolygonOrientation(pts) == .CounterClockwise {
 			non_zero_append(vertList, shape_vertex2di64{
-				uvw = {0,0,-100},//-100 check this is not cubic curve
+				uvw = {0.0, 0.0, -100.0},//-100 check this is not cubic curve
 				pos = pts[0],
 				color = color,
 			})
 			non_zero_append(vertList, shape_vertex2di64{
-				uvw = {-0.5,0,-100},
+				uvw = {-0.5, 0.0, -100.0},
 				pos = pts[1],
 				color = color,
 			})
 			non_zero_append(vertList, shape_vertex2di64{
-				uvw = {-1,-1,-100},
+				uvw = {-1.0, -1.0, -100.0},
 				pos = pts[2],
 				color = color,
 			})
 		} else {
 			non_zero_append(vertList, shape_vertex2di64{
-				uvw = {0,0,-100},
+				uvw = {0.0, 0.0, -100.0},
 				pos = pts[0],
 				color = color,
 			})
 			non_zero_append(vertList, shape_vertex2di64{
-				uvw = {0.5,0,-100},
+				uvw = {0.5, 0.0, -100.0},
 				pos = pts[1],
 				color = color,
 			})
 			non_zero_append(vertList, shape_vertex2di64{
-				uvw = {1,1,-100},
+				uvw = {1.0, 1.0, -100.0},
 				pos = pts[2],
 				color = color,
 			})
@@ -814,13 +814,4 @@ shapes_compute_polygoni64 :: proc(poly:shapesi64, allocator := context.allocator
 		return
 	}
 	return
-}
-
-poly_transform_matrix :: proc "contextless" (inout_poly: ^shapes, F: linalg.Matrix4x4f32) {
-	for &node in inout_poly.nodes {
-		for &pts in node.pts {
-			out := linalg.mul(F, linalg.Vector4f32{pts.x, pts.y, 0, 1})
-			pts = linalg.Vector2f32{out.x, out.y} / out.w
-		}
-	}
 }

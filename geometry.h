@@ -16,16 +16,15 @@ typedef struct { float x, y, z, w; } Geometry_Vec4;
 /* Geometry_Slice matches Odin runtime.Raw_Slice { data, len } - no copy needed */
 typedef struct {
     void* data;
-    ssize_t len;
+    intptr_t len;
 } Geometry_Slice;
 
-#pragma pack(push, 1)
+//use gpu shader std140 layout
 typedef struct {
     Geometry_Vec2 pos;
     Geometry_Vec3 uvw;
     Geometry_Vec4 color;
 } Geometry_Vertex;
-#pragma pack(pop)
 
 typedef struct {
     Geometry_Slice vertices;
@@ -34,6 +33,7 @@ typedef struct {
 
 typedef struct {
     Geometry_Slice pts;
+    Geometry_Slice n_polys;
     Geometry_Slice curve_pts_ids;
     Geometry_Vec4 color;
     Geometry_Vec4 stroke_color;
@@ -51,13 +51,12 @@ typedef struct {
     Geometry_Fixed x, y;
 } Geometry_Vec2_Fixed;
 
-#pragma pack(push, 1)
+//use gpu shader std140 layout
 typedef struct {
     Geometry_Fixed pos[2];
     Geometry_Vec3 uvw;
     Geometry_Vec4 color;
 } Geometry_Vertex_Fixed;
-#pragma pack(pop)
 
 typedef struct {
     Geometry_Slice vertices;

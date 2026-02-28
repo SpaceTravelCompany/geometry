@@ -20,14 +20,14 @@ FixedDef :: fixed.Fixed(i64, FIXED_SHIFT)
 @private Div3Fixed :: fixed.Fixed(i64, FIXED_SHIFT){i = (1 << FIXED_SHIFT) / 3}
 @private Div3Mul2Fixed :: fixed.Fixed(i64, FIXED_SHIFT){i = (2 << FIXED_SHIFT) / 3}
 
-
-shape_vertex2di64 :: struct #align(1) {
+//use gpu shader std140 layout
+shape_vertex2di64 :: struct {
     pos: [2]FixedDef,
     uvw: linalg.Vector3f32,
     color: linalg.Vector4f32,
 };
-
-shape_vertex2d :: struct #align(1) {
+//use gpu shader std140 layout
+shape_vertex2d :: struct {
     pos: linalg.Vector2f32,
     uvw: linalg.Vector3f32,
     color: linalg.Vector4f32,
@@ -67,6 +67,7 @@ shape_error :: union #shared_nil {
 
 shape_node :: struct {
     pts: []linalg.Vector2f32,
+    n_polys:[]u32,
 	curve_pts_ids: []u32,
     color: linalg.Vector4f32,
     stroke_color: linalg.Vector4f32,
@@ -108,7 +109,7 @@ raw_shapei64_clone :: proc (self:raw_shapei64, allocator := context.allocator) -
 
     res.indices = make_non_zeroed_slice([]u32, len(self.indices), allocator) or_return
 
-    intrinsics.mem_copy_non_overlapping(&res.vertices[0], &self.vertices[0], len(self.vertices) * size_of(shape_vertex2d))
+    intrinsics.mem_copy_non_overlapping(&res.vertices[0], &self.vertices[0], len(self.vertices) * size_of(shape_vertex2di64))
     intrinsics.mem_copy_non_overlapping(&res.indices[0], &self.indices[0], len(self.indices) * size_of(u32))
     return
 }
@@ -170,10 +171,6 @@ GetCubicCurveType :: proc "contextless" (start:[2]$T, control0:[2]T, control1:[2
 			type = .Serpentine
 			return
 		}
-		t1 := T{i = sqrt_i64((4 * d0.i * d2.i - 3 * d1.i * d1.i) << FIXED_SHIFT)}
-		ls := sub(d1, t1)
-		lt := mul(Fixed2, d0)
-		ql := div(ls, lt)
 		type = .Loop
 		return
 	} else {// float
@@ -209,11 +206,6 @@ GetCubicCurveType :: proc "contextless" (start:[2]$T, control0:[2]T, control1:[2
 			type = .Serpentine
 			return
 		}
-		t1 := math.sqrt(f64(4.0 * d0 * d2 - 3.0 * d1 * d1))
-		ls := d1 - T(t1)
-		lt := 2.0 * d0
-		ql := ls / lt
-
 		type = .Loop
 		return
 	}
@@ -225,11 +217,9 @@ GetCubicCurveType :: proc "contextless" (start:[2]$T, control0:[2]T, control1:[2
     indList:^[dynamic]u32,
     color:linalg.Vector4f32,
     pts:[][2]FixedDef,
-    type:curve_type,
-    _subdiv :FixedDef = {}) -> shape_error {
+    type:curve_type) -> shape_error {
 
     using fixed
-    assert(_subdiv.i >= 0)
 
     curveType := type
     err:shape_error = nil
@@ -290,106 +280,105 @@ GetCubicCurveType :: proc "contextless" (start:[2]$T, control0:[2]T, control1:[2
             {sign(F[3][0]), sign(F[3][1]), F[3][2]},
         }
     }
-    if _subdiv.i == 0 {
-        #partial switch curveType {
-            case .Line:
-                return nil
-            case .Quadratic:
-                F = {{{}, {}, {}},
-                    {Div3Fixed, {},	Div3Fixed},
-                    {Div3Mul2Fixed,	Div3Fixed, 	Div3Mul2Fixed},
-                    {Fixed1, Fixed1, Fixed1},
-                }
-                if d2.i < 0 do reverse = true
-            case .Serpentine:
-                t1 := FixedDef{i=sqrt_i64((9 * mul(d1, d1).i - 12 * mul(d0, d2).i) << FIXED_SHIFT)}//mul PRECISION for sqrt
-                ls := FixedDef{i=3 * d1.i - t1.i}
-                lt := FixedDef{i=6 * d0.i}
-                ms := FixedDef{i=3 * d1.i + t1.i}
-                mt := lt
-                ltMinusLs := sub(lt, ls)
-                mtMinusMs := sub(mt, ms)
 
-                lsls := mul(ls, ls)
-                msms := mul(ms, ms)
+    #partial switch curveType {
+        case .Line:
+            return nil
+        case .Quadratic:
+            F = {{{}, {}, {}},
+                {Div3Fixed, {},	Div3Fixed},
+                {Div3Mul2Fixed,	Div3Fixed, 	Div3Mul2Fixed},
+                {Fixed1, Fixed1, Fixed1},
+            }
+            if d2.i < 0 do reverse = true
+        case .Serpentine:
+            t1 := FixedDef{i=sqrt_i64((9 * mul(d1, d1).i - 12 * mul(d0, d2).i) << FIXED_SHIFT)}//mul PRECISION for sqrt
+            ls := FixedDef{i=3 * d1.i - t1.i}
+            lt := FixedDef{i=6 * d0.i}
+            ms := FixedDef{i=3 * d1.i + t1.i}
+            mt := lt
+            ltMinusLs := sub(lt, ls)
+            mtMinusMs := sub(mt, ms)
 
-                F = {{mul(ls, ms),
-					mul(lsls, ls),
-					mul(msms, ms)},
+            lsls := mul(ls, ls)
+            msms := mul(ms, ms)
 
-                    {FixedDef{i=3 * mul(ls, ms).i - mul(ls, mt).i - mul(lt, ms).i / 3},
-					mul(lsls, sub(ls, lt)),
-					mul(lsls, sub(ms, mt))},
+            F = {{mul(ls, ms),
+				mul(lsls, ls),
+				mul(msms, ms)},
 
-                    {FixedDef{i=(mul(lt, FixedDef{i=(mt.i - 2 * ms.i)}).i + mul(ls, FixedDef{i=(3 * ms.i - 2 * mt.i)}).i) / 3},
-					mul(mul(ltMinusLs, ltMinusLs), ls),
-					mul(mul(mtMinusMs, mtMinusMs), ms)},
+                {FixedDef{i=3 * mul(ls, ms).i - mul(ls, mt).i - mul(lt, ms).i / 3},
+				mul(lsls, sub(ls, lt)),
+				mul(lsls, sub(ms, mt))},
 
-                    {mul(ltMinusLs, mtMinusMs),
-					sign(mul(mul(ltMinusLs, ltMinusLs), ltMinusLs)),
-					sign(mul(mul(mtMinusMs, mtMinusMs), mtMinusMs))},
-                }
+                {FixedDef{i=(mul(lt, FixedDef{i=(mt.i - 2 * ms.i)}).i + mul(ls, FixedDef{i=(3 * ms.i - 2 * mt.i)}).i) / 3},
+				mul(mul(ltMinusLs, ltMinusLs), ls),
+				mul(mul(mtMinusMs, mtMinusMs), ms)},
 
-                if d0.i < 0 do reverse = true
-            case .Loop:
-                t1 := FixedDef{i=sqrt_i64((4 * d0.i * d2.i - 3 * d1.i * d1.i) << FIXED_SHIFT)}
-                ls := sub(d1, t1)
-                lt := mul(Fixed2, d0)
-                ms := add(d1, t1)
-                mt := lt
+                {mul(ltMinusLs, mtMinusMs),
+				sign(mul(mul(ltMinusLs, ltMinusLs), ltMinusLs)),
+				sign(mul(mul(mtMinusMs, mtMinusMs), mtMinusMs))},
+            }
 
-                ql := div(ls, lt)
-                qm := div(ms, mt)
-                ltMinusLs := sub(lt, ls)
-                mtMinusMs := sub(mt, ms)
+            if d0.i < 0 do reverse = true
+        case .Loop:
+            t1 := FixedDef{i=sqrt_i64((4 * d0.i * d2.i - 3 * d1.i * d1.i) << FIXED_SHIFT)}
+            ls := sub(d1, t1)
+            lt := mul(Fixed2, d0)
+            ms := add(d1, t1)
+            mt := lt
 
-                lsms := mul(ls, ms)
-                ltms := mul(lt, ms)
-                F = {
-                    {lsms,
-                    mul(ls, lsms),
-                    mul(ms, lsms)},
+            ql := div(ls, lt)
+            qm := div(ms, mt)
+            ltMinusLs := sub(lt, ls)
+            mtMinusMs := sub(mt, ms)
 
-                    {div( add( sub(mul(sign(ls), mt), ltms), mul(Fixed3, lsms) ), Fixed3),//(-ls * mt - ltms + 3 * lsms) / 3
-                    div(mul(sign(add(mul(ls, (sub(mt, mul(Fixed3, ms)))), mul(Fixed2, ltms))), ls), Fixed3),//-(ls * (mt - 3 * ms) + 2 * ltms) * ls / 3
-                    div(mul(sign(add(mul(ls, (sub(mul(Fixed2, mt), mul(Fixed3, ms)))), ltms)), ms), Fixed3)},//-(ls * (2 * mt - 3 * ms) + ltms) * ms / 3
+            lsms := mul(ls, ms)
+            ltms := mul(lt, ms)
+            F = {
+                {lsms,
+                mul(ls, lsms),
+                mul(ms, lsms)},
 
-                    {div(add(mul(lt, sub(mt, mul(Fixed2, ms))), mul(ls, sub(mul(Fixed3, ms), mul(Fixed2, mt)))), Fixed3),//(lt * (mt - 2.0 * ms) + ls * (3.0 * ms - 2.0 * mt)) / 3
-                    div(div(add(mul(ls, sub(mul(Fixed2, mt), mul(Fixed3, ms))), ltms), ltMinusLs), Fixed3),//(ls * (2.0 * mt - 3.0 * ms) + ltms) / ltMinusLs / 3
-                    div(div(add(mul(ls, sub(mt, mul(Fixed3, ms))), mul(Fixed2, ltms)), mtMinusMs), Fixed3)},//(ls * (mt - 3.0 * ms) + 2.0 * ltms) / mtMinusMs / 3
+                {div( add( sub(mul(sign(ls), mt), ltms), mul(Fixed3, lsms) ), Fixed3),//(-ls * mt - ltms + 3 * lsms) / 3
+                div(mul(sign(add(mul(ls, (sub(mt, mul(Fixed3, ms)))), mul(Fixed2, ltms))), ls), Fixed3),//-(ls * (mt - 3 * ms) + 2 * ltms) * ls / 3
+                div(mul(sign(add(mul(ls, (sub(mul(Fixed2, mt), mul(Fixed3, ms)))), ltms)), ms), Fixed3)},//-(ls * (2 * mt - 3 * ms) + ltms) * ms / 3
 
-                    {mul(ltMinusLs, mtMinusMs),
-                    sign(mul(mul(ltMinusLs, ltMinusLs), mtMinusMs)),
-                    sign(mul(ltMinusLs, mul(mtMinusMs, mtMinusMs)))},
-                }
-                reverse = (d0.i > 0 && F[1][0].i < 0) || (d0.i < 0 && F[1][0].i > 0)
-            case .Cusp:
-                ls := d2
-                lt := mul(Fixed3, d1)
-                lsMinusLt := sub(ls, lt)
-                lsls := mul(ls, ls)
-                lsMinusLtSq := mul(lsMinusLt, lsMinusLt)
-                F = {
-                    {ls,
-                    div(mul(lsls, ls), mul(Fixed1, Fixed1)),
-                    Fixed1},
+                {div(add(mul(lt, sub(mt, mul(Fixed2, ms))), mul(ls, sub(mul(Fixed3, ms), mul(Fixed2, mt)))), Fixed3),//(lt * (mt - 2.0 * ms) + ls * (3.0 * ms - 2.0 * mt)) / 3
+                div(div(add(mul(ls, sub(mul(Fixed2, mt), mul(Fixed3, ms))), ltms), ltMinusLs), Fixed3),//(ls * (2.0 * mt - 3.0 * ms) + ltms) / ltMinusLs / 3
+                div(div(add(mul(ls, sub(mt, mul(Fixed3, ms))), mul(Fixed2, ltms)), mtMinusMs), Fixed3)},//(ls * (mt - 3.0 * ms) + 2.0 * ltms) / mtMinusMs / 3
 
-                    {sub(ls, div(lt, Fixed3)),
-                    div(mul(lsls, lsMinusLt), mul(Fixed1, Fixed1)),
-                    Fixed1},
+                {mul(ltMinusLs, mtMinusMs),
+                sign(mul(mul(ltMinusLs, ltMinusLs), mtMinusMs)),
+                sign(mul(ltMinusLs, mul(mtMinusMs, mtMinusMs)))},
+            }
+            reverse = (d0.i > 0 && F[1][0].i < 0) || (d0.i < 0 && F[1][0].i > 0)
+        case .Cusp:
+            ls := d2
+            lt := mul(Fixed3, d1)
+            lsMinusLt := sub(ls, lt)
+            lsls := mul(ls, ls)
+            lsMinusLtSq := mul(lsMinusLt, lsMinusLt)
+            F = {
+                {ls,
+                div(mul(lsls, ls), mul(Fixed1, Fixed1)),
+                Fixed1},
 
-                    {sub(ls, div(mul(Fixed2, lt), Fixed3)),
-                    div(mul(lsMinusLtSq, ls), mul(Fixed1, Fixed1)),
-                    Fixed1},
+                {sub(ls, div(lt, Fixed3)),
+                div(mul(lsls, lsMinusLt), mul(Fixed1, Fixed1)),
+                Fixed1},
 
-                    {lsMinusLt,
-                    div(mul(lsMinusLtSq, lsMinusLt), mul(Fixed1, Fixed1)),
-                    Fixed1},
-                }
-                //reverse = true
-            // case .Unknown:
-            //     unreachable()
-        }
+                {sub(ls, div(mul(Fixed2, lt), Fixed3)),
+                div(mul(lsMinusLtSq, ls), mul(Fixed1, Fixed1)),
+                Fixed1},
+
+                {lsMinusLt,
+                div(mul(lsMinusLtSq, lsMinusLt), mul(Fixed1, Fixed1)),
+                Fixed1},
+            }
+            //reverse = true
+        // case .Unknown:
+        //     unreachable()
     }
 
 	//if loop_reverse do reverse = !reverse
@@ -491,7 +480,7 @@ cvt_raw_shapei64_to_raw_shape :: proc(raw64:raw_shapei64, allocator := context.a
 	res.vertices = make_non_zeroed_slice([]shape_vertex2d, len(raw64.vertices), allocator) or_return
 	defer if err != nil do delete(res.vertices, allocator)
 	res.indices = make_non_zeroed_slice([]u32, len(raw64.indices), allocator) or_return
-	defer if err != nil do delete(res.indices, allocator)// not working
+	defer if err != nil do delete(res.indices, allocator)
 
 	for v, i in raw64.vertices {
 		res.vertices[i].pos.x = f32(fixed.to_f64(v.pos.x))
@@ -500,7 +489,7 @@ cvt_raw_shapei64_to_raw_shape :: proc(raw64:raw_shapei64, allocator := context.a
 		res.vertices[i].color = v.color
 		res.vertices[i].uvw = v.uvw
 	}
-	mem.copy_non_overlapping(raw_data(raw64.indices), raw_data(raw64.indices), len(raw64.indices) * size_of(u32))
+	mem.copy_non_overlapping(raw_data(res.indices), raw_data(raw64.indices), len(raw64.indices) * size_of(u32))
 
 	return
 }
@@ -509,7 +498,7 @@ cvt_raw_shape_to_raw_shapei64 :: proc(raw:raw_shape, allocator := context.alloca
 	res.vertices = make_non_zeroed_slice([]shape_vertex2di64, len(raw.vertices), allocator) or_return
 	defer if err != nil do delete(res.vertices, allocator)
 	res.indices = make_non_zeroed_slice([]u32, len(raw.indices), allocator) or_return
-	defer if err != nil do delete(res.indices, allocator)// not working
+	defer if err != nil do delete(res.indices, allocator)
 
 	for v, i in raw.vertices {
         fixed.init_from_f64(&res.vertices[i].pos.x, f64(v.pos.x))
@@ -529,14 +518,14 @@ cvt_shapes_to_shapesi64 :: proc(poly:shapes, allocator := context.allocator) -> 
 	}
 
 	for n, i in poly.nodes {
-		poly64.nodes[i].pts = make_non_zeroed_slice([][2]FixedDef, len(n.pts), allocator)
+		poly64.nodes[i].pts = make_non_zeroed_slice([][2]FixedDef, len(n.pts), allocator) or_return
 		for p, j in n.pts {
             fixed.init_from_f64(&poly64.nodes[i].pts[j].x, f64(p.x))
             fixed.init_from_f64(&poly64.nodes[i].pts[j].y, f64(p.y))
 		}
 
 		if n.curve_pts_ids != nil {
-			poly64.nodes[i].curve_pts_ids = make_non_zeroed_slice([]u32, len(n.curve_pts_ids), allocator)
+			poly64.nodes[i].curve_pts_ids = make_non_zeroed_slice([]u32, len(n.curve_pts_ids), allocator) or_return
 			mem.copy_non_overlapping(raw_data(poly64.nodes[i].curve_pts_ids), raw_data(n.curve_pts_ids), len(n.curve_pts_ids) * size_of(u32))
 		} else {
 			poly64.nodes[i].curve_pts_ids = nil
@@ -546,6 +535,8 @@ cvt_shapes_to_shapesi64 :: proc(poly:shapes, allocator := context.allocator) -> 
 		fixed.init_from_f64(&poly64.nodes[i].thickness, n.thickness)
 		poly64.nodes[i].color = n.color
 		poly64.nodes[i].stroke_color = n.stroke_color
+
+		mem.copy_non_overlapping(raw_data(poly64.nodes[i].n_polys), raw_data(n.n_polys), len(n.n_polys) * size_of(u32))
 	}
 	return
 }
@@ -556,14 +547,14 @@ cvt_shapesi64_to_shapes :: proc(poly:shapesi64, allocator := context.allocator) 
 	}
 
 	for n, i in poly.nodes {
-		poly32.nodes[i].pts = make_non_zeroed_slice([]linalg.Vector2f32, len(n.pts), allocator)
+		poly32.nodes[i].pts = make_non_zeroed_slice([]linalg.Vector2f32, len(n.pts), allocator) or_return
 		for p, j in n.pts {
 			poly32.nodes[i].pts[j].x = f32(fixed.to_f64(p.x))
 			poly32.nodes[i].pts[j].y = f32(fixed.to_f64(p.y))
 		}
 
 		if n.curve_pts_ids != nil {
-			poly32.nodes[i].curve_pts_ids = make_non_zeroed_slice([]u32, len(n.curve_pts_ids), allocator)
+			poly32.nodes[i].curve_pts_ids = make_non_zeroed_slice([]u32, len(n.curve_pts_ids), allocator) or_return
 			mem.copy_non_overlapping(raw_data(poly32.nodes[i].curve_pts_ids), raw_data(n.curve_pts_ids), len(n.curve_pts_ids) * size_of(u32))
 		} else {
 			poly32.nodes[i].curve_pts_ids = nil
@@ -573,6 +564,8 @@ cvt_shapesi64_to_shapes :: proc(poly:shapesi64, allocator := context.allocator) 
 		poly32.nodes[i].thickness = fixed.to_f64(n.thickness)
 		poly32.nodes[i].color = n.color
 		poly32.nodes[i].stroke_color = n.stroke_color
+
+		mem.copy_non_overlapping(raw_data(poly32.nodes[i].n_polys), raw_data(n.n_polys), len(n.n_polys) * size_of(u32))
 	}
 	return
 }

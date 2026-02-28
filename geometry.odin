@@ -638,6 +638,7 @@ shapes_compute_polygoni64 :: proc(poly:shapesi64, allocator := context.allocator
 
 		non_curves:[dynamic][2]FixedDef = make([dynamic][2]FixedDef, context.temp_allocator)
 		non_curves_npolys:[dynamic]u32 = make([dynamic]u32, context.temp_allocator)
+		non_curves_ccw:[dynamic]PolyOrientation = make([dynamic]PolyOrientation, context.temp_allocator)
 		curves:[dynamic]CURVE_STRUCT = make([dynamic]CURVE_STRUCT, context.temp_allocator)
 		curves_npolys:[dynamic]u32 = make([dynamic]u32, context.temp_allocator)
 		insert_ar := make([dynamic][2]FixedDef, context.temp_allocator)
@@ -648,8 +649,12 @@ shapes_compute_polygoni64 :: proc(poly:shapesi64, allocator := context.allocator
 			if node.color.a > 0 {
 				//
 				curve_idx := 0
-				resize(&non_curves_npolys, len(node.n_polys))
-				resize(&curves_npolys, len(node.n_polys))//zero init
+				non_zero_resize(&non_curves_npolys, len(node.n_polys))
+				non_zero_resize(&curves_npolys, len(node.n_polys))
+				non_zero_resize(&non_curves_ccw, len(node.n_polys))
+				mem.zero_slice(non_curves_npolys[:])
+				mem.zero_slice(curves_npolys[:])
+
 				for np, npi in node.n_polys {
 					for pt, i in node.pts {
 						if curve_idx < len(node.curve_pts_ids) && node.curve_pts_ids[curve_idx] == u32(i) {//곡선 점이면
@@ -746,43 +751,56 @@ shapes_compute_polygoni64 :: proc(poly:shapesi64, allocator := context.allocator
 				}
 				//
 				curve_idx = 0
-				for i := 0; i < len(non_curves); {
-					non := non_curves[i]
-					next := (i + 1) % len(non_curves)
-					non_next := non_curves[next]
-					if non == curves[curve_idx].start {
-						j := curve_idx + 1
-						for ; j < len(curves) && non_next != curves[j].start; j += 1 {}
-						non_zero_resize(&insert_ar, 0)
+				np_start := 0
+				np_end := 0
 
-						if PointInPolygon(curves[curve_idx].ctl0, non_curves[:]) {
-							non_zero_append(&insert_ar, curves[curve_idx].ctl0)
-						}
-						if curves[curve_idx].type != .Quadratic {
-							if PointInPolygon(curves[curve_idx].ctl1, non_curves[:]) {
-								non_zero_append(&insert_ar, curves[curve_idx].ctl1)
+				for &np, npi in non_curves_npolys {
+					np_end += int(np)
+					for i := np_start; i < np_end; {
+						non := non_curves[i]
+						next := i + 1 >= np_end ? np_start : i + 1
+						non_next := non_curves[next]
+						if curve_idx < int(curves_npolys[npi]) && non == curves[curve_idx].start {
+							j := curve_idx + 1
+							for ; j < len(curves) && non_next != curves[j].start; j += 1 {}
+							non_zero_resize(&insert_ar, 0)
+
+							non_curves_ccw[npi] = GetPolygonOrientation(non_curves[np_start:np_end])
+							invent_b := non_curves_ccw[npi] != .CounterClockwise//바깥쪽 도형이 아님 안쪽(구멍) 도형
+
+							if invent_bool(PointInPolygon(curves[curve_idx].ctl0, non_curves[np_start:np_end]), invent_b) {//첫번째를 루프밖에서 먼저 넣는다.
+								non_zero_append(&insert_ar, curves[curve_idx].ctl0)
 							}
-						}
-						for e := curve_idx + 1; e < j; e += 1 {
-							non_zero_append(&insert_ar, curves[e].start)
-							if PointInPolygon(curves[e].ctl0, non_curves[:]) {
-								non_zero_append(&insert_ar, curves[e].ctl0)
-							}
-							if curves[e].type != .Quadratic {
-								if PointInPolygon(curves[e].ctl1, non_curves[:]) {
-									non_zero_append(&insert_ar, curves[e].ctl1)
+							if curves[curve_idx].type != .Quadratic {
+								if invent_bool(PointInPolygon(curves[curve_idx].ctl1, non_curves[np_start:np_end]), invent_b) {
+									non_zero_append(&insert_ar, curves[curve_idx].ctl1)
 								}
 							}
+							for e := curve_idx + 1; e < j; e += 1 {
+								non_zero_append(&insert_ar, curves[e].start)
+								if invent_bool(PointInPolygon(curves[e].ctl0, non_curves[np_start:np_end]), invent_b) {
+									non_zero_append(&insert_ar, curves[e].ctl0)
+								}
+								if curves[e].type != .Quadratic {
+									if invent_bool(PointInPolygon(curves[e].ctl1, non_curves[np_start:np_end]), invent_b) {
+										non_zero_append(&insert_ar, curves[e].ctl1)
+									}
+								}
+							}
+							
+							non_zero_inject_at_elems(&non_curves, next, ..insert_ar[:])
+							np += u32(len(insert_ar))
+							np_end += len(insert_ar)
+
+							if j >= len(curves) do break
+							curve_idx = j
+
+							i = next + len(insert_ar)
+						} else {
+							i += 1
 						}
-						non_zero_inject_at_elems(&non_curves, next, ..insert_ar[:])
-
-						if j >= len(curves) do break
-						curve_idx = j
-
-						i = next + len(insert_ar)
-					} else {
-						i += 1
 					}
+					np_start += int(np)
 				}
 				//TODO non_curves trianglation
 

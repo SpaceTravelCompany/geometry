@@ -39,10 +39,7 @@ import "core:math/fixed"
 		return nil, .Mode_Not_Implemented
 
 	case .Resize:
-		data := realloc_func(old_memory, auto_cast size)
-		if data == nil do return nil, .Out_Of_Memory
-		mem.zero(data, size)
-		return slice.bytes_from_ptr(data, size), nil
+		return nil, .Mode_Not_Implemented
 
 	case .Resize_Non_Zeroed:
 		data := realloc_func(old_memory, auto_cast size)
@@ -52,7 +49,7 @@ import "core:math/fixed"
 	case .Query_Features:
 		set := (^runtime.Allocator_Mode_Set)(old_memory)
 		if set != nil {
-			set^ = {.Alloc, .Alloc_Non_Zeroed, .Free, .Resize, .Resize_Non_Zeroed, .Query_Features}
+			set^ = {.Alloc, .Alloc_Non_Zeroed, .Free, .Resize_Non_Zeroed, .Query_Features}
 		}
 		return nil, nil
 

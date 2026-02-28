@@ -644,14 +644,14 @@ shapes_compute_polygoni64 :: proc(poly:shapesi64, allocator := context.allocator
 		insert_ar := make([dynamic][2]FixedDef, context.temp_allocator)
 
         for node, nidx in poly.nodes {
-			non_zero_resize(&non_curves, 0)
-			non_zero_resize(&curves, 0)
+			non_zero_resize(&non_curves, 0) or_return
+			non_zero_resize(&curves, 0) or_return
 			if node.color.a > 0 {
 				//
 				curve_idx := 0
-				non_zero_resize(&non_curves_npolys, len(node.n_polys))
-				non_zero_resize(&curves_npolys, len(node.n_polys))
-				non_zero_resize(&non_curves_ccw, len(node.n_polys))
+				non_zero_resize(&non_curves_npolys, len(node.n_polys)) or_return
+				non_zero_resize(&curves_npolys, len(node.n_polys)) or_return
+				non_zero_resize(&non_curves_ccw, len(node.n_polys)) or_return
 				mem.zero_slice(non_curves_npolys[:])
 				mem.zero_slice(curves_npolys[:])
 
@@ -665,7 +665,7 @@ shapes_compute_polygoni64 :: proc(poly:shapesi64, allocator := context.allocator
 									ctl1 = node.pts[i + 1],
 									end = node.pts[i + 2 >= len(node.pts) ? 0 : i + 2],
 									type = .Unknown,
-								})
+								}) or_return
 								curve_idx += 2
 							} else {
 								non_zero_append(&curves, CURVE_STRUCT{
@@ -673,12 +673,12 @@ shapes_compute_polygoni64 :: proc(poly:shapesi64, allocator := context.allocator
 									ctl0 = node.pts[i],
 									end = node.pts[i + 1 >= len(node.pts) ? 0 : i + 1],
 									type = .Quadratic,
-								})
+								}) or_return
 								curve_idx += 1
 							}
 							curves_npolys[npi] += 1
 						} else {
-							non_zero_append(&non_curves, pt)
+							non_zero_append(&non_curves, pt) or_return
 							non_curves_npolys[npi] += 1
 						}
 					}
@@ -706,7 +706,7 @@ shapes_compute_polygoni64 :: proc(poly:shapesi64, allocator := context.allocator
 							}
 							pt01, pt12, pt23, pt012, pt123, pt0123 := SubdivCubicBezier([4][2]FixedDef{c.start, c.ctl0, c.ctl1, c.end}, subdiv_at)
 							curves[i] = CURVE_STRUCT{start = c.start, ctl0 = pt01, ctl1 = pt012, end = pt0123, type = .Unknown}
-							non_zero_inject_at_elem(&curves, i + 1, CURVE_STRUCT{start = pt0123, ctl0 = pt123, ctl1 = pt23, end = c.end, type = .Unknown})
+							non_zero_inject_at_elem(&curves, i + 1, CURVE_STRUCT{start = pt0123, ctl0 = pt123, ctl1 = pt23, end = c.end, type = .Unknown}) or_return
 							i += 1//i add extra 1
 						}
 					}
@@ -733,11 +733,11 @@ shapes_compute_polygoni64 :: proc(poly:shapesi64, allocator := context.allocator
 								if cur.type == .Quadratic {
 									pt01, pt12, pt012 := SubdivQuadraticBezier([3][2]FixedDef{cur.start, cur.ctl0, cur.end}, subdiv_t)
 									curves[i] = CURVE_STRUCT{start = cur.start, ctl0 = pt01, end = pt012, type = .Quadratic}
-									non_zero_inject_at_elem(&curves, i + 1, CURVE_STRUCT{start = pt012, ctl0 = pt12,  end = cur.end, type = .Quadratic})
+									non_zero_inject_at_elem(&curves, i + 1, CURVE_STRUCT{start = pt012, ctl0 = pt12,  end = cur.end, type = .Quadratic}) or_return
 								} else {
 									pt01, pt12, pt23, pt012, pt123, pt0123 := SubdivCubicBezier([4][2]FixedDef{cur.start, cur.ctl0, cur.ctl1, cur.end}, subdiv_t)
 									curves[i] = CURVE_STRUCT{start = cur.start, ctl0 = pt01, ctl1 = pt012, end = pt0123, type = .Unknown}
-									non_zero_inject_at_elem(&curves, i + 1, CURVE_STRUCT{start = pt0123, ctl0 = pt123, ctl1 = pt23, end = cur.end, type = .Unknown})
+									non_zero_inject_at_elem(&curves, i + 1, CURVE_STRUCT{start = pt0123, ctl0 = pt123, ctl1 = pt23, end = cur.end, type = .Unknown}) or_return
 								}
 								has_overlap = true
 								if i < j do j += 1
@@ -751,44 +751,48 @@ shapes_compute_polygoni64 :: proc(poly:shapesi64, allocator := context.allocator
 				}
 				//
 				curve_idx = 0
+				curve_idx_end := 0
 				np_start := 0
 				np_end := 0
 
 				for &np, npi in non_curves_npolys {
 					np_end += int(np)
+					curve_idx_end += int(curves_npolys[npi])
+
 					for i := np_start; i < np_end; {
 						non := non_curves[i]
 						next := i + 1 >= np_end ? np_start : i + 1
 						non_next := non_curves[next]
-						if curve_idx < int(curves_npolys[npi]) && non == curves[curve_idx].start {
+
+						if curve_idx < curve_idx_end && non == curves[curve_idx].start {
 							j := curve_idx + 1
 							for ; j < len(curves) && non_next != curves[j].start; j += 1 {}
-							non_zero_resize(&insert_ar, 0)
+							non_zero_resize(&insert_ar, 0) or_return
 
 							non_curves_ccw[npi] = GetPolygonOrientation(non_curves[np_start:np_end])
 							invent_b := non_curves_ccw[npi] != .CounterClockwise//바깥쪽 도형이 아님 안쪽(구멍) 도형
 
 							if invent_bool(PointInPolygon(curves[curve_idx].ctl0, non_curves[np_start:np_end]), invent_b) {//첫번째를 루프밖에서 먼저 넣는다.
-								non_zero_append(&insert_ar, curves[curve_idx].ctl0)
+								non_zero_append(&insert_ar, curves[curve_idx].ctl0) or_return
 							}
 							if curves[curve_idx].type != .Quadratic {
 								if invent_bool(PointInPolygon(curves[curve_idx].ctl1, non_curves[np_start:np_end]), invent_b) {
-									non_zero_append(&insert_ar, curves[curve_idx].ctl1)
+									non_zero_append(&insert_ar, curves[curve_idx].ctl1) or_return
 								}
 							}
 							for e := curve_idx + 1; e < j; e += 1 {
-								non_zero_append(&insert_ar, curves[e].start)
+								non_zero_append(&insert_ar, curves[e].start) or_return
 								if invent_bool(PointInPolygon(curves[e].ctl0, non_curves[np_start:np_end]), invent_b) {
-									non_zero_append(&insert_ar, curves[e].ctl0)
+									non_zero_append(&insert_ar, curves[e].ctl0) or_return
 								}
 								if curves[e].type != .Quadratic {
 									if invent_bool(PointInPolygon(curves[e].ctl1, non_curves[np_start:np_end]), invent_b) {
-										non_zero_append(&insert_ar, curves[e].ctl1)
+										non_zero_append(&insert_ar, curves[e].ctl1) or_return
 									}
 								}
 							}
 							
-							non_zero_inject_at_elems(&non_curves, next, ..insert_ar[:])
+							non_zero_inject_at_elems(&non_curves, next, ..insert_ar[:]) or_return
 							np += u32(len(insert_ar))
 							np_end += len(insert_ar)
 

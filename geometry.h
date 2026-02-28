@@ -45,9 +45,7 @@ typedef struct {
     Geometry_Slice nodes;
 } Geometry_Shapes;
 
-/* Fixed-point: 24 fractional bits, 1.0 = 1<<24 = 16777216 */
 typedef int64_t Geometry_Fixed;
-#define GEOMETRY_FIXED_ONE (1LL << 24)
 
 typedef struct {
     Geometry_Fixed x, y;

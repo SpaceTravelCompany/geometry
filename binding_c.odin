@@ -39,7 +39,10 @@ import "core:math/fixed"
 		return nil, .Mode_Not_Implemented
 
 	case .Resize:
-		return nil, .Mode_Not_Implemented
+		data := realloc_func(old_memory, auto_cast size)
+		if data == nil do return nil, .Out_Of_Memory
+		mem.zero(data, size)
+		return slice.bytes_from_ptr(data, size), nil
 
 	case .Resize_Non_Zeroed:
 		data := realloc_func(old_memory, auto_cast size)

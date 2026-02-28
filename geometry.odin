@@ -92,107 +92,6 @@ shapesi64 :: struct {
     nodes: []shape_nodei64,
 }
 
-CvtQuadraticToCubic0 :: #force_inline proc "contextless" (_start : linalg.Vector2f32, _control : linalg.Vector2f32) -> linalg.Vector2f32 {
-    return linalg.Vector2f32{ _start.x + (2.0/3.0) * (_control.x - _start.x), _start.y + (2.0/3.0) * (_control.y - _start.y) }
-}
-CvtQuadraticToCubic1 :: #force_inline proc "contextless" (_end : linalg.Vector2f32, _control : linalg.Vector2f32) -> linalg.Vector2f32 {
-    return CvtQuadraticToCubic0(_end, _control)
-}
-
-rect_line_init :: proc "contextless" (_rect: Rectf32) -> [4]linalg.Vector2f32 {
-	return [4]linalg.Vector2f32{linalg.Vector2f32{_rect.left, _rect.top}, linalg.Vector2f32{_rect.left, _rect.bottom}, linalg.Vector2f32{_rect.right, _rect.bottom}, linalg.Vector2f32{_rect.right, _rect.top}}
-}
-
-round_rect_line_init :: proc "contextless" (_rect: Rectf32, _radius: f32) -> (pts:[16]linalg.Vector2f32, curve_pts_ids:[8]u32) {
-	r := _radius
-	// Clamp radius to fit within rect
-	half_width := (_rect.right - _rect.left) * 0.5
-	half_height := abs(_rect.bottom - _rect.top) * 0.5
-	r = min(r, min(half_width, half_height))
-	
-	t: f32 = (4.0 / 3.0) * math.tan_f32(math.PI / 8.0)
-	tt := t * r
-	
-	// Corner centers
-	top_left := linalg.Vector2f32{_rect.left + r, _rect.top + r}
-	top_right := linalg.Vector2f32{_rect.right - r, _rect.top + r}
-	bottom_right := linalg.Vector2f32{_rect.right - r, _rect.bottom - r}
-	bottom_left := linalg.Vector2f32{_rect.left + r, _rect.bottom - r}
-	
-	return [16]linalg.Vector2f32{
-		// Top-left corner (cubic) - counter-clockwise: from top to left
-		// Note: y increases upward, _rect.top is top (larger y), _rect.bottom is bottom (smaller y)
-			linalg.Vector2f32{_rect.left + r, _rect.top},
-			linalg.Vector2f32{_rect.left + r - tt, _rect.top},
-			linalg.Vector2f32{_rect.left, _rect.top - r + tt},
-		// Left line - counter-clockwise: from top to bottom (y decreases)
-			linalg.Vector2f32{_rect.left, _rect.top - r},
-		// Bottom-left corner (cubic) - counter-clockwise: from left to bottom
-			linalg.Vector2f32{_rect.left, _rect.bottom + r},
-			linalg.Vector2f32{_rect.left, _rect.bottom + r - tt},
-			linalg.Vector2f32{_rect.left + r - tt, _rect.bottom},
-		// Bottom line - counter-clockwise: from left to right
-			linalg.Vector2f32{_rect.left + r, _rect.bottom},
-		// Bottom-right corner (cubic) - counter-clockwise: from bottom to right
-			linalg.Vector2f32{_rect.right - r, _rect.bottom},
-			linalg.Vector2f32{_rect.right - r + tt, _rect.bottom},
-			linalg.Vector2f32{_rect.right, _rect.bottom + r - tt},
-		// Right line - counter-clockwise: from bottom to top (y increases)
-			linalg.Vector2f32{_rect.right, _rect.bottom + r},
-		// Top-right corner (cubic) - counter-clockwise: from right to top
-			linalg.Vector2f32{_rect.right, _rect.top - r},
-			linalg.Vector2f32{_rect.right, _rect.top - r + tt},
-			linalg.Vector2f32{_rect.right - r + tt, _rect.top},
-		// Top line - counter-clockwise: from right to left
-			linalg.Vector2f32{_rect.right - r, _rect.top},
-	}, [8]u32{1,2, 5,6, 9,10, 13,14}
-}
-
-circle_cubic_init :: proc "contextless" (_center: linalg.Vector2f32, _r: f32) -> (pts:[12]linalg.Vector2f32, curve_pts_ids:[8]u32) {
-	t: f32 = (4.0 / 3.0) * math.tan_f32(math.PI / 8.0)
-	tt := t * _r
-	return [12]linalg.Vector2f32{
-			linalg.Vector2f32{_center.x - _r, _center.y},
-			linalg.Vector2f32{_center.x - _r, _center.y - tt},
-			linalg.Vector2f32{_center.x - tt, _center.y - _r},
-
-			linalg.Vector2f32{_center.x, _center.y - _r},
-			linalg.Vector2f32{_center.x + tt, _center.y - _r},
-			linalg.Vector2f32{_center.x + _r, _center.y - tt},
-
-			linalg.Vector2f32{_center.x + _r, _center.y},
-			linalg.Vector2f32{_center.x + _r, _center.y + tt},
-			linalg.Vector2f32{_center.x + tt, _center.y + _r},
-
-			linalg.Vector2f32{_center.x, _center.y + _r},
-			linalg.Vector2f32{_center.x - tt, _center.y + _r},
-			linalg.Vector2f32{_center.x - _r, _center.y + tt},
-	}, [8]u32{1,2, 4,5, 7,8, 10,11}
-}
-
-ellipse_cubic_init :: proc "contextless" (_center: linalg.Vector2f32, _rxy: linalg.Vector2f32) -> (pts:[12]linalg.Vector2f32, curve_pts_ids:[8]u32) {
-	t: f32 = (4.0 / 3.0) * math.tan_f32(math.PI / 8.0)
-	ttx := t * _rxy.x
-	tty := t * _rxy.y
-	return [12]linalg.Vector2f32{
-			linalg.Vector2f32{_center.x - _rxy.x, _center.y},
-			linalg.Vector2f32{_center.x - _rxy.x, _center.y - tty},
-			linalg.Vector2f32{_center.x - ttx, _center.y - _rxy.y},
-
-			linalg.Vector2f32{_center.x, _center.y - _rxy.y},
-			linalg.Vector2f32{_center.x + ttx, _center.y - _rxy.y},
-			linalg.Vector2f32{_center.x + _rxy.x, _center.y - tty},
-
-			linalg.Vector2f32{_center.x + _rxy.x, _center.y},
-			linalg.Vector2f32{_center.x + _rxy.x, _center.y + tty},
-			linalg.Vector2f32{_center.x + ttx, _center.y + _rxy.y},
-
-			linalg.Vector2f32{_center.x, _center.y + _rxy.y},
-			linalg.Vector2f32{_center.x - ttx, _center.y + _rxy.y},
-			linalg.Vector2f32{_center.x - _rxy.x, _center.y + tty},
-	}, [8]u32{1,2, 4,5, 7,8, 10,11}
-}
-
 raw_shape_free :: proc (self:raw_shape, allocator := context.allocator) {
     delete(self.vertices, allocator)
     delete(self.indices, allocator)
@@ -738,35 +637,45 @@ shapes_compute_polygoni64 :: proc(poly:shapesi64, allocator := context.allocator
 		using fixed
 
 		non_curves:[dynamic][2]FixedDef = make([dynamic][2]FixedDef, context.temp_allocator)
+		non_curves_npolys:[dynamic]u32 = make([dynamic]u32, context.temp_allocator)
 		curves:[dynamic]CURVE_STRUCT = make([dynamic]CURVE_STRUCT, context.temp_allocator)
+		curves_npolys:[dynamic]u32 = make([dynamic]u32, context.temp_allocator)
 		insert_ar := make([dynamic][2]FixedDef, context.temp_allocator)
 
         for node, nidx in poly.nodes {
+			non_zero_resize(&non_curves, 0)
+			non_zero_resize(&curves, 0)
 			if node.color.a > 0 {
 				//
 				curve_idx := 0
-				for pt, i in node.pts {
-					if curve_idx < len(node.curve_pts_ids) && node.curve_pts_ids[curve_idx] == u32(i) {//곡선 점이면
-						if curve_idx + 1 < len(node.curve_pts_ids) && node.curve_pts_ids[curve_idx + 1] == u32(i) {//큐빅인지 확인
-							non_zero_append(&curves, CURVE_STRUCT{
-								start = node.pts[i - 1],
-								ctl0 = node.pts[i],
-								ctl1 = node.pts[i + 1],
-								end = node.pts[i + 2 >= len(node.pts) ? 0 : i + 2],
-                                type = .Unknown,
-							})
-							curve_idx += 2
+				resize(&non_curves_npolys, len(node.n_polys))
+				resize(&curves_npolys, len(node.n_polys))//zero init
+				for np, npi in node.n_polys {
+					for pt, i in node.pts {
+						if curve_idx < len(node.curve_pts_ids) && node.curve_pts_ids[curve_idx] == u32(i) {//곡선 점이면
+							if curve_idx + 1 < len(node.curve_pts_ids) && node.curve_pts_ids[curve_idx + 1] == u32(i) {//큐빅인지 확인
+								non_zero_append(&curves, CURVE_STRUCT{
+									start = node.pts[i - 1],
+									ctl0 = node.pts[i],
+									ctl1 = node.pts[i + 1],
+									end = node.pts[i + 2 >= len(node.pts) ? 0 : i + 2],
+									type = .Unknown,
+								})
+								curve_idx += 2
+							} else {
+								non_zero_append(&curves, CURVE_STRUCT{
+									start = node.pts[i - 1],
+									ctl0 = node.pts[i],
+									end = node.pts[i + 1 >= len(node.pts) ? 0 : i + 1],
+									type = .Quadratic,
+								})
+								curve_idx += 1
+							}
+							curves_npolys[npi] += 1
 						} else {
-                            non_zero_append(&curves, CURVE_STRUCT{
-								start = node.pts[i - 1],
-								ctl0 = node.pts[i],
-								end = node.pts[i + 1 >= len(node.pts) ? 0 : i + 1],
-                                type = .Quadratic,
-							})
-							curve_idx += 1
+							non_zero_append(&non_curves, pt)
+							non_curves_npolys[npi] += 1
 						}
-					} else {
-						non_zero_append(&non_curves, pt)
 					}
 				}
 				//

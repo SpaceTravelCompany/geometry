@@ -813,3 +813,105 @@ vector_dot_fixed :: proc "contextless" (a, b: $T/[$N]$E) -> (c: E) where intrins
 	}
 	return
 }
+
+
+CvtQuadraticToCubic0 :: #force_inline proc "contextless" (_start : linalg.Vector2f32, _control : linalg.Vector2f32) -> linalg.Vector2f32 {
+    return linalg.Vector2f32{ _start.x + (2.0/3.0) * (_control.x - _start.x), _start.y + (2.0/3.0) * (_control.y - _start.y) }
+}
+CvtQuadraticToCubic1 :: #force_inline proc "contextless" (_end : linalg.Vector2f32, _control : linalg.Vector2f32) -> linalg.Vector2f32 {
+    return CvtQuadraticToCubic0(_end, _control)
+}
+
+rect_line_init :: proc "contextless" (_rect: Rectf32) -> [4]linalg.Vector2f32 {
+	return [4]linalg.Vector2f32{linalg.Vector2f32{_rect.left, _rect.top}, linalg.Vector2f32{_rect.left, _rect.bottom}, linalg.Vector2f32{_rect.right, _rect.bottom}, linalg.Vector2f32{_rect.right, _rect.top}}
+}
+
+round_rect_line_init :: proc "contextless" (_rect: Rectf32, _radius: f32) -> (pts:[16]linalg.Vector2f32, curve_pts_ids:[8]u32) {
+	r := _radius
+	// Clamp radius to fit within rect
+	half_width := (_rect.right - _rect.left) * 0.5
+	half_height := abs(_rect.bottom - _rect.top) * 0.5
+	r = min(r, min(half_width, half_height))
+	
+	t: f32 = (4.0 / 3.0) * math.tan_f32(math.PI / 8.0)
+	tt := t * r
+	
+	// Corner centers
+	top_left := linalg.Vector2f32{_rect.left + r, _rect.top + r}
+	top_right := linalg.Vector2f32{_rect.right - r, _rect.top + r}
+	bottom_right := linalg.Vector2f32{_rect.right - r, _rect.bottom - r}
+	bottom_left := linalg.Vector2f32{_rect.left + r, _rect.bottom - r}
+	
+	return [16]linalg.Vector2f32{
+		// Top-left corner (cubic) - counter-clockwise: from top to left
+		// Note: y increases upward, _rect.top is top (larger y), _rect.bottom is bottom (smaller y)
+			linalg.Vector2f32{_rect.left + r, _rect.top},
+			linalg.Vector2f32{_rect.left + r - tt, _rect.top},
+			linalg.Vector2f32{_rect.left, _rect.top - r + tt},
+		// Left line - counter-clockwise: from top to bottom (y decreases)
+			linalg.Vector2f32{_rect.left, _rect.top - r},
+		// Bottom-left corner (cubic) - counter-clockwise: from left to bottom
+			linalg.Vector2f32{_rect.left, _rect.bottom + r},
+			linalg.Vector2f32{_rect.left, _rect.bottom + r - tt},
+			linalg.Vector2f32{_rect.left + r - tt, _rect.bottom},
+		// Bottom line - counter-clockwise: from left to right
+			linalg.Vector2f32{_rect.left + r, _rect.bottom},
+		// Bottom-right corner (cubic) - counter-clockwise: from bottom to right
+			linalg.Vector2f32{_rect.right - r, _rect.bottom},
+			linalg.Vector2f32{_rect.right - r + tt, _rect.bottom},
+			linalg.Vector2f32{_rect.right, _rect.bottom + r - tt},
+		// Right line - counter-clockwise: from bottom to top (y increases)
+			linalg.Vector2f32{_rect.right, _rect.bottom + r},
+		// Top-right corner (cubic) - counter-clockwise: from right to top
+			linalg.Vector2f32{_rect.right, _rect.top - r},
+			linalg.Vector2f32{_rect.right, _rect.top - r + tt},
+			linalg.Vector2f32{_rect.right - r + tt, _rect.top},
+		// Top line - counter-clockwise: from right to left
+			linalg.Vector2f32{_rect.right - r, _rect.top},
+	}, [8]u32{1,2, 5,6, 9,10, 13,14}
+}
+
+circle_cubic_init :: proc "contextless" (_center: linalg.Vector2f32, _r: f32) -> (pts:[12]linalg.Vector2f32, curve_pts_ids:[8]u32) {
+	t: f32 = (4.0 / 3.0) * math.tan_f32(math.PI / 8.0)
+	tt := t * _r
+	return [12]linalg.Vector2f32{
+			linalg.Vector2f32{_center.x - _r, _center.y},
+			linalg.Vector2f32{_center.x - _r, _center.y - tt},
+			linalg.Vector2f32{_center.x - tt, _center.y - _r},
+
+			linalg.Vector2f32{_center.x, _center.y - _r},
+			linalg.Vector2f32{_center.x + tt, _center.y - _r},
+			linalg.Vector2f32{_center.x + _r, _center.y - tt},
+
+			linalg.Vector2f32{_center.x + _r, _center.y},
+			linalg.Vector2f32{_center.x + _r, _center.y + tt},
+			linalg.Vector2f32{_center.x + tt, _center.y + _r},
+
+			linalg.Vector2f32{_center.x, _center.y + _r},
+			linalg.Vector2f32{_center.x - tt, _center.y + _r},
+			linalg.Vector2f32{_center.x - _r, _center.y + tt},
+	}, [8]u32{1,2, 4,5, 7,8, 10,11}
+}
+
+ellipse_cubic_init :: proc "contextless" (_center: linalg.Vector2f32, _rxy: linalg.Vector2f32) -> (pts:[12]linalg.Vector2f32, curve_pts_ids:[8]u32) {
+	t: f32 = (4.0 / 3.0) * math.tan_f32(math.PI / 8.0)
+	ttx := t * _rxy.x
+	tty := t * _rxy.y
+	return [12]linalg.Vector2f32{
+			linalg.Vector2f32{_center.x - _rxy.x, _center.y},
+			linalg.Vector2f32{_center.x - _rxy.x, _center.y - tty},
+			linalg.Vector2f32{_center.x - ttx, _center.y - _rxy.y},
+
+			linalg.Vector2f32{_center.x, _center.y - _rxy.y},
+			linalg.Vector2f32{_center.x + ttx, _center.y - _rxy.y},
+			linalg.Vector2f32{_center.x + _rxy.x, _center.y - tty},
+
+			linalg.Vector2f32{_center.x + _rxy.x, _center.y},
+			linalg.Vector2f32{_center.x + _rxy.x, _center.y + tty},
+			linalg.Vector2f32{_center.x + ttx, _center.y + _rxy.y},
+
+			linalg.Vector2f32{_center.x, _center.y + _rxy.y},
+			linalg.Vector2f32{_center.x - ttx, _center.y + _rxy.y},
+			linalg.Vector2f32{_center.x - _rxy.x, _center.y + tty},
+	}, [8]u32{1,2, 4,5, 7,8, 10,11}
+}

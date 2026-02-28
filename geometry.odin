@@ -152,7 +152,7 @@ GetCubicCurveType :: proc "contextless" (start:[2]$T, control0:[2]T, control1:[2
 		d2 = T{i=3 * a3.i}
 
 		D     := T{i=3 * mul(d1, d1).i - 4 * mul(d2, d0).i}
-		discr := mul(mul(d0, d0), D) 
+		discr := mul(mul(d0, d0), D)
 
 		if discr.i == 0 {
 			if d0.i == 0 && d1.i == 0 {
@@ -295,7 +295,7 @@ GetCubicCurveType :: proc "contextless" (start:[2]$T, control0:[2]T, control1:[2
             case .Line:
                 return nil
             case .Quadratic:
-                F = {{{}, {}, {}},	    
+                F = {{{}, {}, {}},
                     {Div3Fixed, {},	Div3Fixed},
                     {Div3Mul2Fixed,	Div3Fixed, 	Div3Mul2Fixed},
                     {Fixed1, Fixed1, Fixed1},
@@ -312,7 +312,7 @@ GetCubicCurveType :: proc "contextless" (start:[2]$T, control0:[2]T, control1:[2
 
                 lsls := mul(ls, ls)
                 msms := mul(ms, ms)
-    
+
                 F = {{mul(ls, ms),
 					mul(lsls, ls),
 					mul(msms, ms)},
@@ -329,7 +329,7 @@ GetCubicCurveType :: proc "contextless" (start:[2]$T, control0:[2]T, control1:[2
 					sign(mul(mul(ltMinusLs, ltMinusLs), ltMinusLs)),
 					sign(mul(mul(mtMinusMs, mtMinusMs), mtMinusMs))},
                 }
-    
+
                 if d0.i < 0 do reverse = true
             case .Loop:
                 t1 := FixedDef{i=sqrt_i64((4 * d0.i * d2.i - 3 * d1.i * d1.i) << FIXED_SHIFT)}
@@ -391,7 +391,7 @@ GetCubicCurveType :: proc "contextless" (start:[2]$T, control0:[2]T, control1:[2
             //     unreachable()
         }
     }
-   
+
 	//if loop_reverse do reverse = !reverse
     if reverse {
       F = reverseOrientation(F)
@@ -436,7 +436,7 @@ GetCubicCurveType :: proc "contextless" (start:[2]$T, control0:[2]T, control1:[2
                     }
                     non_zero_append(indList, ..indices[:])
                     return
-                } 
+                }
             }
         }
         for i:u32 = 0; i < 4; i += 1 {
@@ -633,7 +633,7 @@ shapes_compute_polygoni64 :: proc(poly:shapesi64, allocator := context.allocator
     vertList:[dynamic]shape_vertex2di64 = make([dynamic]shape_vertex2di64, context.temp_allocator)
     indList:[dynamic]u32 = make([dynamic]u32, context.temp_allocator)
 
-    shapes_compute_polygon_in :: proc(vertList:^[dynamic]shape_vertex2di64, indList:^[dynamic]u32, poly:shapesi64, allocator : runtime.Allocator) -> (err:shape_error = nil) {	
+    shapes_compute_polygon_in :: proc(vertList:^[dynamic]shape_vertex2di64, indList:^[dynamic]u32, poly:shapesi64, allocator : runtime.Allocator) -> (err:shape_error = nil) {
 		using fixed
 
 		non_curves:[dynamic][2]FixedDef = make([dynamic][2]FixedDef, context.temp_allocator)
@@ -729,7 +729,7 @@ shapes_compute_polygoni64 :: proc(poly:shapesi64, allocator := context.allocator
 								} else {
 									subdiv_t , _ = PointInLine(lerp_fixed(cur2.ctl0, cur2.ctl1, splat_2_fixed(Div2Fixed)), cur.start, cur.end)
 								}
-								
+
 								if cur.type == .Quadratic {
 									pt01, pt12, pt012 := SubdivQuadraticBezier([3][2]FixedDef{cur.start, cur.ctl0, cur.end}, subdiv_t)
 									curves[i] = CURVE_STRUCT{start = cur.start, ctl0 = pt01, end = pt012, type = .Quadratic}
@@ -791,7 +791,7 @@ shapes_compute_polygoni64 :: proc(poly:shapesi64, allocator := context.allocator
 									}
 								}
 							}
-							
+
 							non_zero_inject_at_elems(&non_curves, next, ..insert_ar[:]) or_return
 							np += u32(len(insert_ar))
 							np_end += len(insert_ar)

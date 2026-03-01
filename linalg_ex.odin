@@ -98,14 +98,14 @@ if input is a polygon, return the polygon.
 if return value is the polygon, it is allocated using allocator.
 
 Inputs:
-- _a: AreaF(Rectangle or polygon) to multiply
+- _a: Areaf32(Rectangle or polygon) to multiply
 - _mat: matrix44 to multiply
 - allocator: Allocator to use
 
 Returns:
-- AreaF multiplied by the matrix
+- Areaf32 multiplied by the matrix
 */
-Area_MulMatrix :: proc (_a: AreaF, _mat: linalg.Matrix4x4f32, allocator := context.allocator) -> AreaF {
+Area_MulMatrix :: proc (_a: Areaf32, _mat: linalg.Matrix4x4f32, allocator := context.allocator) -> Areaf32 {
 	switch &n in _a {
 	case Rectf32:
 		res := __Rect_MulMatrix(n, _mat)
@@ -135,7 +135,7 @@ Area_MulMatrix :: proc (_a: AreaF, _mat: linalg.Matrix4x4f32, allocator := conte
 	return {}
 }
 
-@private __Poly_MulMatrix :: proc (_p:[][$N]f32, _mat: linalg.Matrix4x4f32, allocator := context.allocator) -> AreaF where N >= 2 {
+@private __Poly_MulMatrix :: proc (_p:[][$N]f32, _mat: linalg.Matrix4x4f32, allocator := context.allocator) -> Areaf32 where N >= 2 {
 	res: [][2]f32 = make_non_zeroed_slice([][2]f32, len(_p), allocator)
 	for i in 0..<len(res) {
 		when N == 4 {
@@ -685,9 +685,9 @@ Area :: union($T: typeid) where intrinsics.type_is_numeric(T)  {
 	ImageArea,//Available only for ImageButton
 }
 
-AreaF :: Area(f32)
-AreaF64 :: Area(f64)
-AreaI :: Area(i32)
+Areaf32 :: Area(f32)
+Areaf64 :: Area(f64)
+Areai32 :: Area(i32)
 
 Area_PointIn :: #force_inline proc "contextless" (area:Area($T), pt:[2]T) -> bool where intrinsics.type_is_numeric(T) {
 	switch a in area {

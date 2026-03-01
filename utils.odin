@@ -1,3 +1,4 @@
+#+private
 package geometry
 
 import "base:intrinsics"

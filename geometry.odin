@@ -62,6 +62,7 @@ __shape_error :: enum {
 
 shape_error :: union #shared_nil {
     __shape_error,
+    __Trianguate_Error,
     runtime.Allocator_Error,
 }
 
@@ -189,7 +190,7 @@ GetCubicCurveType :: proc "contextless" (start:[2]$T, control0:[2]T, control1:[2
 		D     := 3.0 * d1 * d1 - 4.0 * d2 * d0//33 + 36 + 1 = 70
 		discr := d0 * d0 * D//27 + 27 + 70 = 124
 
-        EP :: math.epsilon(T) * 250.0// about count float operations
+        EP :: epsilon(T) * 250.0// about count float operations
 		if discr >= -EP && discr <= EP {
 			if  d0 >= -EP && d0 <= EP &&  d1 >= -EP && d1 <= EP {
 				if d2 >= -EP && d2 <= EP {
@@ -800,6 +801,17 @@ shapes_compute_polygoni64 :: proc(poly:shapesi64, allocator := context.allocator
 					np_start += int(np)
 				}
 				//TODO non_curves trianglation
+				indices, tri_err := TrianguatePolygons_Fixed(non_curves[:], non_curves_npolys[:], non_curves_ccw[:], allocator)
+				if tri_err != nil {
+					switch tri in tri_err {
+					case __Trianguate_Error:err = tri_err.(__Trianguate_Error)
+					case runtime.Allocator_Error:err = tri_err.(runtime.Allocator_Error)
+					}
+					return
+				}
+
+
+				//
 
 				//TODO curves _Shapes_ComputeLine
 			}

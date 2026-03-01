@@ -339,7 +339,7 @@ PointInLine :: proc "contextless" (p:[2]$T, l0:[2]T, l1:[2]T) -> (T, bool) where
 		B := l0.y - A * l0.x
 
 		pY := A * p.x + B
-		EP :: math.epsilon(T) * 20// about count float operations
+		EP :: epsilon(T) * 20// about count float operations
 		res := p.y >= pY - EP && p.y <= pY + EP
 		t :T = 0.0
 		if res {
@@ -923,4 +923,50 @@ poly_transform_matrix :: proc "contextless" (inout_poly: ^shapes, F: linalg.Matr
 			pts = linalg.Vector2f32{out.x, out.y} / out.w
 		}
 	}
+}
+
+ceil_up :: proc "contextless"(num:$T, multiple:T) -> T where intrinsics.type_is_integer(T) {
+	if multiple == 0 do return num
+
+	remain := abs(num) % multiple
+	if remain == 0 do return num
+
+	if num < 0 do return -(abs(num) + multiple - remain)
+	return num + multiple - remain
+}
+
+floor_up :: proc "contextless"(num:$T, multiple:T) -> T where intrinsics.type_is_integer(T) {
+	if multiple == 0 do return num
+
+	remain := abs(num) % multiple
+	if remain == 0 do return num
+
+	if num < 0 do return -(abs(num) - remain)
+	return num - remain
+}
+min_array :: proc "contextless" (value0:$T/[$N]$E, value1:T) -> (result:T) where intrinsics.type_is_array(T) {
+	#unroll for i in 0..<len(value0)  {
+		m : E = value0[i]
+		if m > value1[i] do m = value1[i]
+		result[i] = m
+	}
+	return
+}
+max_array :: proc "contextless" (value0:$T/[$N]$E, value1:T) -> (result:T) where intrinsics.type_is_array(T) {
+	#unroll for i in 0..<len(value0)  {
+		m : E = value0[i]
+		if m < value1[i] do m = value1[i]
+		result[i] = m
+	}
+	return
+}
+
+epsilon :: proc "contextless" ($T: typeid) -> T where intrinsics.type_is_float(T) {
+	when T == f16 || T == f16be || T == f16le do return T(math.F16_EPSILON)
+	when T == f32 || T == f32be || T == f32le do return T(math.F32_EPSILON)
+	return T(math.F64_EPSILON)
+}
+
+epsilon_equal :: proc "contextless" (a:$T, b:T) -> bool where intrinsics.type_is_float(T) {
+	return abs(a - b) < epsilon(T)
 }

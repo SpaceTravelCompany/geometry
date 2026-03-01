@@ -9,6 +9,8 @@ import "core:mem"
 
 import "core:math/fixed"
 
+import "shared:utils_private"
+
 __Trianguate_Error :: enum {
 	FAILED,
 }
@@ -25,7 +27,7 @@ TrianguatePolygons_Fixed :: proc(poly:[][2]FixedDef, nPolys:[]u32, polyCCW:[]Pol
 	
 	//TODO non_curves trianglation
 	
-	indices = make_non_zeroed_slice([]u32, len(indices_), allocator) or_return
+	indices = utils_private.make_non_zeroed_slice([]u32, len(indices_), allocator) or_return
 	mem.copy_non_overlapping(raw_data(indices), raw_data(indices_), len(indices_) * size_of(u32))
 	return
 }

@@ -6,6 +6,8 @@ import "core:mem"
 import "core:math/fixed"
 import "core:math/linalg"
 
+import "shared:utils_private"
+
 Recti32 :: Rect_(i32)
 Rectu32 :: Rect_(u32)
 Rectf32 :: Rect_(f32)
@@ -121,7 +123,7 @@ Area_MulMatrix :: proc (_a: Areaf32, _mat: linalg.Matrix4x4f32, allocator := con
 				bottom = min_y,
 			}
 		}
-		res2 := make_non_zeroed_slice([][2]f32, 4, allocator)
+		res2 := utils_private.make_non_zeroed_slice([][2]f32, 4, allocator)
 		res2[0] = res[0].xy
 		res2[1] = res[1].xy
 		res2[2] = res[3].xy
@@ -136,7 +138,7 @@ Area_MulMatrix :: proc (_a: Areaf32, _mat: linalg.Matrix4x4f32, allocator := con
 }
 
 @private __Poly_MulMatrix :: proc (_p:[][$N]f32, _mat: linalg.Matrix4x4f32, allocator := context.allocator) -> Areaf32 where N >= 2 {
-	res: [][2]f32 = make_non_zeroed_slice([][2]f32, len(_p), allocator)
+	res: [][2]f32 = utils_private.make_non_zeroed_slice([][2]f32, len(_p), allocator)
 	for i in 0..<len(res) {
 		when N == 4 {
 			r := linalg.mul(_mat, _p[i])
@@ -923,50 +925,4 @@ poly_transform_matrix :: proc "contextless" (inout_poly: ^shapes, F: linalg.Matr
 			pts = linalg.Vector2f32{out.x, out.y} / out.w
 		}
 	}
-}
-
-ceil_up :: proc "contextless"(num:$T, multiple:T) -> T where intrinsics.type_is_integer(T) {
-	if multiple == 0 do return num
-
-	remain := abs(num) % multiple
-	if remain == 0 do return num
-
-	if num < 0 do return -(abs(num) + multiple - remain)
-	return num + multiple - remain
-}
-
-floor_up :: proc "contextless"(num:$T, multiple:T) -> T where intrinsics.type_is_integer(T) {
-	if multiple == 0 do return num
-
-	remain := abs(num) % multiple
-	if remain == 0 do return num
-
-	if num < 0 do return -(abs(num) - remain)
-	return num - remain
-}
-min_array :: proc "contextless" (value0:$T/[$N]$E, value1:T) -> (result:T) where intrinsics.type_is_array(T) {
-	#unroll for i in 0..<len(value0)  {
-		m : E = value0[i]
-		if m > value1[i] do m = value1[i]
-		result[i] = m
-	}
-	return
-}
-max_array :: proc "contextless" (value0:$T/[$N]$E, value1:T) -> (result:T) where intrinsics.type_is_array(T) {
-	#unroll for i in 0..<len(value0)  {
-		m : E = value0[i]
-		if m < value1[i] do m = value1[i]
-		result[i] = m
-	}
-	return
-}
-
-epsilon :: proc "contextless" ($T: typeid) -> T where intrinsics.type_is_float(T) {
-	when T == f16 || T == f16be || T == f16le do return T(math.F16_EPSILON)
-	when T == f32 || T == f32be || T == f32le do return T(math.F32_EPSILON)
-	return T(math.F64_EPSILON)
-}
-
-epsilon_equal :: proc "contextless" (a:$T, b:T) -> bool where intrinsics.type_is_float(T) {
-	return abs(a - b) < epsilon(T)
 }

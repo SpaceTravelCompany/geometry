@@ -9,6 +9,8 @@ import "core:mem"
 
 import "core:math/fixed"
 
+import "shared:utils_private"
+
 
 //Cover MAX 741455 * 741455
 FIXED_SHIFT :: 24
@@ -105,10 +107,10 @@ raw_shapei64_free :: proc (self:raw_shapei64, allocator := context.allocator) {
 }
 
 raw_shapei64_clone :: proc (self:raw_shapei64, allocator := context.allocator) -> (res:raw_shapei64, err: runtime.Allocator_Error) #optional_allocator_error {
-    res.vertices = make_non_zeroed_slice([]shape_vertex2di64, len(self.vertices), allocator) or_return
+    res.vertices = utils_private.make_non_zeroed_slice([]shape_vertex2di64, len(self.vertices), allocator) or_return
     defer if err != nil do delete(res.vertices, allocator)
 
-    res.indices = make_non_zeroed_slice([]u32, len(self.indices), allocator) or_return
+    res.indices = utils_private.make_non_zeroed_slice([]u32, len(self.indices), allocator) or_return
 
     intrinsics.mem_copy_non_overlapping(&res.vertices[0], &self.vertices[0], len(self.vertices) * size_of(shape_vertex2di64))
     intrinsics.mem_copy_non_overlapping(&res.indices[0], &self.indices[0], len(self.indices) * size_of(u32))
@@ -122,10 +124,10 @@ raw_shape_clone :: proc (self:^raw_shape, allocator := context.allocator) -> (re
         res = nil
     }
 
-    res.vertices = make_non_zeroed_slice([]shape_vertex2d, len(self.vertices), allocator) or_return
+    res.vertices = utils_private.make_non_zeroed_slice([]shape_vertex2d, len(self.vertices), allocator) or_return
     defer if err != nil do delete(res.vertices, allocator)
 
-    res.indices = make_non_zeroed_slice([]u32, len(self.indices), allocator) or_return
+    res.indices = utils_private.make_non_zeroed_slice([]u32, len(self.indices), allocator) or_return
 
     intrinsics.mem_copy_non_overlapping(&res.vertices[0], &self.vertices[0], len(self.vertices) * size_of(shape_vertex2d))
     intrinsics.mem_copy_non_overlapping(&res.indices[0], &self.indices[0], len(self.indices) * size_of(u32))
@@ -275,10 +277,10 @@ GetCubicCurveType :: proc "contextless" (start:[2]$T, control0:[2]T, control1:[2
 
     reverseOrientation :: #force_inline proc "contextless" (F:[4][3]FixedDef) -> [4][3]FixedDef {
         return [4][3]FixedDef{
-            {sign(F[0][0]), sign(F[0][1]), F[0][2]},
-            {sign(F[1][0]), sign(F[1][1]), F[1][2]},
-            {sign(F[2][0]), sign(F[2][1]), F[2][2]},
-            {sign(F[3][0]), sign(F[3][1]), F[3][2]},
+            {utils_private.sign(F[0][0]), utils_private.sign(F[0][1]), F[0][2]},
+            {utils_private.sign(F[1][0]), utils_private.sign(F[1][1]), F[1][2]},
+            {utils_private.sign(F[2][0]), utils_private.sign(F[2][1]), F[2][2]},
+            {utils_private.sign(F[3][0]), utils_private.sign(F[3][1]), F[3][2]},
         }
     }
 
@@ -293,7 +295,7 @@ GetCubicCurveType :: proc "contextless" (start:[2]$T, control0:[2]T, control1:[2
             }
             if d2.i < 0 do reverse = true
         case .Serpentine:
-            t1 := FixedDef{i=sqrt_i64((9 * mul(d1, d1).i - 12 * mul(d0, d2).i) << FIXED_SHIFT)}//mul PRECISION for sqrt
+            t1 := FixedDef{i=utils_private.sqrt_i64((9 * mul(d1, d1).i - 12 * mul(d0, d2).i) << FIXED_SHIFT)}//mul PRECISION for sqrt
             ls := FixedDef{i=3 * d1.i - t1.i}
             lt := FixedDef{i=6 * d0.i}
             ms := FixedDef{i=3 * d1.i + t1.i}
@@ -317,13 +319,13 @@ GetCubicCurveType :: proc "contextless" (start:[2]$T, control0:[2]T, control1:[2
 				mul(mul(mtMinusMs, mtMinusMs), ms)},
 
                 {mul(ltMinusLs, mtMinusMs),
-				sign(mul(mul(ltMinusLs, ltMinusLs), ltMinusLs)),
-				sign(mul(mul(mtMinusMs, mtMinusMs), mtMinusMs))},
+				utils_private.sign(mul(mul(ltMinusLs, ltMinusLs), ltMinusLs)),
+				utils_private.sign(mul(mul(mtMinusMs, mtMinusMs), mtMinusMs))},
             }
 
             if d0.i < 0 do reverse = true
         case .Loop:
-            t1 := FixedDef{i=sqrt_i64((4 * d0.i * d2.i - 3 * d1.i * d1.i) << FIXED_SHIFT)}
+            t1 := FixedDef{i=utils_private.sqrt_i64((4 * d0.i * d2.i - 3 * d1.i * d1.i) << FIXED_SHIFT)}
             ls := sub(d1, t1)
             lt := mul(Fixed2, d0)
             ms := add(d1, t1)
@@ -341,17 +343,17 @@ GetCubicCurveType :: proc "contextless" (start:[2]$T, control0:[2]T, control1:[2
                 mul(ls, lsms),
                 mul(ms, lsms)},
 
-                {div( add( sub(mul(sign(ls), mt), ltms), mul(Fixed3, lsms) ), Fixed3),//(-ls * mt - ltms + 3 * lsms) / 3
-                div(mul(sign(add(mul(ls, (sub(mt, mul(Fixed3, ms)))), mul(Fixed2, ltms))), ls), Fixed3),//-(ls * (mt - 3 * ms) + 2 * ltms) * ls / 3
-                div(mul(sign(add(mul(ls, (sub(mul(Fixed2, mt), mul(Fixed3, ms)))), ltms)), ms), Fixed3)},//-(ls * (2 * mt - 3 * ms) + ltms) * ms / 3
+                {div( add( sub(mul(utils_private.sign(ls), mt), ltms), mul(Fixed3, lsms) ), Fixed3),//(-ls * mt - ltms + 3 * lsms) / 3
+                div(mul(utils_private.sign(add(mul(ls, (sub(mt, mul(Fixed3, ms)))), mul(Fixed2, ltms))), ls), Fixed3),//-(ls * (mt - 3 * ms) + 2 * ltms) * ls / 3
+                div(mul(utils_private.sign(add(mul(ls, (sub(mul(Fixed2, mt), mul(Fixed3, ms)))), ltms)), ms), Fixed3)},//-(ls * (2 * mt - 3 * ms) + ltms) * ms / 3
 
                 {div(add(mul(lt, sub(mt, mul(Fixed2, ms))), mul(ls, sub(mul(Fixed3, ms), mul(Fixed2, mt)))), Fixed3),//(lt * (mt - 2.0 * ms) + ls * (3.0 * ms - 2.0 * mt)) / 3
                 div(div(add(mul(ls, sub(mul(Fixed2, mt), mul(Fixed3, ms))), ltms), ltMinusLs), Fixed3),//(ls * (2.0 * mt - 3.0 * ms) + ltms) / ltMinusLs / 3
                 div(div(add(mul(ls, sub(mt, mul(Fixed3, ms))), mul(Fixed2, ltms)), mtMinusMs), Fixed3)},//(ls * (mt - 3.0 * ms) + 2.0 * ltms) / mtMinusMs / 3
 
                 {mul(ltMinusLs, mtMinusMs),
-                sign(mul(mul(ltMinusLs, ltMinusLs), mtMinusMs)),
-                sign(mul(ltMinusLs, mul(mtMinusMs, mtMinusMs)))},
+                utils_private.sign(mul(mul(ltMinusLs, ltMinusLs), mtMinusMs)),
+                utils_private.sign(mul(ltMinusLs, mul(mtMinusMs, mtMinusMs)))},
             }
             reverse = (d0.i > 0 && F[1][0].i < 0) || (d0.i < 0 && F[1][0].i > 0)
         case .Cusp:
@@ -450,7 +452,8 @@ GetCubicCurveType :: proc "contextless" (start:[2]$T, control0:[2]T, control1:[2
 
         b := LinesIntersect(vertList[start].pos, vertList[start + 2].pos, vertList[start + 1].pos, vertList[start + 3].pos)
         if b {
-            if length2_fixed(sub2_fixed(vertList[start + 2].pos, vertList[start].pos)).i < length2_fixed(sub2_fixed(vertList[start + 3].pos, vertList[start + 1].pos)).i {
+            if utils_private.length2_fixed(utils_private.sub2_fixed(vertList[start + 2].pos, vertList[start].pos)).i < 
+            utils_private.length2_fixed(utils_private.sub2_fixed(vertList[start + 3].pos, vertList[start + 1].pos)).i {
                 non_zero_append(indList, start, start + 1, start + 2, start, start + 2, start + 3)
             } else {
                 non_zero_append(indList, start, start + 1, start + 3, start + 1, start + 2, start + 3)
@@ -459,14 +462,16 @@ GetCubicCurveType :: proc "contextless" (start:[2]$T, control0:[2]T, control1:[2
         }
         b = LinesIntersect(vertList[start].pos, vertList[start + 3].pos, vertList[start + 1].pos, vertList[start + 2].pos)
         if b {
-            if length2_fixed(sub2_fixed(vertList[start + 3].pos, vertList[start].pos)).i < length2_fixed(sub2_fixed(vertList[start + 2].pos, vertList[start + 1].pos)).i {
+            if utils_private.length2_fixed(utils_private.sub2_fixed(vertList[start + 3].pos, vertList[start].pos)).i < 
+            utils_private.length2_fixed(utils_private.sub2_fixed(vertList[start + 2].pos, vertList[start + 1].pos)).i {
                 non_zero_append(indList, start, start + 1, start + 3, start, start + 3, start + 2)
             } else {
                 non_zero_append(indList, start, start + 1, start + 2, start + 2, start + 1, start + 3)
             }
             return
         }
-        if length2_fixed(sub2_fixed(vertList[start + 1].pos, vertList[start].pos)).i < length2_fixed(sub2_fixed(vertList[start + 3].pos, vertList[start + 2].pos)).i {
+        if utils_private.length2_fixed(utils_private.sub2_fixed(vertList[start + 1].pos, vertList[start].pos)).i <
+         utils_private.length2_fixed(utils_private.sub2_fixed(vertList[start + 3].pos, vertList[start + 2].pos)).i {
             non_zero_append(indList, start, start + 2, start + 1, start, start + 1, start + 3)
         } else {
             non_zero_append(indList, start, start + 2, start + 3, start + 3, start + 2, start + 1)
@@ -478,9 +483,9 @@ GetCubicCurveType :: proc "contextless" (start:[2]$T, control0:[2]T, control1:[2
 }
 
 cvt_raw_shapei64_to_raw_shape :: proc(raw64:raw_shapei64, allocator := context.allocator) ->  (res:raw_shape, err:runtime.Allocator_Error) #optional_allocator_error {
-	res.vertices = make_non_zeroed_slice([]shape_vertex2d, len(raw64.vertices), allocator) or_return
+	res.vertices = utils_private.make_non_zeroed_slice([]shape_vertex2d, len(raw64.vertices), allocator) or_return
 	defer if err != nil do delete(res.vertices, allocator)
-	res.indices = make_non_zeroed_slice([]u32, len(raw64.indices), allocator) or_return
+	res.indices = utils_private.make_non_zeroed_slice([]u32, len(raw64.indices), allocator) or_return
 	defer if err != nil do delete(res.indices, allocator)
 
 	for v, i in raw64.vertices {
@@ -496,9 +501,9 @@ cvt_raw_shapei64_to_raw_shape :: proc(raw64:raw_shapei64, allocator := context.a
 }
 
 cvt_raw_shape_to_raw_shapei64 :: proc(raw:raw_shape, allocator := context.allocator) ->  (res:raw_shapei64, err:runtime.Allocator_Error) #optional_allocator_error {
-	res.vertices = make_non_zeroed_slice([]shape_vertex2di64, len(raw.vertices), allocator) or_return
+	res.vertices = utils_private.make_non_zeroed_slice([]shape_vertex2di64, len(raw.vertices), allocator) or_return
 	defer if err != nil do delete(res.vertices, allocator)
-	res.indices = make_non_zeroed_slice([]u32, len(raw.indices), allocator) or_return
+	res.indices = utils_private.make_non_zeroed_slice([]u32, len(raw.indices), allocator) or_return
 	defer if err != nil do delete(res.indices, allocator)
 
 	for v, i in raw.vertices {
@@ -515,18 +520,18 @@ cvt_raw_shape_to_raw_shapei64 :: proc(raw:raw_shape, allocator := context.alloca
 
 cvt_shapes_to_shapesi64 :: proc(poly:shapes, allocator := context.allocator) ->  (poly64:shapesi64, err:runtime.Allocator_Error) #optional_allocator_error {
 	poly64 = shapesi64{
-		nodes = make_non_zeroed_slice([]shape_nodei64, len(poly.nodes), allocator) or_return
+		nodes = utils_private.make_non_zeroed_slice([]shape_nodei64, len(poly.nodes), allocator) or_return
 	}
 
 	for n, i in poly.nodes {
-		poly64.nodes[i].pts = make_non_zeroed_slice([][2]FixedDef, len(n.pts), allocator) or_return
+		poly64.nodes[i].pts = utils_private.make_non_zeroed_slice([][2]FixedDef, len(n.pts), allocator) or_return
 		for p, j in n.pts {
             fixed.init_from_f64(&poly64.nodes[i].pts[j].x, f64(p.x))
             fixed.init_from_f64(&poly64.nodes[i].pts[j].y, f64(p.y))
 		}
 
 		if n.curve_pts_ids != nil {
-			poly64.nodes[i].curve_pts_ids = make_non_zeroed_slice([]u32, len(n.curve_pts_ids), allocator) or_return
+			poly64.nodes[i].curve_pts_ids = utils_private.make_non_zeroed_slice([]u32, len(n.curve_pts_ids), allocator) or_return
 			mem.copy_non_overlapping(raw_data(poly64.nodes[i].curve_pts_ids), raw_data(n.curve_pts_ids), len(n.curve_pts_ids) * size_of(u32))
 		} else {
 			poly64.nodes[i].curve_pts_ids = nil
@@ -544,18 +549,18 @@ cvt_shapes_to_shapesi64 :: proc(poly:shapes, allocator := context.allocator) -> 
 
 cvt_shapesi64_to_shapes :: proc(poly:shapesi64, allocator := context.allocator) -> (poly32:shapes, err:runtime.Allocator_Error) #optional_allocator_error {
 	poly32 = shapes{
-		nodes = make_non_zeroed_slice([]shape_node, len(poly.nodes), allocator) or_return
+		nodes = utils_private.make_non_zeroed_slice([]shape_node, len(poly.nodes), allocator) or_return
 	}
 
 	for n, i in poly.nodes {
-		poly32.nodes[i].pts = make_non_zeroed_slice([]linalg.Vector2f32, len(n.pts), allocator) or_return
+		poly32.nodes[i].pts = utils_private.make_non_zeroed_slice([]linalg.Vector2f32, len(n.pts), allocator) or_return
 		for p, j in n.pts {
 			poly32.nodes[i].pts[j].x = f32(fixed.to_f64(p.x))
 			poly32.nodes[i].pts[j].y = f32(fixed.to_f64(p.y))
 		}
 
 		if n.curve_pts_ids != nil {
-			poly32.nodes[i].curve_pts_ids = make_non_zeroed_slice([]u32, len(n.curve_pts_ids), allocator) or_return
+			poly32.nodes[i].curve_pts_ids = utils_private.make_non_zeroed_slice([]u32, len(n.curve_pts_ids), allocator) or_return
 			mem.copy_non_overlapping(raw_data(poly32.nodes[i].curve_pts_ids), raw_data(n.curve_pts_ids), len(n.curve_pts_ids) * size_of(u32))
 		} else {
 			poly32.nodes[i].curve_pts_ids = nil
@@ -573,18 +578,18 @@ cvt_shapesi64_to_shapes :: proc(poly:shapesi64, allocator := context.allocator) 
 
 shapes_compute_polygon :: proc(poly:shapes, allocator := context.allocator) -> (res:raw_shape, err:shape_error = nil) {
 	poly64 := shapesi64{
-		nodes = make_non_zeroed_slice([]shape_nodei64, len(poly.nodes), context.temp_allocator) or_return
+		nodes = utils_private.make_non_zeroed_slice([]shape_nodei64, len(poly.nodes), context.temp_allocator) or_return
 	}
 
 	for n, i in poly.nodes {
-		poly64.nodes[i].pts = make_non_zeroed_slice([][2]FixedDef, len(n.pts), context.temp_allocator)
+		poly64.nodes[i].pts = utils_private.make_non_zeroed_slice([][2]FixedDef, len(n.pts), context.temp_allocator)
 		for p, j in n.pts {
 			fixed.init_from_f64(&poly64.nodes[i].pts[j].x, f64(p.x))
 			fixed.init_from_f64(&poly64.nodes[i].pts[j].y, f64(p.y))
 		}
 
 		if n.curve_pts_ids != nil {
-			poly64.nodes[i].curve_pts_ids = make_non_zeroed_slice([]u32, len(n.curve_pts_ids), context.temp_allocator)
+			poly64.nodes[i].curve_pts_ids = utils_private.make_non_zeroed_slice([]u32, len(n.curve_pts_ids), context.temp_allocator)
 			mem.copy_non_overlapping(raw_data(poly64.nodes[i].curve_pts_ids), raw_data(n.curve_pts_ids), len(n.curve_pts_ids) * size_of(u32))
 		} else {
 			poly64.nodes[i].curve_pts_ids = nil
@@ -598,9 +603,9 @@ shapes_compute_polygon :: proc(poly:shapes, allocator := context.allocator) -> (
 
 	res64 := shapes_compute_polygoni64(poly64, context.temp_allocator) or_return
 
-	res.vertices = make_non_zeroed_slice([]shape_vertex2d, len(res64.vertices), allocator) or_return
+	res.vertices = utils_private.make_non_zeroed_slice([]shape_vertex2d, len(res64.vertices), allocator) or_return
 	defer if err != nil do delete(res.vertices, allocator)
-	res.indices = make_non_zeroed_slice([]u32, len(res64.indices), allocator) or_return
+	res.indices = utils_private.make_non_zeroed_slice([]u32, len(res64.indices), allocator) or_return
 	defer if err != nil do delete(res.indices, allocator)// not working
 
 	for v, i in res64.vertices {
@@ -638,14 +643,14 @@ shapes_compute_polygoni64 :: proc(poly:shapesi64, allocator := context.allocator
 		insert_ar := make([dynamic][2]FixedDef, context.temp_allocator)
 
         for node, nidx in poly.nodes {
-			non_zero_resize(&non_curves, 0) or_return
-			non_zero_resize(&curves, 0) or_return
+			non_zero_resize_dynamic_array(&non_curves, 0) or_return
+			non_zero_resize_dynamic_array(&curves, 0) or_return
 			if node.color.a > 0 {
 				//
 				curve_idx := 0
-				non_zero_resize(&non_curves_npolys, len(node.n_polys)) or_return
-				non_zero_resize(&curves_npolys, len(node.n_polys)) or_return
-				non_zero_resize(&non_curves_ccw, len(node.n_polys)) or_return
+				non_zero_resize_dynamic_array(&non_curves_npolys, len(node.n_polys)) or_return
+				non_zero_resize_dynamic_array(&curves_npolys, len(node.n_polys)) or_return
+				non_zero_resize_dynamic_array(&non_curves_ccw, len(node.n_polys)) or_return
 				mem.zero_slice(non_curves_npolys[:])
 				mem.zero_slice(curves_npolys[:])
 
@@ -683,7 +688,7 @@ shapes_compute_polygoni64 :: proc(poly:shapesi64, allocator := context.allocator
 					if c.type != .Quadratic {
 						curveType, d0, d1, d2, _ := GetCubicCurveType(c.start, c.ctl0, c.ctl1, c.end)
 						if curveType == .Loop {
-							t1 := FixedDef{i = sqrt_i64((4 * d0.i * d2.i - 3 * d1.i * d1.i) << FIXED_SHIFT)}
+							t1 := FixedDef{i = utils_private.sqrt_i64((4 * d0.i * d2.i - 3 * d1.i * d1.i) << FIXED_SHIFT)}
 							ls := sub(d1, t1)
 							lt := mul(Fixed2, d0)
 							ms := add(d1, t1)
@@ -700,7 +705,7 @@ shapes_compute_polygoni64 :: proc(poly:shapesi64, allocator := context.allocator
 							}
 							pt01, pt12, pt23, pt012, pt123, pt0123 := SubdivCubicBezier([4][2]FixedDef{c.start, c.ctl0, c.ctl1, c.end}, subdiv_at)
 							curves[i] = CURVE_STRUCT{start = c.start, ctl0 = pt01, ctl1 = pt012, end = pt0123, type = .Unknown}
-							non_zero_inject_at_elem(&curves, i + 1, CURVE_STRUCT{start = pt0123, ctl0 = pt123, ctl1 = pt23, end = c.end, type = .Unknown}) or_return
+							utils_private.non_zero_inject_at_elem(&curves, i + 1, CURVE_STRUCT{start = pt0123, ctl0 = pt123, ctl1 = pt23, end = c.end, type = .Unknown}) or_return
 							i += 1//i add extra 1
 						}
 					}
@@ -727,11 +732,11 @@ shapes_compute_polygoni64 :: proc(poly:shapesi64, allocator := context.allocator
 								if cur.type == .Quadratic {
 									pt01, pt12, pt012 := SubdivQuadraticBezier([3][2]FixedDef{cur.start, cur.ctl0, cur.end}, subdiv_t)
 									curves[i] = CURVE_STRUCT{start = cur.start, ctl0 = pt01, end = pt012, type = .Quadratic}
-									non_zero_inject_at_elem(&curves, i + 1, CURVE_STRUCT{start = pt012, ctl0 = pt12,  end = cur.end, type = .Quadratic}) or_return
+									utils_private.non_zero_inject_at_elem(&curves, i + 1, CURVE_STRUCT{start = pt012, ctl0 = pt12,  end = cur.end, type = .Quadratic}) or_return
 								} else {
 									pt01, pt12, pt23, pt012, pt123, pt0123 := SubdivCubicBezier([4][2]FixedDef{cur.start, cur.ctl0, cur.ctl1, cur.end}, subdiv_t)
 									curves[i] = CURVE_STRUCT{start = cur.start, ctl0 = pt01, ctl1 = pt012, end = pt0123, type = .Unknown}
-									non_zero_inject_at_elem(&curves, i + 1, CURVE_STRUCT{start = pt0123, ctl0 = pt123, ctl1 = pt23, end = cur.end, type = .Unknown}) or_return
+									utils_private.non_zero_inject_at_elem(&curves, i + 1, CURVE_STRUCT{start = pt0123, ctl0 = pt123, ctl1 = pt23, end = cur.end, type = .Unknown}) or_return
 								}
 								has_overlap = true
 								if i < j do j += 1
@@ -761,32 +766,32 @@ shapes_compute_polygoni64 :: proc(poly:shapesi64, allocator := context.allocator
 						if curve_idx < curve_idx_end && non == curves[curve_idx].start {
 							j := curve_idx + 1
 							for ; j < len(curves) && non_next != curves[j].start; j += 1 {}
-							non_zero_resize(&insert_ar, 0) or_return
+							non_zero_resize_dynamic_array(&insert_ar, 0) or_return
 
 							non_curves_ccw[npi] = GetPolygonOrientation(non_curves[np_start:np_end])
 							invent_b := non_curves_ccw[npi] != .CounterClockwise//바깥쪽 도형이 아님 안쪽(구멍) 도형
 
-							if invent_bool(PointInPolygon(curves[curve_idx].ctl0, non_curves[np_start:np_end]), invent_b) {//첫번째를 루프밖에서 먼저 넣는다.
+							if utils_private.invent_bool(PointInPolygon(curves[curve_idx].ctl0, non_curves[np_start:np_end]), invent_b) {//첫번째를 루프밖에서 먼저 넣는다.
 								non_zero_append(&insert_ar, curves[curve_idx].ctl0) or_return
 							}
 							if curves[curve_idx].type != .Quadratic {
-								if invent_bool(PointInPolygon(curves[curve_idx].ctl1, non_curves[np_start:np_end]), invent_b) {
+								if utils_private.invent_bool(PointInPolygon(curves[curve_idx].ctl1, non_curves[np_start:np_end]), invent_b) {
 									non_zero_append(&insert_ar, curves[curve_idx].ctl1) or_return
 								}
 							}
 							for e := curve_idx + 1; e < j; e += 1 {
 								non_zero_append(&insert_ar, curves[e].start) or_return
-								if invent_bool(PointInPolygon(curves[e].ctl0, non_curves[np_start:np_end]), invent_b) {
+								if utils_private.invent_bool(PointInPolygon(curves[e].ctl0, non_curves[np_start:np_end]), invent_b) {
 									non_zero_append(&insert_ar, curves[e].ctl0) or_return
 								}
 								if curves[e].type != .Quadratic {
-									if invent_bool(PointInPolygon(curves[e].ctl1, non_curves[np_start:np_end]), invent_b) {
+									if utils_private.invent_bool(PointInPolygon(curves[e].ctl1, non_curves[np_start:np_end]), invent_b) {
 										non_zero_append(&insert_ar, curves[e].ctl1) or_return
 									}
 								}
 							}
 
-							non_zero_inject_at_elems(&non_curves, next, ..insert_ar[:]) or_return
+							utils_private.non_zero_inject_at_elems(&non_curves, next, ..insert_ar[:]) or_return
 							np += u32(len(insert_ar))
 							np_end += len(insert_ar)
 

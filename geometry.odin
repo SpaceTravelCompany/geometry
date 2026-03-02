@@ -69,9 +69,8 @@ shape_error :: union #shared_nil {
 }
 
 shape_node :: struct {
-    pts: []linalg.Vector2f32,
-    n_polys:[]u32,
-	curve_pts_ids: []u32,
+    pts: [][]linalg.Vector2f32,
+	curve_pts_ids: [][]u32,
     color: linalg.Vector4f32,
     stroke_color: linalg.Vector4f32,
     thickness: f64,
@@ -83,9 +82,8 @@ shapes :: struct {
 }
 
 shape_nodei64 :: struct {
-    pts: [][2]FixedDef,
-	n_polys:[]u32,
-	curve_pts_ids: []u32,
+    pts: [][][2]FixedDef,
+	curve_pts_ids: [][]u32,
     color: linalg.Vector4f32,
     stroke_color: linalg.Vector4f32,
     thickness: FixedDef,
@@ -482,6 +480,7 @@ GetCubicCurveType :: proc "contextless" (start:[2]$T, control0:[2]T, control1:[2
     return nil
 }
 
+@(require_results)
 cvt_raw_shapei64_to_raw_shape :: proc(raw64:raw_shapei64, allocator := context.allocator) ->  (res:raw_shape, err:runtime.Allocator_Error) #optional_allocator_error {
 	res.vertices = utils_private.make_non_zeroed_slice([]shape_vertex2d, len(raw64.vertices), allocator) or_return
 	defer if err != nil do delete(res.vertices, allocator)
@@ -500,6 +499,7 @@ cvt_raw_shapei64_to_raw_shape :: proc(raw64:raw_shapei64, allocator := context.a
 	return
 }
 
+@(require_results)
 cvt_raw_shape_to_raw_shapei64 :: proc(raw:raw_shape, allocator := context.allocator) ->  (res:raw_shapei64, err:runtime.Allocator_Error) #optional_allocator_error {
 	res.vertices = utils_private.make_non_zeroed_slice([]shape_vertex2di64, len(raw.vertices), allocator) or_return
 	defer if err != nil do delete(res.vertices, allocator)
@@ -518,21 +518,64 @@ cvt_raw_shape_to_raw_shapei64 :: proc(raw:raw_shape, allocator := context.alloca
 	return
 }
 
+@(require_results)
 cvt_shapes_to_shapesi64 :: proc(poly:shapes, allocator := context.allocator) ->  (poly64:shapesi64, err:runtime.Allocator_Error) #optional_allocator_error {
 	poly64 = shapesi64{
 		nodes = utils_private.make_non_zeroed_slice([]shape_nodei64, len(poly.nodes), allocator) or_return
 	}
+	defer if err != nil {
+		delete(poly64.nodes, allocator)
+	}
 
 	for n, i in poly.nodes {
-		poly64.nodes[i].pts = utils_private.make_non_zeroed_slice([][2]FixedDef, len(n.pts), allocator) or_return
-		for p, j in n.pts {
-            fixed.init_from_f64(&poly64.nodes[i].pts[j].x, f64(p.x))
-            fixed.init_from_f64(&poly64.nodes[i].pts[j].y, f64(p.y))
+		defer if err != nil {//(1)
+			for j in 0..<i {
+				for p in poly64.nodes[j].pts do delete(p, allocator)
+				delete(poly64.nodes[j].pts, allocator)
+				if poly64.nodes[j].curve_pts_ids != nil {
+					for p in poly64.nodes[j].curve_pts_ids do delete(p, allocator)
+					delete(poly64.nodes[j].curve_pts_ids, allocator)
+				}
+			}
 		}
-
+		poly64.nodes[i].pts = utils_private.make_non_zeroed_slice([][][2]FixedDef, len(n.pts), allocator) or_return
+		defer if err != nil {
+			delete(poly64.nodes[i].pts, allocator)
+		}
+		
+		for p, j in n.pts {
+			defer if err != nil {
+				for e in 0..<j {
+					delete(poly64.nodes[i].pts[e], allocator)
+				}
+			}
+			poly64.nodes[i].pts[j] = utils_private.make_non_zeroed_slice([][2]FixedDef, len(p), allocator) or_return
+			
+			for pp, e in p {
+				fixed.init_from_f64(&poly64.nodes[i].pts[j][e].x, f64(pp.x))
+            	fixed.init_from_f64(&poly64.nodes[i].pts[j][e].y, f64(pp.y))
+			}
+		}
+		
+		defer if err != nil {//(1)에서 현재 i pts는 지우지 않는다.
+			for p in poly64.nodes[i].pts do delete(p, allocator)
+		}
+		
 		if n.curve_pts_ids != nil {
-			poly64.nodes[i].curve_pts_ids = utils_private.make_non_zeroed_slice([]u32, len(n.curve_pts_ids), allocator) or_return
-			mem.copy_non_overlapping(raw_data(poly64.nodes[i].curve_pts_ids), raw_data(n.curve_pts_ids), len(n.curve_pts_ids) * size_of(u32))
+			poly64.nodes[i].curve_pts_ids = utils_private.make_non_zeroed_slice([][]u32, len(n.curve_pts_ids), allocator) or_return
+			defer if err != nil {
+				delete(poly64.nodes[i].curve_pts_ids, allocator)
+			}
+			
+			for p, j in n.curve_pts_ids {
+				defer if err != nil {
+					for e in 0..<j {
+						delete(poly64.nodes[i].curve_pts_ids[e], allocator)
+					}
+				}
+				poly64.nodes[i].curve_pts_ids[j] = utils_private.make_non_zeroed_slice([]u32, len(p), allocator) or_return
+				mem.copy_non_overlapping(raw_data(poly64.nodes[i].curve_pts_ids[j]), raw_data(p), len(p) * size_of(u32))
+			}
 		} else {
 			poly64.nodes[i].curve_pts_ids = nil
 		}
@@ -541,27 +584,68 @@ cvt_shapes_to_shapesi64 :: proc(poly:shapes, allocator := context.allocator) -> 
 		fixed.init_from_f64(&poly64.nodes[i].thickness, n.thickness)
 		poly64.nodes[i].color = n.color
 		poly64.nodes[i].stroke_color = n.stroke_color
-
-		mem.copy_non_overlapping(raw_data(poly64.nodes[i].n_polys), raw_data(n.n_polys), len(n.n_polys) * size_of(u32))
 	}
 	return
 }
 
+@(require_results)
 cvt_shapesi64_to_shapes :: proc(poly:shapesi64, allocator := context.allocator) -> (poly32:shapes, err:runtime.Allocator_Error) #optional_allocator_error {
 	poly32 = shapes{
 		nodes = utils_private.make_non_zeroed_slice([]shape_node, len(poly.nodes), allocator) or_return
 	}
+	defer if err != nil {
+		delete(poly32.nodes, allocator)
+	}
 
 	for n, i in poly.nodes {
-		poly32.nodes[i].pts = utils_private.make_non_zeroed_slice([]linalg.Vector2f32, len(n.pts), allocator) or_return
+		defer if err != nil {
+			for j in 0..<i {
+				for p in poly32.nodes[j].pts do delete(p, allocator)
+				delete(poly32.nodes[j].pts, allocator)
+				if poly32.nodes[j].curve_pts_ids != nil {
+					for p in poly32.nodes[j].curve_pts_ids do delete(p, allocator)
+					delete(poly32.nodes[j].curve_pts_ids, allocator)
+				}
+			}
+		}
+		poly32.nodes[i].pts = utils_private.make_non_zeroed_slice([][]linalg.Vector2f32, len(n.pts), allocator) or_return
+		defer if err != nil {
+			delete(poly32.nodes[i].pts, allocator)
+		}
+
 		for p, j in n.pts {
-			poly32.nodes[i].pts[j].x = f32(fixed.to_f64(p.x))
-			poly32.nodes[i].pts[j].y = f32(fixed.to_f64(p.y))
+			defer if err != nil {
+				for e in 0..<j {
+					delete(poly32.nodes[i].pts[e], allocator)
+				}
+			}
+			poly32.nodes[i].pts[j] = utils_private.make_non_zeroed_slice([]linalg.Vector2f32, len(p), allocator) or_return
+
+			for pp, e in p {
+				poly32.nodes[i].pts[j][e].x = f32(fixed.to_f64(pp.x))
+				poly32.nodes[i].pts[j][e].y = f32(fixed.to_f64(pp.y))
+			}
+		}
+
+		defer if err != nil {
+			for p in poly32.nodes[i].pts do delete(p, allocator)
 		}
 
 		if n.curve_pts_ids != nil {
-			poly32.nodes[i].curve_pts_ids = utils_private.make_non_zeroed_slice([]u32, len(n.curve_pts_ids), allocator) or_return
-			mem.copy_non_overlapping(raw_data(poly32.nodes[i].curve_pts_ids), raw_data(n.curve_pts_ids), len(n.curve_pts_ids) * size_of(u32))
+			poly32.nodes[i].curve_pts_ids = utils_private.make_non_zeroed_slice([][]u32, len(n.curve_pts_ids), allocator) or_return
+			defer if err != nil {
+				delete(poly32.nodes[i].curve_pts_ids, allocator)
+			}
+
+			for p, j in n.curve_pts_ids {
+				defer if err != nil {
+					for e in 0..<j {
+						delete(poly32.nodes[i].curve_pts_ids[e], allocator)
+					}
+				}
+				poly32.nodes[i].curve_pts_ids[j] = utils_private.make_non_zeroed_slice([]u32, len(p), allocator) or_return
+				mem.copy_non_overlapping(raw_data(poly32.nodes[i].curve_pts_ids[j]), raw_data(p), len(p) * size_of(u32))
+			}
 		} else {
 			poly32.nodes[i].curve_pts_ids = nil
 		}
@@ -570,36 +654,12 @@ cvt_shapesi64_to_shapes :: proc(poly:shapesi64, allocator := context.allocator) 
 		poly32.nodes[i].thickness = fixed.to_f64(n.thickness)
 		poly32.nodes[i].color = n.color
 		poly32.nodes[i].stroke_color = n.stroke_color
-
-		mem.copy_non_overlapping(raw_data(poly32.nodes[i].n_polys), raw_data(n.n_polys), len(n.n_polys) * size_of(u32))
 	}
 	return
 }
 
 shapes_compute_polygon :: proc(poly:shapes, allocator := context.allocator) -> (res:raw_shape, err:shape_error = nil) {
-	poly64 := shapesi64{
-		nodes = utils_private.make_non_zeroed_slice([]shape_nodei64, len(poly.nodes), context.temp_allocator) or_return
-	}
-
-	for n, i in poly.nodes {
-		poly64.nodes[i].pts = utils_private.make_non_zeroed_slice([][2]FixedDef, len(n.pts), context.temp_allocator)
-		for p, j in n.pts {
-			fixed.init_from_f64(&poly64.nodes[i].pts[j].x, f64(p.x))
-			fixed.init_from_f64(&poly64.nodes[i].pts[j].y, f64(p.y))
-		}
-
-		if n.curve_pts_ids != nil {
-			poly64.nodes[i].curve_pts_ids = utils_private.make_non_zeroed_slice([]u32, len(n.curve_pts_ids), context.temp_allocator)
-			mem.copy_non_overlapping(raw_data(poly64.nodes[i].curve_pts_ids), raw_data(n.curve_pts_ids), len(n.curve_pts_ids) * size_of(u32))
-		} else {
-			poly64.nodes[i].curve_pts_ids = nil
-		}
-
-		poly64.nodes[i].is_closed = n.is_closed
-        fixed.init_from_f64(&poly64.nodes[i].thickness, f64(n.thickness))
-		poly64.nodes[i].color = n.color
-		poly64.nodes[i].stroke_color = n.stroke_color
-	}
+	poly64 := cvt_shapes_to_shapesi64(poly, allocator) or_return
 
 	res64 := shapes_compute_polygoni64(poly64, context.temp_allocator) or_return
 
@@ -635,167 +695,173 @@ shapes_compute_polygoni64 :: proc(poly:shapesi64, allocator := context.allocator
     shapes_compute_polygon_in :: proc(vertList:^[dynamic]shape_vertex2di64, indList:^[dynamic]u32, poly:shapesi64, allocator : runtime.Allocator) -> (err:shape_error = nil) {
 		using fixed
 
-		non_curves:[dynamic][2]FixedDef = make([dynamic][2]FixedDef, context.temp_allocator)
-		non_curves_npolys:[dynamic]u32 = make([dynamic]u32, context.temp_allocator)
-		non_curves_ccw:[dynamic]PolyOrientation = make([dynamic]PolyOrientation, context.temp_allocator)
-		curves:[dynamic]CURVE_STRUCT = make([dynamic]CURVE_STRUCT, context.temp_allocator)
-		curves_npolys:[dynamic]u32 = make([dynamic]u32, context.temp_allocator)
+		non_curves_ccw:[dynamic][]PolyOrientation = make([dynamic][]PolyOrientation, context.temp_allocator)
+		non_curves2:[dynamic][dynamic][2]FixedDef = make([dynamic][dynamic][2]FixedDef, context.temp_allocator)
+		non_curves_ccw2:[dynamic][dynamic]PolyOrientation = make([dynamic][dynamic]PolyOrientation, context.temp_allocator)
+		curves2:[dynamic][dynamic]CURVE_STRUCT = make([dynamic][dynamic]CURVE_STRUCT, context.temp_allocator)
 		insert_ar := make([dynamic][2]FixedDef, context.temp_allocator)
 
+		//TODO NEED CHECK MORE
         for node, nidx in poly.nodes {
-			non_zero_resize_dynamic_array(&non_curves, 0) or_return
-			non_zero_resize_dynamic_array(&curves, 0) or_return
 			if node.color.a > 0 {
-				//
-				curve_idx := 0
-				non_zero_resize_dynamic_array(&non_curves_npolys, len(node.n_polys)) or_return
-				non_zero_resize_dynamic_array(&curves_npolys, len(node.n_polys)) or_return
-				non_zero_resize_dynamic_array(&non_curves_ccw, len(node.n_polys)) or_return
-				mem.zero_slice(non_curves_npolys[:])
-				mem.zero_slice(curves_npolys[:])
+				non_zero_resize_dynamic_array(&non_curves2, len(node.pts)) or_return
+				non_zero_resize_dynamic_array(&non_curves_ccw2, len(node.pts)) or_return
+				non_zero_resize_dynamic_array(&curves2, len(node.pts)) or_return
 
-				for np, npi in node.n_polys {
-					for pt, i in node.pts {
-						if curve_idx < len(node.curve_pts_ids) && node.curve_pts_ids[curve_idx] == u32(i) {//곡선 점이면
-							if curve_idx + 1 < len(node.curve_pts_ids) && node.curve_pts_ids[curve_idx + 1] == u32(i) {//큐빅인지 확인
-								non_zero_append(&curves, CURVE_STRUCT{
-									start = node.pts[i - 1],
-									ctl0 = node.pts[i],
-									ctl1 = node.pts[i + 1],
-									end = node.pts[i + 2 >= len(node.pts) ? 0 : i + 2],
+				for i in 0..<len(node.pts) {
+					non_zero_resize_dynamic_array(&non_curves2[i], 0) or_return
+					non_zero_resize_dynamic_array(&non_curves_ccw2[i], 0) or_return
+					non_zero_resize_dynamic_array(&curves2[i], 0) or_return
+				}
+
+				for np, npi in node.pts {
+					curve_idx := 0
+					for pt, i in np {
+						if node.curve_pts_ids != nil && curve_idx < len(node.curve_pts_ids[npi]) && node.curve_pts_ids[npi][curve_idx] == u32(i) {
+							if curve_idx + 1 < len(node.curve_pts_ids[npi]) && node.curve_pts_ids[npi][curve_idx + 1] == u32(i) {
+								non_zero_append(&curves2[npi], CURVE_STRUCT{
+									start = np[i - 1],
+									ctl0 = np[i],
+									ctl1 = np[i + 1],
+									end = np[(i + 2) % len(np)],
 									type = .Unknown,
 								}) or_return
 								curve_idx += 2
 							} else {
-								non_zero_append(&curves, CURVE_STRUCT{
-									start = node.pts[i - 1],
-									ctl0 = node.pts[i],
-									end = node.pts[i + 1 >= len(node.pts) ? 0 : i + 1],
+								non_zero_append(&curves2[npi], CURVE_STRUCT{
+									start = np[i - 1],
+									ctl0 = np[i],
+									end = np[(i + 1) % len(np)],
 									type = .Quadratic,
 								}) or_return
 								curve_idx += 1
 							}
-							curves_npolys[npi] += 1
 						} else {
-							non_zero_append(&non_curves, pt) or_return
-							non_curves_npolys[npi] += 1
+							non_zero_append(&non_curves2[npi], pt) or_return
 						}
 					}
 				}
-				//
-				for i := 0 ;i<len(curves);i += 1 {
-					c := curves[i]
-					if c.type != .Quadratic {
-						curveType, d0, d1, d2, _ := GetCubicCurveType(c.start, c.ctl0, c.ctl1, c.end)
-						if curveType == .Loop {
-							t1 := FixedDef{i = utils_private.sqrt_i64((4 * d0.i * d2.i - 3 * d1.i * d1.i) << FIXED_SHIFT)}
-							ls := sub(d1, t1)
-							lt := mul(Fixed2, d0)
-							ms := add(d1, t1)
-							mt := lt
-							ql := div(ls, lt)
-							qm := div(ms, mt)
-							subdiv_at: FixedDef
-							if (0 < ql.i && ql.i < Fixed1.i) {
-								subdiv_at = ql
-							} else if 0 < qm.i && qm.i < Fixed1.i {
-								subdiv_at = qm
-							} else {
-								continue
+				// Loop subdivision: subdivide cubic Loop curves per polygon
+				for npi in 0..<len(curves2) {
+					curves_npi := &curves2[npi]
+					for i := 0;i < len(curves_npi);i += 1 {
+						c := curves_npi[i]
+						if c.type != .Quadratic {
+							curveType, d0, d1, d2, _ := GetCubicCurveType(c.start, c.ctl0, c.ctl1, c.end)
+							if curveType == .Loop {
+								t1 := FixedDef{i = utils_private.sqrt_i64((4 * d0.i * d2.i - 3 * d1.i * d1.i) << FIXED_SHIFT)}
+								ls := sub(d1, t1)
+								lt := mul(Fixed2, d0)
+								ms := add(d1, t1)
+								mt := lt
+								ql := div(ls, lt)
+								qm := div(ms, mt)
+								subdiv_at: FixedDef
+								if (0 < ql.i && ql.i < Fixed1.i) {
+									subdiv_at = ql
+								} else if 0 < qm.i && qm.i < Fixed1.i {
+									subdiv_at = qm
+								} else {
+									continue
+								}
+								pt01, pt12, pt23, pt012, pt123, pt0123 := SubdivCubicBezier([4][2]FixedDef{c.start, c.ctl0, c.ctl1, c.end}, subdiv_at)
+								curves_npi[i] = CURVE_STRUCT{start = c.start, ctl0 = pt01, ctl1 = pt012, end = pt0123, type = .Unknown}
+								utils_private.non_zero_inject_at_elem(curves_npi, i + 1, CURVE_STRUCT{start = pt0123, ctl0 = pt123, ctl1 = pt23, end = c.end, type = .Unknown}) or_return
+								i += 1//add extra 1
 							}
-							pt01, pt12, pt23, pt012, pt123, pt0123 := SubdivCubicBezier([4][2]FixedDef{c.start, c.ctl0, c.ctl1, c.end}, subdiv_at)
-							curves[i] = CURVE_STRUCT{start = c.start, ctl0 = pt01, ctl1 = pt012, end = pt0123, type = .Unknown}
-							utils_private.non_zero_inject_at_elem(&curves, i + 1, CURVE_STRUCT{start = pt0123, ctl0 = pt123, ctl1 = pt23, end = c.end, type = .Unknown}) or_return
-							i += 1//i add extra 1
 						}
 					}
 				}
-				//
-				has_overlap := false
+				// Overlap check: subdivide overlapping curves across all polygons
 				for {
-					for i := 0 ;i<len(curves);i += 1 {
-						for j := 0 ;j<len(curves);j += 1 {
-							if i == j do continue
-							cur := curves[i]
-							cur2 := curves[j]
-							poly1 := cur.type == .Quadratic ? [][2]FixedDef{cur.start, cur.ctl0, cur.end} : [][2]FixedDef{cur.start, cur.ctl0, cur.ctl1, cur.end}
-							poly2 := cur2.type == .Quadratic ? [][2]FixedDef{cur2.start, cur2.ctl0, cur2.end} : [][2]FixedDef{cur2.start, cur2.ctl0, cur2.ctl1, cur2.end}
-							overlap := PolygonOverlapsPolygon(poly1, poly2)
-							if overlap {
-								subdiv_t : FixedDef
-								if cur2.type == .Quadratic {
-									subdiv_t , _ = PointInLine(cur2.ctl0, cur.start, cur.end)
-								} else {
-									subdiv_t , _ = PointInLine(lerp_fixed(cur2.ctl0, cur2.ctl1, splat_2_fixed(Div2Fixed)), cur.start, cur.end)
+					has_overlap := false
+					for npi in 0..<len(curves2) {
+						curves_i := &curves2[npi]
+						for i := 0;i < len(curves_i);i += 1 {
+							for npj in 0..<len(curves2) {
+								curves_j := &curves2[npj]
+								for j := 0;j < len(curves_j);j += 1 {
+									if npi == npj && i == j do continue
+									cur := curves_i[i]
+									cur2 := curves_j[j]
+									poly1 := cur.type == .Quadratic ? [][2]FixedDef{cur.start, cur.ctl0, cur.end} : [][2]FixedDef{cur.start, cur.ctl0, cur.ctl1, cur.end}
+									poly2 := cur2.type == .Quadratic ? [][2]FixedDef{cur2.start, cur2.ctl0, cur2.end} : [][2]FixedDef{cur2.start, cur2.ctl0, cur2.ctl1, cur2.end}
+									if !PolygonOverlapsPolygon(poly1, poly2) do continue
+									subdiv_t: FixedDef
+									if cur2.type == .Quadratic {
+										subdiv_t, _ = PointInLine(cur2.ctl0, cur.start, cur.end)
+									} else {
+										subdiv_t, _ = PointInLine(lerp_fixed(cur2.ctl0, cur2.ctl1, splat_2_fixed(Div2Fixed)), cur.start, cur.end)
+									}
+									if cur.type == .Quadratic {
+										pt01, pt12, pt012 := SubdivQuadraticBezier([3][2]FixedDef{cur.start, cur.ctl0, cur.end}, subdiv_t)
+										curves_i[i] = CURVE_STRUCT{start = cur.start, ctl0 = pt01, end = pt012, type = .Quadratic}
+										utils_private.non_zero_inject_at_elem(curves_i, i + 1, CURVE_STRUCT{start = pt012, ctl0 = pt12, end = cur.end, type = .Quadratic}) or_return
+									} else {
+										pt01, pt12, pt23, pt012, pt123, pt0123 := SubdivCubicBezier([4][2]FixedDef{cur.start, cur.ctl0, cur.ctl1, cur.end}, subdiv_t)
+										curves_i[i] = CURVE_STRUCT{start = cur.start, ctl0 = pt01, ctl1 = pt012, end = pt0123, type = .Unknown}
+										utils_private.non_zero_inject_at_elem(curves_i, i + 1, CURVE_STRUCT{start = pt0123, ctl0 = pt123, ctl1 = pt23, end = cur.end, type = .Unknown}) or_return
+									}
+									if i < j do j += 1
+									i += 1
+									has_overlap = true
 								}
-
-								if cur.type == .Quadratic {
-									pt01, pt12, pt012 := SubdivQuadraticBezier([3][2]FixedDef{cur.start, cur.ctl0, cur.end}, subdiv_t)
-									curves[i] = CURVE_STRUCT{start = cur.start, ctl0 = pt01, end = pt012, type = .Quadratic}
-									utils_private.non_zero_inject_at_elem(&curves, i + 1, CURVE_STRUCT{start = pt012, ctl0 = pt12,  end = cur.end, type = .Quadratic}) or_return
-								} else {
-									pt01, pt12, pt23, pt012, pt123, pt0123 := SubdivCubicBezier([4][2]FixedDef{cur.start, cur.ctl0, cur.ctl1, cur.end}, subdiv_t)
-									curves[i] = CURVE_STRUCT{start = cur.start, ctl0 = pt01, ctl1 = pt012, end = pt0123, type = .Unknown}
-									utils_private.non_zero_inject_at_elem(&curves, i + 1, CURVE_STRUCT{start = pt0123, ctl0 = pt123, ctl1 = pt23, end = cur.end, type = .Unknown}) or_return
-								}
-								has_overlap = true
-								if i < j do j += 1
-								i += 1
-								break
 							}
 						}
 					}
 					if !has_overlap do break
-					has_overlap = false
 				}
-				//
-				curve_idx = 0
-				curve_idx_end := 0
-				np_start := 0
-				np_end := 0
+				
+				// Insert curve control points into polygon boundaries (per-polygon)
+				for npi in 0..<len(node.pts) {
+					non_curves_npi := &non_curves2[npi]
+					curves_npi := curves2[npi]
+					curve_idx := 0
+					poly_pts := non_curves_npi[:]
+					orient := GetPolygonOrientation(poly_pts)
+					invent_b := orient != .CounterClockwise
 
-				for &np, npi in non_curves_npolys {
-					np_end += int(np)
-					curve_idx_end += int(curves_npolys[npi])
+					i := 0
+					for i < len(non_curves_npi) {
+						non := non_curves_npi[i]
+						next: int
+						if node.is_closed {
+							next = (i + 1) % len(non_curves_npi)
+						} else {
+							if i + 1 >= len(non_curves_npi) do break
+							next = i + 1
+						}
+						non_next := non_curves_npi[next]
 
-					for i := np_start; i < np_end; {
-						non := non_curves[i]
-						next := i + 1 >= np_end ? np_start : i + 1
-						non_next := non_curves[next]
-
-						if curve_idx < curve_idx_end && non == curves[curve_idx].start {
+						if curve_idx < len(curves_npi) && non == curves_npi[curve_idx].start {
 							j := curve_idx + 1
-							for ; j < len(curves) && non_next != curves[j].start; j += 1 {}
+							for ; j < len(curves_npi) && non_next != curves_npi[j].start; j += 1 {}
 							non_zero_resize_dynamic_array(&insert_ar, 0) or_return
 
-							non_curves_ccw[npi] = GetPolygonOrientation(non_curves[np_start:np_end])
-							invent_b := non_curves_ccw[npi] != .CounterClockwise//바깥쪽 도형이 아님 안쪽(구멍) 도형
-
-							if utils_private.invent_bool(PointInPolygon(curves[curve_idx].ctl0, non_curves[np_start:np_end]), invent_b) {//첫번째를 루프밖에서 먼저 넣는다.
-								non_zero_append(&insert_ar, curves[curve_idx].ctl0) or_return
+							if utils_private.invent_bool(PointInPolygon(curves_npi[curve_idx].ctl0, poly_pts), invent_b) {
+								non_zero_append(&insert_ar, curves_npi[curve_idx].ctl0) or_return
 							}
-							if curves[curve_idx].type != .Quadratic {
-								if utils_private.invent_bool(PointInPolygon(curves[curve_idx].ctl1, non_curves[np_start:np_end]), invent_b) {
-									non_zero_append(&insert_ar, curves[curve_idx].ctl1) or_return
+							if curves_npi[curve_idx].type != .Quadratic {
+								if utils_private.invent_bool(PointInPolygon(curves_npi[curve_idx].ctl1, poly_pts), invent_b) {
+									non_zero_append(&insert_ar, curves_npi[curve_idx].ctl1) or_return
 								}
 							}
 							for e := curve_idx + 1; e < j; e += 1 {
-								non_zero_append(&insert_ar, curves[e].start) or_return
-								if utils_private.invent_bool(PointInPolygon(curves[e].ctl0, non_curves[np_start:np_end]), invent_b) {
-									non_zero_append(&insert_ar, curves[e].ctl0) or_return
+								non_zero_append(&insert_ar, curves_npi[e].start) or_return
+								if utils_private.invent_bool(PointInPolygon(curves_npi[e].ctl0, poly_pts), invent_b) {
+									non_zero_append(&insert_ar, curves_npi[e].ctl0) or_return
 								}
-								if curves[e].type != .Quadratic {
-									if utils_private.invent_bool(PointInPolygon(curves[e].ctl1, non_curves[np_start:np_end]), invent_b) {
-										non_zero_append(&insert_ar, curves[e].ctl1) or_return
+								if curves_npi[e].type != .Quadratic {
+									if utils_private.invent_bool(PointInPolygon(curves_npi[e].ctl1, poly_pts), invent_b) {
+										non_zero_append(&insert_ar, curves_npi[e].ctl1) or_return
 									}
 								}
 							}
 
-							utils_private.non_zero_inject_at_elems(&non_curves, next, ..insert_ar[:]) or_return
-							np += u32(len(insert_ar))
-							np_end += len(insert_ar)
+							utils_private.non_zero_inject_at_elems(non_curves_npi, next, ..insert_ar[:]) or_return
+							poly_pts = non_curves_npi[:]
 
-							if j >= len(curves) do break
+							if j >= len(curves_npi) do break
 							curve_idx = j
 
 							i = next + len(insert_ar)
@@ -803,10 +869,18 @@ shapes_compute_polygoni64 :: proc(poly:shapesi64, allocator := context.allocator
 							i += 1
 						}
 					}
-					np_start += int(np)
+					non_zero_append(&non_curves_ccw2[npi], GetPolygonOrientation(non_curves2[npi][:])) or_return
 				}
-				//TODO non_curves trianglation
-				indices, tri_err := TrianguatePolygons_Fixed(non_curves[:], non_curves_npolys[:], non_curves_ccw[:], allocator)
+				non_zero_resize_dynamic_array(&non_curves_ccw, len(node.pts)) or_return
+				for npi in 0..<len(node.pts) {
+					non_curves_ccw[npi] = non_curves_ccw2[npi][:]
+				}
+				non_curves_polygons := make([dynamic][][2]FixedDef, context.temp_allocator)
+				for npi in 0..<len(non_curves2) {
+					non_zero_append(&non_curves_polygons, non_curves2[npi][:]) or_return
+				}
+				//TODO NEED CHECK MORE END
+				indices, tri_err := TrianguatePolygons_Fixed(non_curves_polygons[:], non_curves_ccw[:], allocator)
 				if tri_err != nil {
 					switch tri in tri_err {
 					case __Trianguate_Error:err = tri_err.(__Trianguate_Error)
@@ -814,7 +888,6 @@ shapes_compute_polygoni64 :: proc(poly:shapesi64, allocator := context.allocator
 					}
 					return
 				}
-
 
 				//
 

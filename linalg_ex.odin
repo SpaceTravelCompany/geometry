@@ -920,9 +920,11 @@ ellipse_cubic_init :: proc "contextless" (_center: linalg.Vector2f32, _rxy: lina
 
 poly_transform_matrix :: proc "contextless" (inout_poly: ^shapes, F: linalg.Matrix4x4f32) {
 	for &node in inout_poly.nodes {
-		for &pts in node.pts {
-			out := linalg.mul(F, linalg.Vector4f32{pts.x, pts.y, 0, 1})
-			pts = linalg.Vector2f32{out.x, out.y} / out.w
+		for pts in node.pts {
+			for &pt in pts {
+				out := linalg.mul(F, linalg.Vector4f32{pt.x, pt.y, 0.0, 1.0})
+				pt = linalg.Vector2f32{out.x, out.y} / out.w
+			}
 		}
 	}
 }

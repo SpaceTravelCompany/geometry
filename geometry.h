@@ -32,9 +32,8 @@ typedef struct {
 } Geometry_RawShape;
 
 typedef struct {
-    Geometry_Slice pts;
-    Geometry_Slice n_polys;
-    Geometry_Slice curve_pts_ids;
+    Geometry_Slice pts;//2D Slice
+    Geometry_Slice curve_pts_ids;//2D Slice
     Geometry_Vec4 color;
     Geometry_Vec4 stroke_color;
     double thickness;
@@ -64,9 +63,8 @@ typedef struct {
 } Geometry_RawShape_Fixed;
 
 typedef struct {
-    Geometry_Slice pts;
-    Geometry_Slice n_polys;
-    Geometry_Slice curve_pts_ids;
+    Geometry_Slice pts;//2D Slice
+    Geometry_Slice curve_pts_ids;//2D Slice
     Geometry_Vec4 color;
     Geometry_Vec4 stroke_color;
     Geometry_Fixed thickness;

@@ -90,8 +90,8 @@ Geometry_RawShape :: struct {
 
 @(private="file")
 Geometry_Node :: struct {
-	pts:           Geometry_Slice,
-	curve_pts_ids: Geometry_Slice,
+	pts:           Geometry_Slice,//2d slice
+	curve_pts_ids: Geometry_Slice,//2d slice
 	color:         linalg.Vector4f32,
 	stroke_color:  linalg.Vector4f32,
 	thickness:     f64,
@@ -128,9 +128,8 @@ Geometry_RawShape_Fixed :: struct {
 
 @(private="file")
 Geometry_Node_Fixed :: struct {
-	pts:           Geometry_Slice,
-	n_polys:       Geometry_Slice,
-	curve_pts_ids: Geometry_Slice,
+	pts:           Geometry_Slice,//2d slice
+	curve_pts_ids: Geometry_Slice,//2d slice
 	color:         linalg.Vector4f32,
 	stroke_color:  linalg.Vector4f32,
 	thickness:     Geometry_Fixed,
@@ -169,18 +168,11 @@ geometry_shapes_compute_polygon :: proc "c" (
 }
 
 @(private="file")
-_geometry_slice_to_odin :: proc(gs: Geometry_Slice, $T: typeid/[]$E) -> T {
-	result: T
-	(^runtime.Raw_Slice)(&result)^ = gs
-	return result
-}
-
-@(private="file")
 _geometry_shapes_compute_polygon_impl :: proc(input: ^Geometry_Shapes, out: ^Geometry_RawShape) -> Geometry_Error {
 	if input == nil || out == nil do return .None
 
 	// Direct cast - Geometry_Slice has same layout as Odin slice, no copy
-	poly := shapes{nodes = _geometry_slice_to_odin(input.nodes, []shape_node)}
+	poly := shapes{nodes = (^[]shape_node)(&input.nodes)^}
 
 	res, err := shapes_compute_polygon(poly, _c_allocator)
 	if err != nil {
@@ -215,8 +207,8 @@ geometry_raw_shape_free :: proc "c" (shape: ^Geometry_RawShape) {
 	if shape == nil do return
 	context = runtime.Context{allocator = _c_allocator}
 	raw := raw_shape{
-		vertices = _geometry_slice_to_odin(shape.vertices, []shape_vertex2d),
-		indices  = _geometry_slice_to_odin(shape.indices, []u32),
+		vertices = (^[]shape_vertex2d)(&shape.vertices)^,
+		indices  = (^[]u32)(&shape.indices)^,
 	}
 	raw_shape_free(raw, _c_allocator)
 }
@@ -255,7 +247,7 @@ _geometry_shapes_compute_polygon_fixed_impl :: proc(input: ^Geometry_Shapes_Fixe
 	if input == nil || out == nil do return .None
 
 	// Direct cast - Geometry_Slice has same layout as Odin slice, no copy
-	poly := shapesi64{nodes = _geometry_slice_to_odin(input.nodes, []shape_nodei64)}
+	poly := shapesi64{nodes = (^[]shape_nodei64)(&input.nodes)^}
 
 	res, err := shapes_compute_polygoni64(poly, _c_allocator)
 	if err != nil {
@@ -290,8 +282,8 @@ geometry_raw_shape_free_fixed :: proc "c" (shape: ^Geometry_RawShape_Fixed) {
 	if shape == nil do return
 	context = runtime.Context{allocator = _c_allocator}
 	raw := raw_shapei64{
-		vertices = _geometry_slice_to_odin(shape.vertices, []shape_vertex2di64),
-		indices  = _geometry_slice_to_odin(shape.indices, []u32),
+		vertices = (^[]shape_vertex2di64)(&shape.vertices)^,
+		indices  = (^[]u32)(&shape.indices)^,
 	}
 	raw_shapei64_free(raw, _c_allocator)
 }

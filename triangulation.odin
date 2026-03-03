@@ -20,7 +20,7 @@ Trianguate_Error :: union #shared_nil {
     runtime.Allocator_Error,
 }
 
-TrianguatePolygons_Fixed :: proc(poly:[][][2]FixedDef, polyCCW:[][]PolyOrientation = nil, allocator := context.allocator) ->
+TrianguatePolygons_Fixed :: proc(poly:[][][2]FixedDef, polyCCW:[]PolyOrientation = nil, allocator := context.allocator) ->
 (indices:[]u32, err:Trianguate_Error) {
 	using fixed
 	
@@ -31,8 +31,10 @@ TrianguatePolygons_Fixed :: proc(poly:[][][2]FixedDef, polyCCW:[][]PolyOrientati
 	//polyCCW 정보 (폴리곤이 구멍인지 아닌지 여부) 가 없으면 직접 만들어야 한다.
 	polyCCW := polyCCW
 	if polyCCW == nil {
-		polyCCW = utils_private.make_non_zeroed_slice([][]PolyOrientation, len(poly), allocator) or_return
-		
+		polyCCW = utils_private.make_non_zeroed_slice([]PolyOrientation, len(poly), context.temp_allocator) or_return
+		for &p, i in polyCCW {
+			p = GetPolygonOrientation(poly[i])
+		}
 	}
 	
 	//TODO non_curves trianglation

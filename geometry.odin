@@ -701,19 +701,23 @@ shapes_compute_polygoni64 :: proc(poly:shapesi64, allocator := context.allocator
 		curves2:[dynamic][dynamic]CURVE_STRUCT = make([dynamic][dynamic]CURVE_STRUCT, context.temp_allocator)
 		insert_ar := make([dynamic][2]FixedDef, context.temp_allocator)
 
-		//TODO NEED CHECK MORE
         for node, nidx in poly.nodes {
-			if node.color.a > 0 {
+			if node.color.a > 0 {//TODO Handle If is_close == false
 				non_zero_resize_dynamic_array(&non_curves2, len(node.pts)) or_return
 				non_zero_resize_dynamic_array(&non_curves_ccw2, len(node.pts)) or_return
 				non_zero_resize_dynamic_array(&curves2, len(node.pts)) or_return
 
 				for i in 0..<len(node.pts) {
-					non_zero_resize_dynamic_array(&non_curves2[i], 0) or_return
-					non_zero_resize_dynamic_array(&non_curves_ccw2[i], 0) or_return
-					non_zero_resize_dynamic_array(&curves2[i], 0) or_return
+					if non_curves2[i] == nil {
+						non_curves2[i] = make([dynamic][2]FixedDef, context.temp_allocator)
+						non_curves_ccw2[i] = make([dynamic]PolyOrientation, context.temp_allocator)
+						curves2[i] = make([dynamic]CURVE_STRUCT, context.temp_allocator)
+					} else {
+						non_zero_resize_dynamic_array(&non_curves2[i], 0) or_return
+						non_zero_resize_dynamic_array(&non_curves_ccw2[i], 0) or_return
+						non_zero_resize_dynamic_array(&curves2[i], 0) or_return
+					}
 				}
-
 				for np, npi in node.pts {
 					curve_idx := 0
 					for pt, i in np {
@@ -741,6 +745,7 @@ shapes_compute_polygoni64 :: proc(poly:shapesi64, allocator := context.allocator
 						}
 					}
 				}
+				//TODO NEED CHECK MORE
 				// Loop subdivision: subdivide cubic Loop curves per polygon
 				for npi in 0..<len(curves2) {
 					curves_npi := &curves2[npi]
@@ -871,6 +876,7 @@ shapes_compute_polygoni64 :: proc(poly:shapesi64, allocator := context.allocator
 					}
 					non_zero_append(&non_curves_ccw2[npi], GetPolygonOrientation(non_curves2[npi][:])) or_return
 				}
+				//TODO NEED CHECK MORE END
 				non_zero_resize_dynamic_array(&non_curves_ccw, len(node.pts)) or_return
 				for npi in 0..<len(node.pts) {
 					non_curves_ccw[npi] = non_curves_ccw2[npi][:]
@@ -879,7 +885,6 @@ shapes_compute_polygoni64 :: proc(poly:shapesi64, allocator := context.allocator
 				for npi in 0..<len(non_curves2) {
 					non_zero_append(&non_curves_polygons, non_curves2[npi][:]) or_return
 				}
-				//TODO NEED CHECK MORE END
 				indices, tri_err := TrianguatePolygons_Fixed(non_curves_polygons[:], non_curves_ccw[:], allocator)
 				if tri_err != nil {
 					switch tri in tri_err {

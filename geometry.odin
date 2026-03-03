@@ -230,8 +230,7 @@ GetCubicCurveType :: proc "contextless" (start:[2]$T, control0:[2]T, control1:[2
     reverse := false
     d0,d1,d2:FixedDef
     if curveType != .Line && curveType != .Quadratic {
-        curveType, d0,d1,d2, err = GetCubicCurveType(pts[0], pts[1], pts[2], pts[3])
-        if err != nil do return err
+        curveType, d0, d1, d2 = GetCubicCurveType(pts[0], pts[1], pts[2], pts[3]) or_return
     } else if curveType == .Quadratic && len(pts) == 3 {
 		vlen :u32 = u32(len(vertList))
 		if GetPolygonOrientation(pts) == .CounterClockwise {
@@ -270,7 +269,6 @@ GetCubicCurveType :: proc "contextless" (start:[2]$T, control0:[2]T, control1:[2
 		non_zero_append(indList, vlen, vlen + 1, vlen + 2)
         return nil
     }
-
     F :[4][3]FixedDef
 
     reverseOrientation :: #force_inline proc "contextless" (F:[4][3]FixedDef) -> [4][3]FixedDef {
@@ -695,6 +693,7 @@ shapes_compute_polygoni64 :: proc(poly:shapesi64, allocator := context.allocator
     shapes_compute_polygon_in :: proc(vertList:^[dynamic]shape_vertex2di64, indList:^[dynamic]u32, poly:shapesi64, allocator : runtime.Allocator) -> (err:shape_error = nil) {
 		using fixed
 
+		non_curves_polygons := make([dynamic][][2]FixedDef, context.temp_allocator)
 		non_curves_ccw:[dynamic][]PolyOrientation = make([dynamic][]PolyOrientation, context.temp_allocator)
 		non_curves2:[dynamic][dynamic][2]FixedDef = make([dynamic][dynamic][2]FixedDef, context.temp_allocator)
 		non_curves_ccw2:[dynamic][dynamic]PolyOrientation = make([dynamic][dynamic]PolyOrientation, context.temp_allocator)
@@ -709,9 +708,9 @@ shapes_compute_polygoni64 :: proc(poly:shapesi64, allocator := context.allocator
 
 				for i in 0..<len(node.pts) {
 					if non_curves2[i] == nil {
-						non_curves2[i] = make([dynamic][2]FixedDef, context.temp_allocator)
-						non_curves_ccw2[i] = make([dynamic]PolyOrientation, context.temp_allocator)
-						curves2[i] = make([dynamic]CURVE_STRUCT, context.temp_allocator)
+						non_curves2[i] = make([dynamic][2]FixedDef, context.temp_allocator) or_return
+						non_curves_ccw2[i] = make([dynamic]PolyOrientation, context.temp_allocator) or_return
+						curves2[i] = make([dynamic]CURVE_STRUCT, context.temp_allocator) or_return
 					} else {
 						non_zero_resize_dynamic_array(&non_curves2[i], 0) or_return
 						non_zero_resize_dynamic_array(&non_curves_ccw2[i], 0) or_return
@@ -745,21 +744,20 @@ shapes_compute_polygoni64 :: proc(poly:shapesi64, allocator := context.allocator
 						}
 					}
 				}
-				//TODO NEED CHECK MORE
 				// Loop subdivision: subdivide cubic Loop curves per polygon
 				for npi in 0..<len(curves2) {
 					curves_npi := &curves2[npi]
 					for i := 0;i < len(curves_npi);i += 1 {
 						c := curves_npi[i]
 						if c.type != .Quadratic {
-							curveType, d0, d1, d2, _ := GetCubicCurveType(c.start, c.ctl0, c.ctl1, c.end)
+							curveType, d0, d1, d2 := GetCubicCurveType(c.start, c.ctl0, c.ctl1, c.end) or_return
 							if curveType == .Loop {
 								t1 := FixedDef{i = utils_private.sqrt_i64((4 * d0.i * d2.i - 3 * d1.i * d1.i) << FIXED_SHIFT)}
 								ls := sub(d1, t1)
 								lt := mul(Fixed2, d0)
 								ms := add(d1, t1)
 								mt := lt
-								ql := div(ls, lt)
+								ql := div(ls, lt)// loop면 d0이 0이 아니라서 0으로 나누지 않는다.
 								qm := div(ms, mt)
 								subdiv_at: FixedDef
 								if (0 < ql.i && ql.i < Fixed1.i) {
@@ -876,14 +874,12 @@ shapes_compute_polygoni64 :: proc(poly:shapesi64, allocator := context.allocator
 					}
 					non_zero_append(&non_curves_ccw2[npi], GetPolygonOrientation(non_curves2[npi][:])) or_return
 				}
-				//TODO NEED CHECK MORE END
-				non_zero_resize_dynamic_array(&non_curves_ccw, len(node.pts)) or_return
-				for npi in 0..<len(node.pts) {
-					non_curves_ccw[npi] = non_curves_ccw2[npi][:]
-				}
-				non_curves_polygons := make([dynamic][][2]FixedDef, context.temp_allocator)
+			
+				non_zero_resize_dynamic_array(&non_curves_ccw, len(non_curves2)) or_return
+				non_zero_resize_dynamic_array(&non_curves_polygons, len(non_curves2))  or_return
 				for npi in 0..<len(non_curves2) {
-					non_zero_append(&non_curves_polygons, non_curves2[npi][:]) or_return
+					non_curves_ccw[npi] = non_curves_ccw2[npi][:]
+					non_curves_polygons[npi] = non_curves2[npi][:]
 				}
 				indices, tri_err := TrianguatePolygons_Fixed(non_curves_polygons[:], non_curves_ccw[:], allocator)
 				if tri_err != nil {

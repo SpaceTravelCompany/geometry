@@ -8,6 +8,7 @@ import "core:math/linalg"
 import "core:mem"
 
 import "core:math/fixed"
+import "shared:utils_private/fixed_ex"
 
 import "shared:utils_private"
 
@@ -273,10 +274,10 @@ GetCubicCurveType :: proc "contextless" (start:[2]$T, control0:[2]T, control1:[2
 
     reverseOrientation :: #force_inline proc "contextless" (F:[4][3]FixedDef) -> [4][3]FixedDef {
         return [4][3]FixedDef{
-            {utils_private.sign(F[0][0]), utils_private.sign(F[0][1]), F[0][2]},
-            {utils_private.sign(F[1][0]), utils_private.sign(F[1][1]), F[1][2]},
-            {utils_private.sign(F[2][0]), utils_private.sign(F[2][1]), F[2][2]},
-            {utils_private.sign(F[3][0]), utils_private.sign(F[3][1]), F[3][2]},
+            {fixed_ex.sign(F[0][0]), fixed_ex.sign(F[0][1]), F[0][2]},
+            {fixed_ex.sign(F[1][0]), fixed_ex.sign(F[1][1]), F[1][2]},
+            {fixed_ex.sign(F[2][0]), fixed_ex.sign(F[2][1]), F[2][2]},
+            {fixed_ex.sign(F[3][0]), fixed_ex.sign(F[3][1]), F[3][2]},
         }
     }
 
@@ -315,8 +316,8 @@ GetCubicCurveType :: proc "contextless" (start:[2]$T, control0:[2]T, control1:[2
 				mul(mul(mtMinusMs, mtMinusMs), ms)},
 
                 {mul(ltMinusLs, mtMinusMs),
-				utils_private.sign(mul(mul(ltMinusLs, ltMinusLs), ltMinusLs)),
-				utils_private.sign(mul(mul(mtMinusMs, mtMinusMs), mtMinusMs))},
+				fixed_ex.sign(mul(mul(ltMinusLs, ltMinusLs), ltMinusLs)),
+				fixed_ex.sign(mul(mul(mtMinusMs, mtMinusMs), mtMinusMs))},
             }
 
             if d0.i < 0 do reverse = true
@@ -339,17 +340,17 @@ GetCubicCurveType :: proc "contextless" (start:[2]$T, control0:[2]T, control1:[2
                 mul(ls, lsms),
                 mul(ms, lsms)},
 
-                {div( add( sub(mul(utils_private.sign(ls), mt), ltms), mul(Fixed3, lsms) ), Fixed3),//(-ls * mt - ltms + 3 * lsms) / 3
-                div(mul(utils_private.sign(add(mul(ls, (sub(mt, mul(Fixed3, ms)))), mul(Fixed2, ltms))), ls), Fixed3),//-(ls * (mt - 3 * ms) + 2 * ltms) * ls / 3
-                div(mul(utils_private.sign(add(mul(ls, (sub(mul(Fixed2, mt), mul(Fixed3, ms)))), ltms)), ms), Fixed3)},//-(ls * (2 * mt - 3 * ms) + ltms) * ms / 3
+                {div( add( sub(mul(fixed_ex.sign(ls), mt), ltms), mul(Fixed3, lsms) ), Fixed3),//(-ls * mt - ltms + 3 * lsms) / 3
+                div(mul(fixed_ex.sign(add(mul(ls, (sub(mt, mul(Fixed3, ms)))), mul(Fixed2, ltms))), ls), Fixed3),//-(ls * (mt - 3 * ms) + 2 * ltms) * ls / 3
+                div(mul(fixed_ex.sign(add(mul(ls, (sub(mul(Fixed2, mt), mul(Fixed3, ms)))), ltms)), ms), Fixed3)},//-(ls * (2 * mt - 3 * ms) + ltms) * ms / 3
 
                 {div(add(mul(lt, sub(mt, mul(Fixed2, ms))), mul(ls, sub(mul(Fixed3, ms), mul(Fixed2, mt)))), Fixed3),//(lt * (mt - 2.0 * ms) + ls * (3.0 * ms - 2.0 * mt)) / 3
                 div(div(add(mul(ls, sub(mul(Fixed2, mt), mul(Fixed3, ms))), ltms), ltMinusLs), Fixed3),//(ls * (2.0 * mt - 3.0 * ms) + ltms) / ltMinusLs / 3
                 div(div(add(mul(ls, sub(mt, mul(Fixed3, ms))), mul(Fixed2, ltms)), mtMinusMs), Fixed3)},//(ls * (mt - 3.0 * ms) + 2.0 * ltms) / mtMinusMs / 3
 
                 {mul(ltMinusLs, mtMinusMs),
-                utils_private.sign(mul(mul(ltMinusLs, ltMinusLs), mtMinusMs)),
-                utils_private.sign(mul(ltMinusLs, mul(mtMinusMs, mtMinusMs)))},
+                fixed_ex.sign(mul(mul(ltMinusLs, ltMinusLs), mtMinusMs)),
+                fixed_ex.sign(mul(ltMinusLs, mul(mtMinusMs, mtMinusMs)))},
             }
             reverse = (d0.i > 0 && F[1][0].i < 0) || (d0.i < 0 && F[1][0].i > 0)
         case .Cusp:
@@ -448,8 +449,8 @@ GetCubicCurveType :: proc "contextless" (start:[2]$T, control0:[2]T, control1:[2
 
         b := LinesIntersect(vertList[start].pos, vertList[start + 2].pos, vertList[start + 1].pos, vertList[start + 3].pos)
         if b {
-            if utils_private.length2_fixed(utils_private.sub2_fixed(vertList[start + 2].pos, vertList[start].pos)).i < 
-            utils_private.length2_fixed(utils_private.sub2_fixed(vertList[start + 3].pos, vertList[start + 1].pos)).i {
+            if fixed_ex.length2(fixed_ex.sub2(vertList[start + 2].pos, vertList[start].pos)).i < 
+            fixed_ex.length2(fixed_ex.sub2(vertList[start + 3].pos, vertList[start + 1].pos)).i {
                 non_zero_append(indList, start, start + 1, start + 2, start, start + 2, start + 3)
             } else {
                 non_zero_append(indList, start, start + 1, start + 3, start + 1, start + 2, start + 3)
@@ -458,16 +459,16 @@ GetCubicCurveType :: proc "contextless" (start:[2]$T, control0:[2]T, control1:[2
         }
         b = LinesIntersect(vertList[start].pos, vertList[start + 3].pos, vertList[start + 1].pos, vertList[start + 2].pos)
         if b {
-            if utils_private.length2_fixed(utils_private.sub2_fixed(vertList[start + 3].pos, vertList[start].pos)).i < 
-            utils_private.length2_fixed(utils_private.sub2_fixed(vertList[start + 2].pos, vertList[start + 1].pos)).i {
+            if fixed_ex.length2(fixed_ex.sub2(vertList[start + 3].pos, vertList[start].pos)).i < 
+            fixed_ex.length2(fixed_ex.sub2(vertList[start + 2].pos, vertList[start + 1].pos)).i {
                 non_zero_append(indList, start, start + 1, start + 3, start, start + 3, start + 2)
             } else {
                 non_zero_append(indList, start, start + 1, start + 2, start + 2, start + 1, start + 3)
             }
             return
         }
-        if utils_private.length2_fixed(utils_private.sub2_fixed(vertList[start + 1].pos, vertList[start].pos)).i <
-         utils_private.length2_fixed(utils_private.sub2_fixed(vertList[start + 3].pos, vertList[start + 2].pos)).i {
+        if fixed_ex.length2(fixed_ex.sub2(vertList[start + 1].pos, vertList[start].pos)).i <
+         fixed_ex.length2(fixed_ex.sub2(vertList[start + 3].pos, vertList[start + 2].pos)).i {
             non_zero_append(indList, start, start + 2, start + 1, start, start + 1, start + 3)
         } else {
             non_zero_append(indList, start, start + 2, start + 3, start + 3, start + 2, start + 1)

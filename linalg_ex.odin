@@ -928,3 +928,27 @@ poly_transform_matrix :: proc "contextless" (inout_poly: ^shapes, F: linalg.Matr
 		}
 	}
 }
+
+@(require_results)
+CrossProductSign :: proc "contextless" (p1, p2, p3: [2]$T) -> int where intrinsics.type_is_float(T) || intrinsics.type_is_specialization_of(T, fixed.Fixed) {
+	when intrinsics.type_is_float(T) {
+		a := p2.x - p1.x
+    	b := p3.y - p2.y
+    	c := p2.y - p1.y
+    	d := p3.x - p2.x
+     	ab := a * b
+     	cd := c * d
+		if ab > cd do return 1
+		if ab < cd do return -1
+	} else {
+		a := fixed.sub(p2.x, p1.x)
+    	b := fixed.sub(p3.y, p2.y)
+    	c := fixed.sub(p2.y, p1.y)
+    	d := fixed.sub(p3.x, p2.x)
+     	ab := fixed.mul(a, b)
+     	cd := fixed.mul(c, d)
+		if ab.i > cd.i do return 1
+		if ab.i < cd.i do return -1
+	}
+	return 0
+}

@@ -1,4 +1,3 @@
-#+feature using-stmt
 package geometry
 
 import "base:intrinsics"
@@ -205,11 +204,7 @@ TrianguatePolygons_Fixed :: proc(
 		non_zero_append(&idx_buf, i0, i1, i2) or_return
 	}
 	indices = utils.make_non_zeroed_slice([]u32, len(idx_buf), allocator) or_return
-	mem.copy_non_overlapping(
-		raw_data(indices),
-		raw_data(idx_buf[:]),
-		size_of(u32) * len(idx_buf),
-	)
+	mem.copy_non_overlapping(raw_data(indices), raw_data(idx_buf[:]), size_of(u32) * len(idx_buf))
 	return
 }
 
@@ -234,7 +229,9 @@ DoTriangulateLeft :: proc(
 	edge: ^Edge,
 	pivot: ^Vertex,
 	minY: i64,
-) -> (err: Trianguate_Error) {
+) -> (
+	err: Trianguate_Error,
+) {
 	vAlt: ^Vertex = nil
 	eAlt: ^Edge = nil
 	v := edge.vT if edge.vB == pivot else edge.vB
@@ -246,8 +243,7 @@ DoTriangulateLeft :: proc(
 		if cps == 0 {
 			// if pivot is between v and vX then continue
 			if (v.p.x.i > pivot.p.x.i) == (pivot.p.x.i > vX.p.x.i) do continue
-			} else if cps > 0 ||
-			(vAlt != nil && CrossProductSign(vX.p, pivot.p, vAlt.p) >= 0) {
+		} else if cps > 0 || (vAlt != nil && CrossProductSign(vX.p, pivot.p, vAlt.p) >= 0) {
 			continue
 		}
 		vAlt = vX
@@ -262,9 +258,7 @@ DoTriangulateLeft :: proc(
 	}
 	eX := FindLinkingEdge(vAlt, v, vAlt.p.y.i < v.p.y.i)
 	if eX == nil {
-		if vAlt.p.y.i == v.p.y.i &&
-		   v.p.y.i == minY &&
-		   HorizontalBetween(ctx, vAlt, v) != nil {
+		if vAlt.p.y.i == v.p.y.i && v.p.y.i == minY && HorizontalBetween(ctx, vAlt, v) != nil {
 			return
 		}
 		eX = MakeEdge(ctx, vAlt, v, .loose) or_return
@@ -280,7 +274,9 @@ DoTriangulateRight :: proc(
 	edge: ^Edge,
 	pivot: ^Vertex,
 	minY: i64,
-) -> (err: Trianguate_Error) {
+) -> (
+	err: Trianguate_Error,
+) {
 	vAlt: ^Vertex = nil
 	eAlt: ^Edge = nil
 	v := edge.vT if edge.vB == pivot else edge.vB
@@ -291,8 +287,7 @@ DoTriangulateRight :: proc(
 		cps := CrossProductSign(v.p, pivot.p, vX.p)
 		if cps == 0 {
 			if (v.p.x.i > pivot.p.x.i) == (pivot.p.x.i > vX.p.x.i) do continue
-		} else if cps < 0 ||
-			(vAlt != nil && CrossProductSign(vX.p, pivot.p, vAlt.p) <= 0) {
+		} else if cps < 0 || (vAlt != nil && CrossProductSign(vX.p, pivot.p, vAlt.p) <= 0) {
 			continue
 		}
 		vAlt = vX
@@ -307,9 +302,7 @@ DoTriangulateRight :: proc(
 	}
 	eX := FindLinkingEdge(vAlt, v, vAlt.p.y.i > v.p.y.i)
 	if eX == nil {
-		if vAlt.p.y.i == v.p.y.i &&
-		   v.p.y.i == minY &&
-		   HorizontalBetween(ctx, vAlt, v) != nil {
+		if vAlt.p.y.i == v.p.y.i && v.p.y.i == minY && HorizontalBetween(ctx, vAlt, v) != nil {
 			return
 		}
 		eX = MakeEdge(ctx, vAlt, v, .loose) or_return
@@ -321,7 +314,7 @@ DoTriangulateRight :: proc(
 }
 
 @(private = "file")
-ForceLegal :: proc(ctx: ^Context, edge: ^Edge) -> (err:Trianguate_Error) {
+ForceLegal :: proc(ctx: ^Context, edge: ^Edge) -> (err: Trianguate_Error) {
 	if edge.triA == nil || edge.triB == nil do return
 	vertA: ^Vertex = nil
 	vertB: ^Vertex = nil
@@ -409,7 +402,8 @@ CreateInnerLocMinLooseEdge :: proc(
 		i = -(1 << FIXED_SHIFT),
 	}
 	for e != nil {
-		in_range := e.vL.p.x.i <= xAbove &&
+		in_range :=
+			e.vL.p.x.i <= xAbove &&
 			e.vR.p.x.i >= xAbove &&
 			e.vB.p.y.i >= yAbove &&
 			e.vB != vAbove &&
@@ -472,7 +466,7 @@ CreateInnerLocMinLooseEdge :: proc(
 
 
 @(private = "file")
-MergeDupOrCollinearVertices :: proc(ctx: ^Context) -> (err:Trianguate_Error) {
+MergeDupOrCollinearVertices :: proc(ctx: ^Context) -> (err: Trianguate_Error) {
 	// note: this procedure may add new edges and change the
 	// number of edges connected with a given vertex, but it
 	// won't add or delete vertices (so it's safe to use iterators)
@@ -666,8 +660,8 @@ FindLocMinIdx :: proc "contextless" (pts: [][2]FixedDef, in_out_idx: ^int) -> bo
 	return true
 }
 
-@(private="file")
-CreateTriangle :: proc(ctx: ^Context, e1, e2, e3: ^Edge) -> (err:Trianguate_Error) {
+@(private = "file")
+CreateTriangle :: proc(ctx: ^Context, e1, e2, e3: ^Edge) -> (err: Trianguate_Error) {
 	tri := new(Triangle, context.temp_allocator) or_return
 	tri.edges = {e1, e2, e3}
 	non_zero_append(&ctx.all_tris, tri) or_return
@@ -683,3 +677,4 @@ CreateTriangle :: proc(ctx: ^Context, e1, e2, e3: ^Edge) -> (err:Trianguate_Erro
 	}
 	return
 }
+

@@ -365,14 +365,16 @@ PointInLine :: proc "contextless" (
 
 		pY: T = fixed.add(fixed.mul(A, p.x), B)
 		t: T = {}
-		t_: T = T {
-			i = 1 << intrinsics.type_polymorphic_record_parameter_value(T, 1),
-		}
+		t_: T
 		if p.y.i == pY.i {
 			minX: T = min_fixed(l0.x, l1.x)
 			maxX: T = max_fixed(l0.x, l1.x)
 			t = fixed.sub(p.x, minX)
 			t_ = fixed.sub(maxX, minX)
+		} else {
+			t_ = T {
+				i = 1 << intrinsics.type_polymorphic_record_parameter_value(T, 1),
+			}
 		}
 
 		return p.y.i == pY.i &&

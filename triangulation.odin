@@ -13,13 +13,12 @@ import utils "shared:utils_private"
 import "shared:utils_private/fixed_ex"
 
 __Trianguate_Error :: enum {
-	TOO_MANY_EDGES,
-	NO_PATHS,
 	FIRST_ACTIVE_MISSING,
 	EBELLOW_MISSING,
 }
 
 Trianguate_Error :: union #shared_nil {
+	__Geometry_Error,
 	__Trianguate_Error,
 	runtime.Allocator_Error,
 }
@@ -261,7 +260,9 @@ DoTriangulateLeft :: proc(
 		if vAlt.p.y.i == v.p.y.i && v.p.y.i == minY && HorizontalBetween(ctx, vAlt, v) != nil {
 			return
 		}
-		eX = MakeEdge(ctx, vAlt, v, .loose) or_return
+		gerr : Geometry_Error
+		eX, gerr = MakeEdge(ctx, vAlt, v, .loose)
+		if gerr != nil do return Geometry_To_Triangulate_Error(gerr)
 	}
 	CreateTriangle(ctx, edge, eAlt, eX) or_return
 	if !EdgeCompleted(eX) do DoTriangulateLeft(ctx, eX, vAlt, minY) or_return
@@ -305,7 +306,9 @@ DoTriangulateRight :: proc(
 		if vAlt.p.y.i == v.p.y.i && v.p.y.i == minY && HorizontalBetween(ctx, vAlt, v) != nil {
 			return
 		}
-		eX = MakeEdge(ctx, vAlt, v, .loose) or_return
+		gerr : Geometry_Error
+		eX, gerr = MakeEdge(ctx, vAlt, v, .loose)
+		if gerr != nil do return Geometry_To_Triangulate_Error(gerr)
 	}
 	CreateTriangle(ctx, edge, eX, eAlt) or_return
 	if !EdgeCompleted(eX) do DoTriangulateRight(ctx, eX, vAlt, minY) or_return
@@ -461,7 +464,10 @@ CreateInnerLocMinLooseEdge :: proc(
 			e = e.nextE
 		}
 	}
-	return MakeEdge(ctx, vBest, vAbove, .loose)
+	gerr : Geometry_Error
+	ed, gerr = MakeEdge(ctx, vBest, vAbove, .loose)
+	if gerr != nil do return ed, Geometry_To_Triangulate_Error(gerr)
+	return
 }
 
 
@@ -490,7 +496,7 @@ MergeDupOrCollinearVertices :: proc(ctx: ^Context) -> (err: Trianguate_Error) {
 		}
 		// move all of v2's edges to v1
 		for e in v2.e {
-			non_zero_append(&vt.e, e)
+			non_zero_append(&vt.e, e) or_return
 		}
 		clear(&v2.e)
 
@@ -505,9 +511,11 @@ MergeDupOrCollinearVertices :: proc(ctx: ^Context) -> (err: Trianguate_Error) {
 				// we have parallel edges, both heading up from vt.p.
 				// split the longer edge at the top of the shorter edge.
 				if e1.vT.p.y.i < e2.vT.p.y.i {
-					SplitEdge(ctx, e1, e2) or_return
+					gerr := SplitEdge(ctx, e1, e2)
+					if gerr != nil do return Geometry_To_Triangulate_Error(gerr)
 				} else {
-					SplitEdge(ctx, e2, e1) or_return
+					gerr := SplitEdge(ctx, e2, e1)
+					if gerr != nil do return Geometry_To_Triangulate_Error(gerr)
 				}
 				break // because only two edges can be collinear
 			}
@@ -547,7 +555,9 @@ AddPath :: proc(ctx: ^Context, pts: [][2]FixedDef, poly_idx: int) -> (err: Trian
 	vert_cnt := len(ctx.all_verts)
 
 	// we are now at the first legitimate locMin
-	non_zero_append(&ctx.all_verts, MakeVertex(pts[i]) or_return) or_return
+	vert, vert_err := MakeVertex(pts[i])
+	if vert_err != nil do return Geometry_To_Triangulate_Error(vert_err)
+	non_zero_append(&ctx.all_verts, vert) or_return
 	v0 := &ctx.all_verts[vert_cnt]
 
 	is_inner := ctx.polyCCW[poly_idx] == .Clockwise
@@ -573,7 +583,9 @@ AddPath :: proc(ctx: ^Context, pts: [][2]FixedDef, poly_idx: int) -> (err: Trian
 
 
 		for pts[i].y.i <= vPrev.p.y.i { 	// ascend up next bound to LocMax
-			non_zero_append(&ctx.all_verts, MakeVertex(pts[i]) or_return) or_return
+			vert, vert_err := MakeVertex(pts[i])
+			if vert_err != nil do return Geometry_To_Triangulate_Error(vert_err)
+			non_zero_append(&ctx.all_verts, vert) or_return
 			v := &ctx.all_verts[len(ctx.all_verts) - 1]
 
 			MakeEdge(ctx, vPrev, v, .ascend)
@@ -591,7 +603,9 @@ AddPath :: proc(ctx: ^Context, pts: [][2]FixedDef, poly_idx: int) -> (err: Trian
 		// Now at a locMax, so descend to next locMin
 		vPrevPrev := vPrev
 		for i != i0 && pts[i].y.i >= vPrev.p.y.i {
-			non_zero_append(&ctx.all_verts, MakeVertex(pts[i]) or_return)
+			vert, vert_err := MakeVertex(pts[i])
+			if vert_err != nil do return Geometry_To_Triangulate_Error(vert_err)
+			non_zero_append(&ctx.all_verts, vert) or_return
 			v := &ctx.all_verts[len(ctx.all_verts) - 1]
 			MakeEdge(ctx, v, vPrev, .descend)
 			vPrevPrev = vPrev
@@ -621,6 +635,14 @@ AddPath :: proc(ctx: ^Context, pts: [][2]FixedDef, poly_idx: int) -> (err: Trian
 	}
 
 	return
+}
+
+@(private = "file") Geometry_To_Triangulate_Error :: proc "contextless" (err:Geometry_Error) -> Trianguate_Error {
+	switch g in err {
+		case __Geometry_Error:return err.(__Geometry_Error)
+		case runtime.Allocator_Error:return err.(runtime.Allocator_Error)
+	}
+	return nil
 }
 
 @(private = "file")

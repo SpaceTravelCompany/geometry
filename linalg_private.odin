@@ -110,7 +110,7 @@ IsHorizontal :: proc "contextless" (e: ^Edge) -> bool {
 	return e.vB.p.y.i == e.vT.p.y.i
 }
 
-MakeVertex :: proc(p: [2]FixedDef) -> (res:Vertex, err:Trianguate_Error) {
+MakeVertex :: proc(p: [2]FixedDef) -> (res:Vertex, err:Geometry_Error) {
 	res = Vertex {
 		p       = p,
 		innerLM = false,
@@ -126,7 +126,7 @@ MakeEdge :: proc(
 	kind: EdgeKind,
 ) -> (
 	res: ^Edge,
-	err: Trianguate_Error,
+	err: Geometry_Error,
 ) {
 	non_zero_append(&ctx.all_edges, new(Edge, context.temp_allocator) or_return) or_return
 	if len(&ctx.all_edges) >= int(max(u32) - 1) do return nil, .TOO_MANY_EDGES // - 1 because max(u32) uses nil
@@ -186,7 +186,7 @@ RemoveEdgeFromActives :: proc (ctx: ^Context, edge: ^Edge) {
 	if ctx.firstActive == edge do ctx.firstActive = next
 }
 
-SplitEdge :: proc(ctx: ^Context, longE, shortE: ^Edge) -> (err: Trianguate_Error) {
+SplitEdge :: proc(ctx: ^Context, longE, shortE: ^Edge) -> (err: Geometry_Error) {
 	oldT := longE.vT
 	newT := shortE.vT
 	// remove longEdge from longEdge.vT.edges
@@ -212,7 +212,7 @@ RemoveIntersection :: proc(
 	e2: ^Edge,
 ) -> (
 	res: bool,
-	err: Trianguate_Error,
+	err: Geometry_Error,
 ) {
 	// find which vertex is closest to the other segment
 	// (ie not the vertex closest to the intersection point)

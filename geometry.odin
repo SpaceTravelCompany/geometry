@@ -81,9 +81,21 @@ __shape_error :: enum {
 	EmptyColor,
 }
 
+__Geometry_Error :: enum {
+	TOO_MANY_EDGES,
+	NO_PATHS,
+}
+
+Geometry_Error :: union #shared_nil {
+	__Geometry_Error,
+	runtime.Allocator_Error,
+}
+
+
 shape_error :: union #shared_nil {
 	__shape_error,
 	__Trianguate_Error,
+	__Geometry_Error,
 	runtime.Allocator_Error,
 }
 
@@ -1276,6 +1288,8 @@ shapes_compute_polygoni64 :: proc(
 						err = tri_err.(__Trianguate_Error)
 					case runtime.Allocator_Error:
 						err = tri_err.(runtime.Allocator_Error)
+					case __Geometry_Error:
+						err = tri_err.(__Geometry_Error)
 					}
 					return
 				}

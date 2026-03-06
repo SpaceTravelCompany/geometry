@@ -51,12 +51,13 @@ Vertex :: struct {
 Context :: struct {
 	all_verts:            [dynamic]Vertex,
 	loc_min_stack:        [dynamic]^Vertex,
+	horz_edge_stack:      [dynamic]^Edge,
 	all_edges:            [dynamic]^Edge,
+	all_tris:             [dynamic]^Triangle,
 	pendingDelaunayStack: [dynamic]^Edge,
 	indices:              [dynamic]u32,
 	polys:                [][][2]FixedDef,
 	polyCCW:              []PolyOrientation,
-	allocator:            runtime.Allocator,
 	lowermostVertex:      ^Vertex,
 	firstActive:          ^Edge,
 }
@@ -72,13 +73,14 @@ HorizontalBetween :: proc(ctx: ^Context, v1, v2: ^Vertex) -> ^Edge {
 		r = v2.p.x
 	}
 
+	//! C++ may have typo: (vL.x != l || vL.x != r) - use vR for second to exclude exact segment match
 	res := ctx.firstActive
 	for res != nil {
 		if res.vL.p.y.i == y &&
 		   res.vR.p.y.i == y &&
 		   res.vL.p.x.i >= l.i &&
 		   res.vR.p.x.i <= r.i &&
-		   (res.vL.p.x.i != l.i || res.vL.p.x.i != r.i) {
+		   (res.vL.p.x.i != l.i || res.vR.p.x.i != r.i) {
 			break
 		}
 		res = res.nextE
@@ -86,6 +88,12 @@ HorizontalBetween :: proc(ctx: ^Context, v1, v2: ^Vertex) -> ^Edge {
 	return res
 }
 
+
+EdgeContains :: proc "contextless" (edge: ^Edge, v: ^Vertex) -> EdgeContainsResult {
+	if edge.vL == v do return .left
+	if edge.vR == v do return .right
+	return .neither
+}
 
 RemoveEdgeFromVertex :: proc(vert: ^Vertex, edge: ^Edge) {
 	for e, i in vert.e {
@@ -98,18 +106,18 @@ RemoveEdgeFromVertex :: proc(vert: ^Vertex, edge: ^Edge) {
 }
 
 
-IsHorizontal :: proc "contextless" (p1, p2: ^Edge) -> bool {
-	return p1.vB.p.y.i == p2.vT.p.y.i
+IsHorizontal :: proc "contextless" (e: ^Edge) -> bool {
+	return e.vB.p.y.i == e.vT.p.y.i
 }
 
-MakeVertex :: proc(p: [2]FixedDef) -> Vertex {
-	res := Vertex {
+MakeVertex :: proc(p: [2]FixedDef) -> (res:Vertex, err:Trianguate_Error) {
+	res = Vertex {
 		p       = p,
 		innerLM = false,
 	}
-	res.e = make([dynamic]^Edge, context.temp_allocator)
-	non_zero_reserve(&res.e, 2)
-	return res
+	res.e = make([dynamic]^Edge, context.temp_allocator) or_return
+	non_zero_reserve(&res.e, 2) or_return
+	return
 }
 
 MakeEdge :: proc(
@@ -120,7 +128,7 @@ MakeEdge :: proc(
 	res: ^Edge,
 	err: Trianguate_Error,
 ) {
-	non_zero_append(&ctx.all_edges, new(Edge, context.temp_allocator)) or_return
+	non_zero_append(&ctx.all_edges, new(Edge, context.temp_allocator) or_return) or_return
 	if len(&ctx.all_edges) >= int(max(u32) - 1) do return nil, .TOO_MANY_EDGES // - 1 because max(u32) uses nil
 
 	ed := ctx.all_edges[len(ctx.all_edges) - 1]
@@ -148,7 +156,7 @@ MakeEdge :: proc(
 		SetEdgeToActive(ctx, ed)
 	}
 
-	return
+	return ed, nil
 }
 
 SetEdgeToActive :: proc "contextless" (ctx: ^Context, edge: ^Edge) {
@@ -167,6 +175,16 @@ SetEdgeToActive :: proc "contextless" (ctx: ^Context, edge: ^Edge) {
 	ctx.firstActive = edge
 }
 
+RemoveEdgeFromActives :: proc (ctx: ^Context, edge: ^Edge) {
+	RemoveEdgeFromVertex(edge.vB, edge)
+	RemoveEdgeFromVertex(edge.vT, edge)
+	prev := edge.prevE
+	next := edge.nextE
+	if next != nil do next.prevE = prev
+	if prev != nil do prev.nextE = next
+	edge.isActive = false
+	if ctx.firstActive == edge do ctx.firstActive = next
+}
 
 SplitEdge :: proc(ctx: ^Context, longE, shortE: ^Edge) -> (err: Trianguate_Error) {
 	oldT := longE.vT
@@ -264,14 +282,43 @@ GetLocMinAngle :: proc(v: ^Vertex) -> f64 {
 	)
 }
 
-GetAngle :: proc(a, b, c: [2]f64) -> f64 {
-	//https://stackoverflow.com/a/3487062/359538
-	abx := b.x - a.x
-	aby := b.y - a.y
-	bcx := b.x - c.x
-	bcy := b.y - c.y
-	dp := abx * bcx + aby * bcy
-	cp := abx * bcy - aby * bcx
-	return math.atan2(cp, dp) //range between -Pi and Pi
+vertex_index :: proc "contextless" (ctx: ^Context, v: ^Vertex) -> u32 {
+	for i in 0 ..< len(ctx.all_verts) {
+		if &ctx.all_verts[i] == v do return u32(i)
+	}
+	return 0
 }
 
+EdgeCompleted :: proc "contextless" (e: ^Edge) -> bool {
+	if e.triA == nil do return false
+	if e.triB != nil do return true
+	return e.kind != .loose
+}
+
+IsLooseEdge :: proc "contextless" (e: ^Edge) -> bool {
+	return e.kind == .loose
+}
+
+// Clipper2: left edge = ascend (fills on right side of edge)
+IsLeftEdge :: proc "contextless" (e: ^Edge) -> bool {
+	return e.kind == .ascend
+}
+
+// Clipper2: right edge = descend
+IsRightEdge :: proc "contextless" (e: ^Edge) -> bool {
+	return e.kind == .descend
+}
+
+FindLinkingEdge :: proc "contextless" (vert1, vert2: ^Vertex, prefer_ascending: bool) -> ^Edge {
+	res: ^Edge = nil
+	for e in vert1.e {
+		if e.vL == vert2 || e.vR == vert2 {
+			if e.kind == .loose ||
+			   (e.kind == .ascend) == prefer_ascending {
+				return e
+			}
+			res = e
+		}
+	}
+	return res
+}

@@ -1243,3 +1243,52 @@ CrossProductSign :: proc "contextless" (
 	return 0
 }
 
+// InCircleTest: returns determinant. Positive => D inside circle through A,B,C (when ABC is CCW).
+// Used for Delaunay legality.
+InCircleTest :: proc "contextless" (
+	ptA, ptB, ptC, ptD: [2]$T,
+) -> T where intrinsics.type_is_float(T) ||
+	intrinsics.type_is_specialization_of(T, fixed.Fixed) {
+	when intrinsics.type_is_specialization_of(T, fixed.Fixed) {
+		m00 := fixed.sub(ptA.x, ptD.x)
+		m01 := fixed.sub(ptA.y, ptD.y)
+		m02 := fixed.add(fixed.mul(m00, m00), fixed.mul(m01, m01))
+		m10 := fixed.sub(ptB.x, ptD.x)
+		m11 := fixed.sub(ptB.y, ptD.y)
+		m12 := fixed.add(fixed.mul(m10, m10), fixed.mul(m11, m11))
+		m20 := fixed.sub(ptC.x, ptD.x)
+		m21 := fixed.sub(ptC.y, ptD.y)
+		m22 := fixed.add(fixed.mul(m20, m20), fixed.mul(m21, m21))
+		return fixed.sub(
+			fixed.add(
+				fixed.mul(m00, fixed.sub(fixed.mul(m11, m22), fixed.mul(m21, m12))),
+				fixed.mul(m20, fixed.sub(fixed.mul(m01, m12), fixed.mul(m11, m02))),
+			),
+			fixed.mul(m10, fixed.sub(fixed.mul(m01, m22), fixed.mul(m21, m02))),
+		)
+	} else {
+		m00 := ptA.x - ptD.x
+		m01 := ptA.y - ptD.y
+		m02 := m00 * m00 + m01 * m01
+		m10 := ptB.x - ptD.x
+		m11 := ptB.y - ptD.y
+		m12 := m10 * m10 + m11 * m11
+		m20 := ptC.x - ptD.x
+		m21 := ptC.y - ptD.y
+		m22 := m20 * m20 + m21 * m21
+		return m00 * (m11 * m22 - m21 * m12) -
+			m10 * (m01 * m22 - m21 * m02) +
+			m20 * (m01 * m12 - m11 * m02)
+	}
+}
+
+GetAngle :: proc(a, b, c: [2]$T) -> T where intrinsics.type_is_float(T) {
+	//https://stackoverflow.com/a/3487062/359538
+	abx := b.x - a.x
+	aby := b.y - a.y
+	bcx := b.x - c.x
+	bcy := b.y - c.y
+	dp := abx * bcx + aby * bcy
+	cp := abx * bcy - aby * bcx
+	return math.atan2(cp, dp) //range between -Pi and Pi
+}

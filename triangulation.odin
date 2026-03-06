@@ -35,15 +35,12 @@ TrianguatePolygons_Fixed :: proc(
 	err: Trianguate_Error,
 ) {
 	ctx := Context {
-		allocator            = allocator,
 		all_verts            = make([dynamic]Vertex, context.temp_allocator) or_return,
-		indices              = make([dynamic]u32, context.temp_allocator) or_return,
-		all_edges            = make_dynamic_array(
-			[dynamic]^Edge,
-			context.temp_allocator,
-		) or_return,
+		all_tris             = make([dynamic]^Triangle, context.temp_allocator) or_return,
+		all_edges            = make([dynamic]^Edge, context.temp_allocator) or_return,
 		pendingDelaunayStack = make([dynamic]^Edge, context.temp_allocator) or_return,
 		loc_min_stack        = make([dynamic]^Vertex, context.temp_allocator) or_return,
+		horz_edge_stack      = make([dynamic]^Edge, context.temp_allocator) or_return,
 		polys                = poly,
 	}
 
@@ -63,6 +60,7 @@ TrianguatePolygons_Fixed :: proc(
 	non_zero_reserve(&ctx.all_edges, len(poly)) or_return
 
 	AddPaths(&ctx) or_return
+
 
 	// if necessary fix path orientation because the algorithm
 	// expects clockwise outer paths and counter-clockwise inner paths
@@ -87,22 +85,307 @@ TrianguatePolygons_Fixed :: proc(
 		// path orientation is fine so ...
 		clear(&ctx.loc_min_stack)
 	}
+
 	slice.sort_by(ctx.all_edges[:], proc(a, b: ^Edge) -> bool {
 		return a.vL.p.x.i < b.vL.p.x.i
 	})
-	MergeDupOrCollinearVertices(&ctx)
+	slice.sort_by(ctx.all_verts[:], proc(a, b: Vertex) -> bool {
+		if a.p.y.i == b.p.y.i do return a.p.x.i < b.p.x.i
+		return a.p.y.i > b.p.y.i
+	})
+	MergeDupOrCollinearVertices(&ctx) or_return
+
 
 	currY := ctx.all_verts[0].p.y.i
-	//	for
 
-	//TODO non_curves trianglation continue..
+	for &v in ctx.all_verts {
+		if len(v.e) == 0 do continue
+		if v.p.y.i != currY {
+			// JOIN AN INNER LOCMIN WITH A SUITABLE EDGE BELOW
+			for len(ctx.loc_min_stack) > 0 {
+				lm := ctx.loc_min_stack[len(ctx.loc_min_stack) - 1]
+				non_zero_resize(&ctx.loc_min_stack, len(ctx.loc_min_stack) - 1)
+				e := CreateInnerLocMinLooseEdge(&ctx, lm) or_return
 
-	indices = utils.make_non_zeroed_slice([]u32, len(ctx.indices), allocator) or_return
+				if IsHorizontal(e) {
+					if e.vL == e.vB {
+						DoTriangulateLeft(&ctx, e, e.vB, currY) or_return
+					} else {
+						DoTriangulateRight(&ctx, e, e.vB, currY) or_return
+					}
+				} else {
+					DoTriangulateLeft(&ctx, e, e.vB, currY) or_return
+					if !EdgeCompleted(e) do DoTriangulateRight(&ctx, e, e.vB, currY) or_return
+				}
+
+				// and because adding locMin edges to Actives was delayed ..
+				SetEdgeToActive(&ctx, lm.e[0])
+				SetEdgeToActive(&ctx, lm.e[1])
+			}
+
+			for len(ctx.horz_edge_stack) > 0 {
+				e := ctx.horz_edge_stack[len(ctx.horz_edge_stack) - 1]
+				non_zero_resize(&ctx.horz_edge_stack, len(ctx.horz_edge_stack) - 1)
+				if EdgeCompleted(e) do continue
+				if e.vB == e.vL { 	// #45
+					if IsLeftEdge(e) {
+						DoTriangulateLeft(&ctx, e, e.vB, currY) or_return
+					}
+				} else {
+					if IsRightEdge(e) {
+						DoTriangulateRight(&ctx, e, e.vB, currY) or_return
+					}
+				}
+			}
+			currY = v.p.y.i
+		}
+
+		// inner edge loop (내림차순 인덱스 — 루프 중 edges 추가/삭제에 안전)
+		for i := len(v.e) - 1; i >= 0; i -= 1 {
+			if i >= len(v.e) do continue // v.e 는 루프 중에 변경될 수 있음
+			e := v.e[i]
+			if EdgeCompleted(e) || IsLooseEdge(e) do continue
+
+			if &v == e.vB {
+				if IsHorizontal(e) {
+					non_zero_append(&ctx.horz_edge_stack, e) or_return
+				}
+				// locMin 엣지는 actives 추가를 지연
+				if !v.innerLM {
+					SetEdgeToActive(&ctx, e)
+				}
+			} else {
+				if IsHorizontal(e) {
+					non_zero_append(&ctx.horz_edge_stack, e) or_return
+				} else if IsLeftEdge(e) {
+					DoTriangulateLeft(&ctx, e, e.vB, v.p.y.i) or_return
+				} else {
+					DoTriangulateRight(&ctx, e, e.vB, v.p.y.i) or_return
+				}
+			}
+		} // inner edge loop
+
+		if v.innerLM {
+			non_zero_append(&ctx.loc_min_stack, &v) or_return
+		}
+	} // for all_verts
+
+	// 버텍스 루프 후 남은 수평 엣지 처리
+	for len(ctx.horz_edge_stack) > 0 {
+		e := ctx.horz_edge_stack[len(ctx.horz_edge_stack) - 1]
+		non_zero_resize(&ctx.horz_edge_stack, len(ctx.horz_edge_stack) - 1)
+		if !EdgeCompleted(e) && e.vB == e.vL {
+			DoTriangulateLeft(&ctx, e, e.vB, currY) or_return
+		}
+	}
+
+	// Delaunay 적합 삼각형으로 변환
+	for len(ctx.pendingDelaunayStack) > 0 {
+		e := ctx.pendingDelaunayStack[len(ctx.pendingDelaunayStack) - 1]
+		non_zero_resize(&ctx.pendingDelaunayStack, len(ctx.pendingDelaunayStack) - 1)
+		ForceLegal(&ctx, e) or_return
+	}
+
+
+	// Convert triangles to index buffer; skip degenerate, ensure CW winding
+	idx_buf := make([dynamic]u32, context.temp_allocator) or_return
+	defer delete(idx_buf)
+	for tri in ctx.all_tris {
+		vs := triangle_vertices(tri)
+		p0, p1, p2 := vs[0].p, vs[1].p, vs[2].p
+		cps := CrossProductSign(p0, p1, p2)
+		if cps == 0 do continue // skip degenerate triangles
+		i0 := vertex_index(&ctx, vs[0])
+		i1 := vertex_index(&ctx, vs[1])
+		i2 := vertex_index(&ctx, vs[2])
+		if cps < 0 {
+			// CCW -> reverse to CW
+			i1, i2 = i2, i1
+		}
+		non_zero_append(&idx_buf, i0, i1, i2) or_return
+	}
+	indices = utils.make_non_zeroed_slice([]u32, len(idx_buf), allocator) or_return
 	mem.copy_non_overlapping(
 		raw_data(indices),
-		raw_data(ctx.indices),
-		len(ctx.indices) * size_of(u32),
+		raw_data(idx_buf[:]),
+		size_of(u32) * len(idx_buf),
 	)
+	return
+}
+
+// Matches Clipper2 PathFromTriangle: uses vL/vR of edges
+@(private = "file")
+triangle_vertices :: proc "contextless" (tri: ^Triangle) -> [3]^Vertex {
+	e0, e1 := tri.edges[0], tri.edges[1]
+	vs: [3]^Vertex
+	vs[0] = e0.vL
+	vs[1] = e0.vR
+	if e1.vL == vs[0] || e1.vL == vs[1] {
+		vs[2] = e1.vR
+	} else {
+		vs[2] = e1.vL
+	}
+	return vs
+}
+
+@(private = "file")
+DoTriangulateLeft :: proc(
+	ctx: ^Context,
+	edge: ^Edge,
+	pivot: ^Vertex,
+	minY: i64,
+) -> (err: Trianguate_Error) {
+	vAlt: ^Vertex = nil
+	eAlt: ^Edge = nil
+	v := edge.vT if edge.vB == pivot else edge.vB
+	for e in pivot.e {
+		if e == edge || !e.isActive do continue
+		vX := e.vB if e.vT == pivot else e.vT
+		if vX == v do continue
+		cps := CrossProductSign(v.p, pivot.p, vX.p)
+		if cps == 0 {
+			// if pivot is between v and vX then continue
+			if (v.p.x.i > pivot.p.x.i) == (pivot.p.x.i > vX.p.x.i) do continue
+			} else if cps > 0 ||
+			(vAlt != nil && CrossProductSign(vX.p, pivot.p, vAlt.p) >= 0) {
+			continue
+		}
+		vAlt = vX
+		eAlt = e
+	}
+	if vAlt == nil || vAlt.p.y.i < minY do return
+
+	if vAlt.p.y.i < pivot.p.y.i {
+		if IsLeftEdge(eAlt) do return
+	} else if vAlt.p.y.i > pivot.p.y.i {
+		if IsRightEdge(eAlt) do return
+	}
+	eX := FindLinkingEdge(vAlt, v, vAlt.p.y.i < v.p.y.i)
+	if eX == nil {
+		if vAlt.p.y.i == v.p.y.i &&
+		   v.p.y.i == minY &&
+		   HorizontalBetween(ctx, vAlt, v) != nil {
+			return
+		}
+		eX = MakeEdge(ctx, vAlt, v, .loose) or_return
+	}
+	CreateTriangle(ctx, edge, eAlt, eX) or_return
+	if !EdgeCompleted(eX) do DoTriangulateLeft(ctx, eX, vAlt, minY) or_return
+	return
+}
+
+@(private = "file")
+DoTriangulateRight :: proc(
+	ctx: ^Context,
+	edge: ^Edge,
+	pivot: ^Vertex,
+	minY: i64,
+) -> (err: Trianguate_Error) {
+	vAlt: ^Vertex = nil
+	eAlt: ^Edge = nil
+	v := edge.vT if edge.vB == pivot else edge.vB
+	for e in pivot.e {
+		if e == edge || !e.isActive do continue
+		vX := e.vB if e.vT == pivot else e.vT
+		if vX == v do continue
+		cps := CrossProductSign(v.p, pivot.p, vX.p)
+		if cps == 0 {
+			if (v.p.x.i > pivot.p.x.i) == (pivot.p.x.i > vX.p.x.i) do continue
+		} else if cps < 0 ||
+			(vAlt != nil && CrossProductSign(vX.p, pivot.p, vAlt.p) <= 0) {
+			continue
+		}
+		vAlt = vX
+		eAlt = e
+	}
+	if vAlt == nil || vAlt.p.y.i < minY do return
+
+	if vAlt.p.y.i < pivot.p.y.i {
+		if IsRightEdge(eAlt) do return
+	} else if vAlt.p.y.i > pivot.p.y.i {
+		if IsLeftEdge(eAlt) do return
+	}
+	eX := FindLinkingEdge(vAlt, v, vAlt.p.y.i > v.p.y.i)
+	if eX == nil {
+		if vAlt.p.y.i == v.p.y.i &&
+		   v.p.y.i == minY &&
+		   HorizontalBetween(ctx, vAlt, v) != nil {
+			return
+		}
+		eX = MakeEdge(ctx, vAlt, v, .loose) or_return
+	}
+	CreateTriangle(ctx, edge, eX, eAlt) or_return
+	if !EdgeCompleted(eX) do DoTriangulateRight(ctx, eX, vAlt, minY) or_return
+
+	return
+}
+
+@(private = "file")
+ForceLegal :: proc(ctx: ^Context, edge: ^Edge) -> (err:Trianguate_Error) {
+	if edge.triA == nil || edge.triB == nil do return
+	vertA: ^Vertex = nil
+	vertB: ^Vertex = nil
+	edgesA: [3]^Edge = {nil, nil, nil}
+	edgesB: [3]^Edge = {nil, nil, nil}
+	for i in 0 ..< 3 {
+		if edge.triA.edges[i] == edge do continue
+		switch EdgeContains(edge.triA.edges[i], edge.vL) {
+		case .left:
+			edgesA[1] = edge.triA.edges[i]
+			vertA = edge.triA.edges[i].vR
+		case .right:
+			edgesA[1] = edge.triA.edges[i]
+			vertA = edge.triA.edges[i].vL
+		case .neither:
+			edgesB[1] = edge.triA.edges[i]
+		}
+	}
+
+	for i in 0 ..< 3 {
+		if edge.triB.edges[i] == edge do continue
+		switch EdgeContains(edge.triB.edges[i], edge.vL) {
+		case .left:
+			edgesA[2] = edge.triB.edges[i]
+			vertB = edge.triB.edges[i].vR
+		case .right:
+			edgesA[2] = edge.triB.edges[i]
+			vertB = edge.triB.edges[i].vL
+		case .neither:
+			edgesB[2] = edge.triB.edges[i]
+		}
+	}
+
+	if CrossProductSign(vertA.p, edge.vL.p, edge.vR.p) == 0 do return
+	ict := InCircleTest(vertA.p, edge.vL.p, edge.vR.p, vertB.p)
+	if ict.i == 0 do return
+	right_turn := CrossProductSign(vertA.p, edge.vL.p, edge.vR.p) > 0
+	if right_turn == (ict.i < 0) do return
+
+
+	// Flip edge: vL<->vertA, vR<->vertB
+	edge.vL = vertA
+	edge.vR = vertB
+	edge.triA.edges[0] = edge
+	for i in 1 ..< 3 {
+		edge.triA.edges[i] = edgesA[i]
+		ed := edgesA[i]
+		if ed == nil do continue
+		if IsLooseEdge(ed) do non_zero_append(&ctx.pendingDelaunayStack, ed) or_return
+		if ed.triA == edge.triA || ed.triB == edge.triA do continue
+		if ed.triA == edge.triB do ed.triA = edge.triA
+		else if ed.triB == edge.triB do ed.triB = edge.triA
+	}
+
+	edge.triB.edges[0] = edge
+	for i in 1 ..< 3 {
+		edge.triB.edges[i] = edgesB[i]
+		ed := edgesB[i]
+		if ed == nil do continue
+		if IsLooseEdge(ed) do non_zero_append(&ctx.pendingDelaunayStack, ed) or_return
+		if ed.triA == edge.triB || ed.triB == edge.triB do continue
+		if ed.triA == edge.triA do ed.triA = edge.triB
+		else if ed.triB == edge.triA do ed.triB = edge.triB
+	}
 	return
 }
 
@@ -126,29 +409,33 @@ CreateInnerLocMinLooseEdge :: proc(
 		i = -(1 << FIXED_SHIFT),
 	}
 	for e != nil {
-		if e.vL.p.x.i <= xAbove &&
-		   e.vR.p.x.i >= xAbove &&
-		   e.vB.p.y.i >= yAbove &&
-		   e.vB != vAbove &&
-		   e.vT != vAbove &&
-		   !(CrossProductSign(e.vL.p, vAbove.p, e.vR.p) < 0) {
+		in_range := e.vL.p.x.i <= xAbove &&
+			e.vR.p.x.i >= xAbove &&
+			e.vB.p.y.i >= yAbove &&
+			e.vB != vAbove &&
+			e.vT != vAbove &&
+			!(CrossProductSign(e.vL.p, vAbove.p, e.vR.p) < 0)
+		if in_range {
 			d, d_ := ShortestLength2Line(vAbove.p, e.vL.p, e.vR.p)
-			if eBelow == nil || d.i < fixed.mul(bestD, d_).i { 	// compare e with eBelow
+			if eBelow == nil || d.i < fixed.mul(bestD, d_).i {
 				eBelow = e
 				bestD = d
 			}
 		}
 		e = e.nextE
 	}
+
 	if eBelow == nil do return nil, .EBELLOW_MISSING
+
 
 	// get the best vertex from 'eBelow'
 	vBest: ^Vertex = eBelow.vB if eBelow.vT.p.y.i <= yAbove else eBelow.vT
 	xBest := vBest.p.x.i
 	yBest := vBest.p.y.i
 
+
 	// make sure no edges intersect 'vAbove' and 'vBest' ...
-	// todo: fActives is currently *unsorted* but consider making it
+	// TODO: fActives is currently *unsorted* but consider making it
 	// a tree structure based on each edge's left and right bounds
 	e = ctx.firstActive
 	if xBest < xAbove {
@@ -185,18 +472,18 @@ CreateInnerLocMinLooseEdge :: proc(
 
 
 @(private = "file")
-MergeDupOrCollinearVertices :: proc(ctx: ^Context) {
+MergeDupOrCollinearVertices :: proc(ctx: ^Context) -> (err:Trianguate_Error) {
 	// note: this procedure may add new edges and change the
 	// number of edges connected with a given vertex, but it
 	// won't add or delete vertices (so it's safe to use iterators)
-	vt: ^Vertex
+	// Precondition: all_verts must be sorted (y desc, then x asc)
+	v1_idx := 0
 	for i in 1 ..< len(ctx.all_verts) {
-		if &ctx.all_verts[i] != vt {
-			vt = &ctx.all_verts[i]
+		if !fixed_ex.equal(ctx.all_verts[i].p, ctx.all_verts[v1_idx].p) {
+			v1_idx = i
 			continue
 		}
-
-		// merge vt & v2
+		vt := &ctx.all_verts[v1_idx]
 		v2 := &ctx.all_verts[i]
 		if !vt.innerLM || !v2.innerLM {
 			vt.innerLM = false
@@ -213,9 +500,10 @@ MergeDupOrCollinearVertices :: proc(ctx: ^Context) {
 		}
 		clear(&v2.e)
 
+
 		for e, i in vt.e {
 			e1 := e
-			if IsHorizontal(e1, e1) || e1.vB != vt do continue
+			if IsHorizontal(e1) || e1.vB != vt do continue
 			for j := i + 1; j < len(vt.e); j += 1 {
 				e2 := vt.e[j]
 				if e2 == e1 do continue
@@ -223,14 +511,15 @@ MergeDupOrCollinearVertices :: proc(ctx: ^Context) {
 				// we have parallel edges, both heading up from vt.p.
 				// split the longer edge at the top of the shorter edge.
 				if e1.vT.p.y.i < e2.vT.p.y.i {
-					SplitEdge(ctx, e1, e2)
+					SplitEdge(ctx, e1, e2) or_return
 				} else {
-					SplitEdge(ctx, e2, e1)
+					SplitEdge(ctx, e2, e1) or_return
 				}
 				break // because only two edges can be collinear
 			}
 		}
 	}
+	return
 }
 
 
@@ -260,10 +549,11 @@ AddPath :: proc(ctx: ^Context, pts: [][2]FixedDef) -> (err: Trianguate_Error) {
 		iNext = utils.Next(i, len(pts))
 	}
 
+
 	vert_cnt := len(ctx.all_verts)
 
 	// we are now at the first legitimate locMin
-	non_zero_append(&ctx.all_verts, MakeVertex(pts[i])) or_return
+	non_zero_append(&ctx.all_verts, MakeVertex(pts[i]) or_return) or_return
 	v0 := &ctx.all_verts[vert_cnt]
 
 	v0.innerLM = CrossProductSign(pts[iPrev], pts[i], pts[iNext]) < 0
@@ -286,8 +576,9 @@ AddPath :: proc(ctx: ^Context, pts: [][2]FixedDef) -> (err: Trianguate_Error) {
 			continue
 		}
 
+
 		for pts[i].y.i <= vPrev.p.y.i { 	// ascend up next bound to LocMax
-			non_zero_append(&ctx.all_verts, MakeVertex(pts[i])) or_return
+			non_zero_append(&ctx.all_verts, MakeVertex(pts[i]) or_return) or_return
 			v := &ctx.all_verts[len(ctx.all_verts) - 1]
 
 			MakeEdge(ctx, vPrev, v, .ascend)
@@ -301,10 +592,11 @@ AddPath :: proc(ctx: ^Context, pts: [][2]FixedDef) -> (err: Trianguate_Error) {
 			}
 		}
 
+
 		// Now at a locMax, so descend to next locMin
 		vPrevPrev := vPrev
 		for i != i0 && pts[i].y.i >= vPrev.p.y.i {
-			non_zero_append(&ctx.all_verts, MakeVertex(pts[i]))
+			non_zero_append(&ctx.all_verts, MakeVertex(pts[i]) or_return)
 			v := &ctx.all_verts[len(ctx.all_verts) - 1]
 			MakeEdge(ctx, v, vPrev, .descend)
 			vPrevPrev = vPrev
@@ -323,6 +615,7 @@ AddPath :: proc(ctx: ^Context, pts: [][2]FixedDef) -> (err: Trianguate_Error) {
 	}
 
 	MakeEdge(ctx, v0, vPrev, .descend)
+
 
 	len_fin := len(ctx.all_verts) - vert_cnt // finally, ignore this path if is not a polygon or too small
 	i = vert_cnt
@@ -373,3 +666,20 @@ FindLocMinIdx :: proc "contextless" (pts: [][2]FixedDef, in_out_idx: ^int) -> bo
 	return true
 }
 
+@(private="file")
+CreateTriangle :: proc(ctx: ^Context, e1, e2, e3: ^Edge) -> (err:Trianguate_Error) {
+	tri := new(Triangle, context.temp_allocator) or_return
+	tri.edges = {e1, e2, e3}
+	non_zero_append(&ctx.all_tris, tri) or_return
+	for i in 0 ..< 3 {
+		ed := tri.edges[i]
+		if ed.triA != nil {
+			ed.triB = tri
+			RemoveEdgeFromActives(ctx, ed)
+		} else {
+			ed.triA = tri
+			if ed.kind != .loose do RemoveEdgeFromActives(ctx, ed)
+		}
+	}
+	return
+}

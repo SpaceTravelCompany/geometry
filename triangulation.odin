@@ -518,7 +518,7 @@ MergeDupOrCollinearVertices :: proc(ctx: ^Context) -> (err: Trianguate_Error) {
 
 
 @(private = "file")
-AddPath :: proc(ctx: ^Context, pts: [][2]FixedDef) -> (err: Trianguate_Error) {
+AddPath :: proc(ctx: ^Context, pts: [][2]FixedDef, poly_idx: int) -> (err: Trianguate_Error) {
 	i0 := 0
 
 	// find the first locMin for the current path
@@ -550,7 +550,8 @@ AddPath :: proc(ctx: ^Context, pts: [][2]FixedDef) -> (err: Trianguate_Error) {
 	non_zero_append(&ctx.all_verts, MakeVertex(pts[i]) or_return) or_return
 	v0 := &ctx.all_verts[vert_cnt]
 
-	v0.innerLM = CrossProductSign(pts[iPrev], pts[i], pts[iNext]) < 0
+	is_inner := ctx.polyCCW[poly_idx] == .Clockwise
+	v0.innerLM = is_inner
 	vPrev := v0
 	i = iNext
 
@@ -605,7 +606,7 @@ AddPath :: proc(ctx: ^Context, pts: [][2]FixedDef) -> (err: Trianguate_Error) {
 		}
 
 		if i == i0 do break
-		if CrossProductSign(vPrev.p, pts[i], pts[iNext]) < 0 do vPrev.innerLM = true
+		vPrev.innerLM = is_inner
 	}
 
 	MakeEdge(ctx, v0, vPrev, .descend)
@@ -632,8 +633,8 @@ AddPaths :: proc(ctx: ^Context) -> (err: Trianguate_Error) {
 	non_zero_reserve(&ctx.all_verts, cap(ctx.all_verts) + total_vert_count)
 	non_zero_reserve(&ctx.all_edges, cap(ctx.all_edges) + total_vert_count)
 
-	for p in ctx.polys {
-		err := AddPath(ctx, p)
+	for p, i in ctx.polys {
+		err := AddPath(ctx, p, i)
 		if err != nil && err != .NO_PATHS do return err
 	}
 	if len(ctx.all_verts) <= 2 do return .NO_PATHS

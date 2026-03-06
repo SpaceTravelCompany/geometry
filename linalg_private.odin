@@ -73,14 +73,13 @@ HorizontalBetween :: proc(ctx: ^Context, v1, v2: ^Vertex) -> ^Edge {
 		r = v2.p.x
 	}
 
-	//! C++ may have typo: (vL.x != l || vL.x != r) - use vR for second to exclude exact segment match
 	res := ctx.firstActive
 	for res != nil {
 		if res.vL.p.y.i == y &&
 		   res.vR.p.y.i == y &&
 		   res.vL.p.x.i >= l.i &&
 		   res.vR.p.x.i <= r.i &&
-		   (res.vL.p.x.i != l.i || res.vR.p.x.i != r.i) {
+		   (res.vL.p.x.i != l.i || res.vL.p.x.i != r.i) {
 			break
 		}
 		res = res.nextE

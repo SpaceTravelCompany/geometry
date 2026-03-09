@@ -260,7 +260,7 @@ DoTriangulateLeft :: proc(
 		if vAlt.p.y.i == v.p.y.i && v.p.y.i == minY && HorizontalBetween(ctx, vAlt, v) != nil {
 			return
 		}
-		gerr : Geometry_Error
+		gerr: Geometry_Error
 		eX, gerr = MakeEdge(ctx, vAlt, v, .loose)
 		if gerr != nil do return Geometry_To_Triangulate_Error(gerr)
 	}
@@ -306,7 +306,7 @@ DoTriangulateRight :: proc(
 		if vAlt.p.y.i == v.p.y.i && v.p.y.i == minY && HorizontalBetween(ctx, vAlt, v) != nil {
 			return
 		}
-		gerr : Geometry_Error
+		gerr: Geometry_Error
 		eX, gerr = MakeEdge(ctx, vAlt, v, .loose)
 		if gerr != nil do return Geometry_To_Triangulate_Error(gerr)
 	}
@@ -464,7 +464,7 @@ CreateInnerLocMinLooseEdge :: proc(
 			e = e.nextE
 		}
 	}
-	gerr : Geometry_Error
+	gerr: Geometry_Error
 	ed, gerr = MakeEdge(ctx, vBest, vAbove, .loose)
 	if gerr != nil do return ed, Geometry_To_Triangulate_Error(gerr)
 	return
@@ -637,10 +637,13 @@ AddPath :: proc(ctx: ^Context, pts: [][2]FixedDef, poly_idx: int) -> (err: Trian
 	return
 }
 
-@(private = "file") Geometry_To_Triangulate_Error :: proc "contextless" (err:Geometry_Error) -> Trianguate_Error {
+@(private = "file")
+Geometry_To_Triangulate_Error :: proc "contextless" (err: Geometry_Error) -> Trianguate_Error {
 	switch g in err {
-		case __Geometry_Error:return err.(__Geometry_Error)
-		case runtime.Allocator_Error:return err.(runtime.Allocator_Error)
+	case __Geometry_Error:
+		return err.(__Geometry_Error)
+	case runtime.Allocator_Error:
+		return err.(runtime.Allocator_Error)
 	}
 	return nil
 }
@@ -700,4 +703,3 @@ CreateTriangle :: proc(ctx: ^Context, e1, e2, e3: ^Edge) -> (err: Trianguate_Err
 	}
 	return
 }
-

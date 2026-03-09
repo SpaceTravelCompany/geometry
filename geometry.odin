@@ -332,13 +332,12 @@ _Shapes_ComputeLine :: proc(
 	vertList: ^[dynamic]shape_vertex2di64,
 	indList: ^[dynamic]u32,
 	color: linalg.Vector4f32,
-	pts: [][2]FixedDef,
-	type: curve_type,
+	pts: CURVE_STRUCT,
 ) -> shape_error {
 
 	using fixed
 
-	curveType := type
+	curveType := pts.type
 	err: shape_error = nil
 	//loop_reverse := false
 	//if curveType == .LoopReverse do loop_reverse = true
@@ -346,38 +345,35 @@ _Shapes_ComputeLine :: proc(
 	reverse := false
 	d0, d1, d2: FixedDef
 	if curveType != .Line && curveType != .Quadratic {
-		curveType, d0, d1, d2 = GetCubicCurveType(pts[0], pts[1], pts[2], pts[3]) or_return
-	} else if curveType == .Quadratic && len(pts) == 3 {
+		curveType, d0, d1, d2 = GetCubicCurveType(pts.start, pts.ctl0, pts.ctl1, pts.end) or_return
+	} else if curveType == .Quadratic {
 		vlen: u32 = u32(len(vertList))
-		if GetPolygonOrientation(pts) == .CounterClockwise {
+		if GetPolygonOrientation([][2]FixedDef{pts.start, pts.ctl0, pts.end}) ==
+		   .CounterClockwise {
 			non_zero_append(
 				vertList,
-				shape_vertex2di64 {
-					uvw   = {0.0, 0.0, -100.0}, //-100 check this is not cubic curve
-					pos   = pts[0],
-					color = color,
-				},
+				shape_vertex2di64{uvw = {0.0, 0.0, -5.0}, pos = pts.start, color = color}, //-5 check this is not cubic curve
 			)
 			non_zero_append(
 				vertList,
-				shape_vertex2di64{uvw = {-0.5, 0.0, -100.0}, pos = pts[1], color = color},
+				shape_vertex2di64{uvw = {-0.5, 0.0, -5.0}, pos = pts.ctl0, color = color},
 			)
 			non_zero_append(
 				vertList,
-				shape_vertex2di64{uvw = {-1.0, -1.0, -100.0}, pos = pts[2], color = color},
+				shape_vertex2di64{uvw = {-1.0, -1.0, -5.0}, pos = pts.end, color = color},
 			)
 		} else {
 			non_zero_append(
 				vertList,
-				shape_vertex2di64{uvw = {0.0, 0.0, -100.0}, pos = pts[0], color = color},
+				shape_vertex2di64{uvw = {0.0, 0.0, -5.0}, pos = pts.start, color = color},
 			)
 			non_zero_append(
 				vertList,
-				shape_vertex2di64{uvw = {0.5, 0.0, -100.0}, pos = pts[1], color = color},
+				shape_vertex2di64{uvw = {0.5, 0.0, -5.0}, pos = pts.ctl0, color = color},
 			)
 			non_zero_append(
 				vertList,
-				shape_vertex2di64{uvw = {1.0, 1.0, -100.0}, pos = pts[2], color = color},
+				shape_vertex2di64{uvw = {1.0, 1.0, -5.0}, pos = pts.end, color = color},
 			)
 		}
 		non_zero_append(indList, vlen, vlen + 1, vlen + 2)
@@ -395,16 +391,6 @@ _Shapes_ComputeLine :: proc(
 	}
 
 	#partial switch curveType {
-	case .Line:
-		return nil
-	case .Quadratic:
-		F = {
-			{{}, {}, {}},
-			{1.0 / 3.0, {}, 1.0 / 3.0},
-			{2.0 / 3.0, 1.0 / 3.0, 2.0 / 3.0},
-			{1.0, 1.0, 1.0},
-		}
-		if d2.i < 0 do reverse = true
 	case .Serpentine:
 		d0f: f32 = f32(fixed.to_f64(d0))
 		d1f: f32 = f32(fixed.to_f64(d1))
@@ -487,6 +473,16 @@ _Shapes_ComputeLine :: proc(
 			{ls - (2.0 / 3.0) * lt, lsMinusLt * lsMinusLt * ls, 1.0},
 			{lsMinusLt, lsMinusLt * lsMinusLt * lsMinusLt, 1.0},
 		}
+	case .Quadratic:
+		F = {
+			{{}, {}, {}},
+			{1.0 / 3.0, {}, 1.0 / 3.0},
+			{2.0 / 3.0, 1.0 / 3.0, 2.0 / 3.0},
+			{1.0, 1.0, 1.0},
+		}
+		if d2.i < 0 do reverse = true
+	case .Line:
+		return nil
 	//reverse = true
 	// case .Unknown:
 	//     unreachable()
@@ -501,12 +497,9 @@ _Shapes_ComputeLine :: proc(
 		vertList: ^[dynamic]shape_vertex2di64,
 		indList: ^[dynamic]u32,
 		color: linalg.Vector4f32,
-		pts: [][2]FixedDef,
+		pts: CURVE_STRUCT,
 		F: [4][3]f32,
 	) {
-		if len(pts) == 2 {
-			return
-		}
 		start: u32 = u32(len(vertList))
 		non_zero_append(
 			vertList,
@@ -524,10 +517,10 @@ _Shapes_ComputeLine :: proc(
 			vertList,
 			shape_vertex2di64{uvw = {F[3][0], F[3][1], F[3][2]}, color = color},
 		)
-		vertList[start].pos = pts[0]
-		vertList[start + 1].pos = pts[1]
-		vertList[start + 2].pos = pts[2]
-		vertList[start + 3].pos = pts[3]
+		vertList[start].pos = pts.start
+		vertList[start + 1].pos = pts.ctl0
+		vertList[start + 2].pos = pts.ctl1
+		vertList[start + 3].pos = pts.end
 		//triangulate
 		for i: u32 = 0; i < 4; i += 1 {
 			for j: u32 = i + 1; j < 4; j += 1 {
@@ -622,7 +615,7 @@ _Shapes_ComputeLine :: proc(
 			non_zero_append(indList, start, start + 2, start + 3, start + 3, start + 2, start + 1)
 		}
 	}
-	appendLine(vertList, indList, color, pts[:len(pts)], F)
+	appendLine(vertList, indList, color, pts, F)
 
 	return nil
 }
@@ -960,7 +953,6 @@ shapes_compute_polygoni64 :: proc(
 		vertList: ^[dynamic]shape_vertex2di64,
 		indList: ^[dynamic]u32,
 		poly: shapesi64,
-		allocator: runtime.Allocator,
 	) -> (
 		err: shape_error = nil,
 	) {
@@ -1280,7 +1272,7 @@ shapes_compute_polygoni64 :: proc(
 				indices, tri_err := TrianguatePolygons_Fixed(
 					non_curves[:],
 					non_curves_ccw2[:],
-					allocator,
+					context.temp_allocator,
 				)
 				if tri_err != nil {
 					switch tri in tri_err {
@@ -1293,14 +1285,34 @@ shapes_compute_polygoni64 :: proc(
 					}
 					return
 				}
+				non_zero_append(indList, ..indices)
 
-				//
+				for v, i in non_curves {
+					for vv in v {
+						non_zero_append(
+							vertList,
+							shape_vertex2di64 {
+								pos   = vv,
+								uvw   = linalg.Vector3f32{0.0, 0.0, -100.0}, //-100 check this is not curve
+								color = poly.nodes[i].color,
+							},
+						)
+					}
+				}
 
-				//TODO curves _Shapes_ComputeLine
+				for c, i in curves2 {
+					for cc in c {
+						_Shapes_ComputeLine(vertList, indList, poly.nodes[i].color, cc)
+					}
+				}
+				for &idx in indList[len(indices):] {
+					idx += auto_cast len(indices)
+				}
 			}
 		}
 		return
 	}
+
+	shapes_compute_polygon_in(&vertList, &indList, poly) or_return
 	return
 }
-

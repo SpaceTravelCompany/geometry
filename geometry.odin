@@ -963,10 +963,6 @@ shapes_compute_polygoni64 :: proc(
 			[dynamic][dynamic][2]FixedDef,
 			context.temp_allocator,
 		)
-		non_curves_ccw2: [dynamic]PolyOrientation = make(
-			[dynamic]PolyOrientation,
-			context.temp_allocator,
-		)
 		curves2: [dynamic][dynamic]CURVE_STRUCT = make(
 			[dynamic][dynamic]CURVE_STRUCT,
 			context.temp_allocator,
@@ -976,7 +972,6 @@ shapes_compute_polygoni64 :: proc(
 		for node, nidx in poly.nodes {
 			if node.color.a > 0 { 	//TODO Handle If is_close == false
 				non_zero_resize_dynamic_array(&non_curves2, len(node.pts)) or_return
-				non_zero_resize_dynamic_array(&non_curves_ccw2, 0) or_return
 				non_zero_resize_dynamic_array(&curves2, len(node.pts)) or_return
 
 				for i in 0 ..< len(node.pts) {
@@ -1260,10 +1255,6 @@ shapes_compute_polygoni64 :: proc(
 							i += 1
 						}
 					}
-					non_zero_append(
-						&non_curves_ccw2,
-						GetPolygonOrientation(non_curves2[npi][:]),
-					) or_return
 				}
 				non_zero_resize_dynamic_array(&non_curves, len(non_curves2)) or_return
 				for npi in 0 ..< len(non_curves2) {
@@ -1271,7 +1262,6 @@ shapes_compute_polygoni64 :: proc(
 				}
 				indices, tri_err := TrianguatePolygons_Fixed(
 					non_curves[:],
-					non_curves_ccw2[:],
 					context.temp_allocator,
 				)
 				if tri_err != nil {

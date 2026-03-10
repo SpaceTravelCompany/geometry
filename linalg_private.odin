@@ -57,7 +57,6 @@ Context :: struct {
 	pendingDelaunayStack: [dynamic]^Edge,
 	indices:              [dynamic]u32,
 	polys:                [][][2]FixedDef,
-	polyCCW:              []PolyOrientation,
 	lowermostVertex:      ^Vertex,
 	firstActive:          ^Edge,
 }

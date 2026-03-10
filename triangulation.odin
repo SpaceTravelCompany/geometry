@@ -15,6 +15,7 @@ import "shared:utils_private/fixed_ex"
 __Trianguate_Error :: enum {
 	FIRST_ACTIVE_MISSING,
 	EBELLOW_MISSING,
+	PATHS_INTERSECTS,
 }
 
 Trianguate_Error :: union #shared_nil {
@@ -23,10 +24,29 @@ Trianguate_Error :: union #shared_nil {
 	runtime.Allocator_Error,
 }
 
+// Precondition: ctx.all_edges must be sorted ascending on edge.vL.p.x
+FixupEdgeIntersects :: proc(ctx: ^Context) -> (err: Trianguate_Error) {
+	for i1 in 0 ..< len(ctx.all_edges) {
+		e1 := ctx.all_edges[i1]
+		for i2 in i1 + 1 ..< len(ctx.all_edges) {
+			e2 := ctx.all_edges[i2]
+			if e2.vL.p.x.i >= e1.vR.p.x.i {
+				break
+			}
+			if e2.vT.p.y.i < e1.vB.p.y.i && e2.vB.p.y.i > e1.vT.p.y.i {
+				if LinesIntersect3(e2.vL.p, e2.vR.p, e1.vL.p, e1.vR.p) == .intersect {
+					ok, gerr := RemoveIntersection(ctx, e2, e1)
+					if gerr != nil do return Geometry_To_Triangulate_Error(gerr)
+					if !ok do return __Trianguate_Error.PATHS_INTERSECTS
+				}
+			}
+		}
+	}
+	return nil
+}
 
 TrianguatePolygons_Fixed :: proc(
 	poly: [][][2]FixedDef,
-	polyCCW: []PolyOrientation = nil,
 	allocator := context.allocator,
 ) -> (
 	indices: []u32,
@@ -40,20 +60,6 @@ TrianguatePolygons_Fixed :: proc(
 		loc_min_stack        = make([dynamic]^Vertex, context.temp_allocator) or_return,
 		horz_edge_stack      = make([dynamic]^Edge, context.temp_allocator) or_return,
 		polys                = poly,
-	}
-
-	ctx.polyCCW = polyCCW
-	if ctx.polyCCW == nil { 	//polyCCW 정보 (폴리곤이 구멍인지 아닌지 여부) 가 없으면 직접 만들어야 한다.
-		ctx.polyCCW = utils.make_non_zeroed_slice(
-			[]PolyOrientation,
-			len(poly),
-			context.temp_allocator,
-		) or_return
-		for &p, i in ctx.polyCCW {
-			p = GetPolygonOrientation(poly[i])
-		}
-	} else {
-		assert(len(poly) == len(ctx.polyCCW))
 	}
 	non_zero_reserve(&ctx.all_edges, len(poly)) or_return
 
@@ -87,6 +93,7 @@ TrianguatePolygons_Fixed :: proc(
 	slice.sort_by(ctx.all_edges[:], proc(a, b: ^Edge) -> bool {
 		return a.vL.p.x.i < b.vL.p.x.i
 	})
+	FixupEdgeIntersects(&ctx) or_return
 	slice.sort_by(ctx.all_verts[:], proc(a, b: Vertex) -> bool {
 		if a.p.y.i == b.p.y.i do return a.p.x.i < b.p.x.i
 		return a.p.y.i > b.p.y.i
@@ -526,7 +533,7 @@ MergeDupOrCollinearVertices :: proc(ctx: ^Context) -> (err: Trianguate_Error) {
 
 
 @(private = "file")
-AddPath :: proc(ctx: ^Context, pts: [][2]FixedDef, poly_idx: int) -> (err: Trianguate_Error) {
+AddPath :: proc(ctx: ^Context, pts: [][2]FixedDef) -> (err: Trianguate_Error) {
 	i0 := 0
 
 	// find the first locMin for the current path
@@ -559,9 +566,7 @@ AddPath :: proc(ctx: ^Context, pts: [][2]FixedDef, poly_idx: int) -> (err: Trian
 	if vert_err != nil do return Geometry_To_Triangulate_Error(vert_err)
 	non_zero_append(&ctx.all_verts, vert) or_return
 	v0 := &ctx.all_verts[vert_cnt]
-
-	is_inner := ctx.polyCCW[poly_idx] == .Clockwise
-	v0.innerLM = is_inner
+	v0.innerLM = CrossProductSign(pts[iPrev], pts[i], pts[iNext]) > 0
 	vPrev := v0
 	i = iNext
 
@@ -620,7 +625,11 @@ AddPath :: proc(ctx: ^Context, pts: [][2]FixedDef, poly_idx: int) -> (err: Trian
 		}
 
 		if i == i0 do break
-		vPrev.innerLM = is_inner
+		// Determine inner local minima per-locMin (Clipper2 behavior).
+		// Only set to true when the vertex turns left at the next locMin.
+		if CrossProductSign(vPrevPrev.p, vPrev.p, pts[i]) > 0 {
+			vPrev.innerLM = true
+		}
 	}
 
 	MakeEdge(ctx, v0, vPrev, .descend)
@@ -658,8 +667,8 @@ AddPaths :: proc(ctx: ^Context) -> (err: Trianguate_Error) {
 	non_zero_reserve(&ctx.all_verts, cap(ctx.all_verts) + total_vert_count)
 	non_zero_reserve(&ctx.all_edges, cap(ctx.all_edges) + total_vert_count)
 
-	for p, i in ctx.polys {
-		err := AddPath(ctx, p, i)
+	for p in ctx.polys {
+		err := AddPath(ctx, p)
 		if err != nil && err != .NO_PATHS do return err
 	}
 	if len(ctx.all_verts) <= 2 do return .NO_PATHS

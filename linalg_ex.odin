@@ -5,6 +5,7 @@ import "core:math"
 import "core:math/fixed"
 import "core:math/linalg"
 import "core:mem"
+import "shared:utils_private/fixed_ex"
 
 import "shared:utils_private"
 
@@ -708,6 +709,7 @@ LinesIntersect2 :: proc "contextless" (
 ) where intrinsics.type_is_float(T) ||
 	intrinsics.type_is_specialization_of(T, fixed.Fixed) {
 	when intrinsics.type_is_float(T) {
+		//if a1 == b1 || a2 == b1 || a1 == b2 || a2 == b2 do return .none, {}
 		den: T = (b2.y - b1.y) * (a2.x - a1.x) - (b2.x - b1.x) * (a2.y - a1.y)
 		if den == 0.0 {
 			return .collinear, {}
@@ -720,6 +722,7 @@ LinesIntersect2 :: proc "contextless" (
 			den > 0.0 ? (ua >= 0.0 && ub >= 0.0 && ua <= den && ub <= den) : (ua >= den && ub >= den && ua <= 0.0 && ub <= 0.0)
 		return res_den ? .intersect : .none, [2]T{a1.x + ua * (a2.x - a1.x), a1.y + ua * (a2.y - a1.y)}
 	} else {
+		if fixed_ex.equal(a1, b1) || fixed_ex.equal(a2, b1) || fixed_ex.equal(a1, b2) || fixed_ex.array_equal(a2, b2) do return .none, {}
 		den: T = fixed.sub(
 			fixed.mul(fixed.sub(b2.y, b1.y), fixed.sub(a2.x, a1.x)),
 			fixed.mul(fixed.sub(b2.x, b1.x), fixed.sub(a2.y, a1.y)),
@@ -752,6 +755,7 @@ LinesIntersect3 :: proc "contextless" (
 ) -> IntersectKind where intrinsics.type_is_float(T) ||
 	intrinsics.type_is_specialization_of(T, fixed.Fixed) {
 	when intrinsics.type_is_float(T) {
+		//if a1 == b1 || a2 == b1 || a1 == b2 || a2 == b2 do return .none
 		den: T = (b2.y - b1.y) * (a2.x - a1.x) - (b2.x - b1.x) * (a2.y - a1.y)
 		if den == 0.0 {
 			return .collinear, {}
@@ -764,6 +768,7 @@ LinesIntersect3 :: proc "contextless" (
 			den > 0.0 ? (ua >= 0.0 && ub >= 0.0 && ua <= den && ub <= den) : (ua >= den && ub >= den && ua <= 0.0 && ub <= 0.0)
 		return res_den ? .intersect : .none
 	} else {
+		if fixed_ex.equal(a1, b1) || fixed_ex.equal(a2, b1) || fixed_ex.equal(a1, b2) || fixed_ex.array_equal(a2, b2) do return .none
 		den: T = fixed.sub(
 			fixed.mul(fixed.sub(b2.y, b1.y), fixed.sub(a2.x, a1.x)),
 			fixed.mul(fixed.sub(b2.x, b1.x), fixed.sub(a2.y, a1.y)),
@@ -1278,9 +1283,11 @@ InCircleTest :: proc "contextless" (
 		m20 := ptC.x - ptD.x
 		m21 := ptC.y - ptD.y
 		m22 := m20 * m20 + m21 * m21
-		return m00 * (m11 * m22 - m21 * m12) -
+		return(
+			m00 * (m11 * m22 - m21 * m12) -
 			m10 * (m01 * m22 - m21 * m02) +
-			m20 * (m01 * m12 - m11 * m02)
+			m20 * (m01 * m12 - m11 * m02) \
+		)
 	}
 }
 

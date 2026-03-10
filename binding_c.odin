@@ -9,7 +9,7 @@ import "core:math/fixed"
 
 @(private="file") _c_allocator: runtime.Allocator = {
 	procedure = c_allocator_proc,
-	data = nil
+	data = nil,
 }
 
 @(private="file") alloc_func : proc "c" (size:c.size_t) -> rawptr

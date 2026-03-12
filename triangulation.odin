@@ -486,8 +486,8 @@ MergeDupOrCollinearVertices :: proc(ctx: ^Context($T)) -> (err: Trianguate_Error
 	// Precondition: all_verts must be sorted (y desc, then x asc)
 	v1_idx := 0
 	for i in 1 ..< len(ctx.all_verts) {
-		if !fixed_bcd.eq(ctx.all_verts[i].p.x, ctx.all_verts[v1_idx].p.x) ||
-		   !fixed_bcd.eq(ctx.all_verts[i].p.y, ctx.all_verts[v1_idx].p.y) {
+		if !fixed_bcd.equal(ctx.all_verts[i].p.x, ctx.all_verts[v1_idx].p.x) ||
+		   !fixed_bcd.equal(ctx.all_verts[i].p.y, ctx.all_verts[v1_idx].p.y) {
 			v1_idx = i
 			continue
 		}

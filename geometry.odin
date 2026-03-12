@@ -1,4 +1,3 @@
-#+feature using-stmt
 package geometry
 
 import "base:intrinsics"
@@ -7,45 +6,13 @@ import "core:math"
 import "core:math/linalg"
 import "core:mem"
 
-import "core:math/fixed"
 import "shared:utils_private/fixed_bcd"
-import "shared:utils_private/fixed_ex"
 
 import "shared:utils_private"
 
 DEF_FRAC_DIGITS :: 14
 
-@(private)
-_length2_bcd :: proc "contextless" (
-	a, b: [2]fixed_bcd.BCD($FRAC_DIGITS),
-) -> fixed_bcd.BCD(FRAC_DIGITS) {
-	dx := fixed_bcd.sub(b.x, a.x)
-	dy := fixed_bcd.sub(b.y, a.y)
-	return fixed_bcd.add(fixed_bcd.mul(dx, dx), fixed_bcd.mul(dy, dy))
-}
 
-@(private)
-_point_in_triangle_bcd :: proc "contextless" (p, a, b, c: [2]fixed_bcd.BCD($FRAC_DIGITS)) -> bool {
-	x0 := fixed_bcd.sub(c.x, a.x)
-	y0 := fixed_bcd.sub(c.y, a.y)
-	x1 := fixed_bcd.sub(b.x, a.x)
-	y1 := fixed_bcd.sub(b.y, a.y)
-	x2 := fixed_bcd.sub(p.x, a.x)
-	y2 := fixed_bcd.sub(p.y, a.y)
-	dot00 := fixed_bcd.add(fixed_bcd.mul(x0, x0), fixed_bcd.mul(y0, y0))
-	dot01 := fixed_bcd.add(fixed_bcd.mul(x0, x1), fixed_bcd.mul(y0, y1))
-	dot02 := fixed_bcd.add(fixed_bcd.mul(x0, x2), fixed_bcd.mul(y0, y2))
-	dot11 := fixed_bcd.add(fixed_bcd.mul(x1, x1), fixed_bcd.mul(y1, y1))
-	dot12 := fixed_bcd.add(fixed_bcd.mul(x1, x2), fixed_bcd.mul(y1, y2))
-	denominator := fixed_bcd.sub(fixed_bcd.mul(dot00, dot11), fixed_bcd.mul(dot01, dot01))
-	if denominator.i == 0 do return false
-	u := fixed_bcd.sub(fixed_bcd.mul(dot11, dot02), fixed_bcd.mul(dot01, dot12))
-	v := fixed_bcd.sub(fixed_bcd.mul(dot00, dot12), fixed_bcd.mul(dot01, dot02))
-	if denominator.i > 0 do return u.i > 0 && v.i > 0 && (u.i + v.i) < denominator.i
-	return u.i < 0 && v.i < 0 && (u.i + v.i) > denominator.i
-}
-
-@(private)
 shape_vertex2d_fixed :: struct($FRAC_DIGITS: int) {
 	pos:   [2]fixed_bcd.BCD(FRAC_DIGITS),
 	uvw:   linalg.Vector3f32,
@@ -576,7 +543,7 @@ _Shapes_ComputeLine :: proc(
 					idx += 1
 				}
 			}
-			if _point_in_triangle_bcd(
+			if PointInTriangle(
 				vertList[start + i].pos,
 				vertList[indices[0]].pos,
 				vertList[indices[1]].pos,
@@ -598,8 +565,8 @@ _Shapes_ComputeLine :: proc(
 			vertList[start + 3].pos,
 		)
 		if b == .intersect {
-			if _length2_bcd(vertList[start + 2].pos, vertList[start].pos).i <
-			   _length2_bcd(vertList[start + 3].pos, vertList[start + 1].pos).i {
+			if fixed_bcd.length2(vertList[start + 2].pos, vertList[start].pos).i <
+			   fixed_bcd.length2(vertList[start + 3].pos, vertList[start + 1].pos).i {
 				non_zero_append(indList, start, start + 1, start + 2, start, start + 2, start + 3)
 			} else {
 				non_zero_append(
@@ -621,8 +588,8 @@ _Shapes_ComputeLine :: proc(
 			vertList[start + 2].pos,
 		)
 		if b == .intersect {
-			if _length2_bcd(vertList[start + 3].pos, vertList[start].pos).i <
-			   _length2_bcd(vertList[start + 2].pos, vertList[start + 1].pos).i {
+			if fixed_bcd.length2(vertList[start + 3].pos, vertList[start].pos).i <
+			   fixed_bcd.length2(vertList[start + 2].pos, vertList[start + 1].pos).i {
 				non_zero_append(indList, start, start + 1, start + 3, start, start + 3, start + 2)
 			} else {
 				non_zero_append(
@@ -637,8 +604,8 @@ _Shapes_ComputeLine :: proc(
 			}
 			return
 		}
-		if _length2_bcd(vertList[start + 1].pos, vertList[start].pos).i <
-		   _length2_bcd(vertList[start + 3].pos, vertList[start + 2].pos).i {
+		if fixed_bcd.length2(vertList[start + 1].pos, vertList[start].pos).i <
+		   fixed_bcd.length2(vertList[start + 3].pos, vertList[start + 2].pos).i {
 			non_zero_append(indList, start, start + 2, start + 1, start, start + 1, start + 3)
 		} else {
 			non_zero_append(indList, start, start + 2, start + 3, start + 3, start + 2, start + 1)
@@ -1167,7 +1134,7 @@ shapes_compute_polygon_fixed :: proc(
 										half_pt := fixed_bcd.init(0, 5, FRAC_DIGITS)
 										half2 := [2]fixed_bcd.BCD(FRAC_DIGITS){half_pt, half_pt}
 										_, subdiv_t, subdiv_t_ = PointInLine(
-											lerp_bcd(cur2.ctl0, cur2.ctl1, half2),
+											lerp_fixed(cur2.ctl0, cur2.ctl1, half2),
 											cur.start,
 											cur.end,
 										)

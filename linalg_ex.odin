@@ -5,6 +5,7 @@ import "core:math"
 import "core:math/fixed"
 import "core:math/linalg"
 import "core:mem"
+import "shared:utils_private/fixed_bcd"
 import "shared:utils_private/fixed_ex"
 
 import "shared:utils_private"
@@ -240,7 +241,8 @@ Rect_PointIn :: #force_inline proc "contextless" (
 PolygonOverlapsPolygon :: proc "contextless" (
 	poly1, poly2: [][2]$T,
 ) -> bool where intrinsics.type_is_float(T) ||
-	intrinsics.type_is_specialization_of(T, fixed.Fixed) {
+	intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
+	intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
 	if len(poly1) < 3 || len(poly2) < 3 do return false
 	for p in poly1 {
 		if PointInPolygon(p, poly2) do return true
@@ -336,13 +338,13 @@ PointInLine :: proc "contextless" (
 	T,
 	T,
 ) where intrinsics.type_is_float(T) ||
-	intrinsics.type_is_specialization_of(T, fixed.Fixed) {
+	intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
+	intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
 	when intrinsics.type_is_float(T) {
 		A := (l0.y - l1.y) / (l0.x - l1.x)
 		B := l0.y - A * l0.x
-
 		pY := A * p.x + B
-		EP :: epsilon(T) * 20 // about count float operations
+		EP :: epsilon(T) * 20
 		res := p.y >= pY - EP && p.y <= pY + EP
 		t: T = 0.0
 		t_: T = 1.0
@@ -352,7 +354,6 @@ PointInLine :: proc "contextless" (
 			t = (p.x - minX)
 			t_ = (maxX - minX)
 		}
-
 		return res &&
 			p.x >= min(l0.x, l1.x) &&
 			p.x <= max(l0.x, l1.x) &&
@@ -360,10 +361,30 @@ PointInLine :: proc "contextless" (
 			p.y <= max(l0.y, l1.y),
 			t,
 			t_
+	} else when intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
+		A: T = fixed_bcd.div(fixed_bcd.sub(l0.y, l1.y), fixed_bcd.sub(l0.x, l1.x))
+		B: T = fixed_bcd.sub(l0.y, fixed_bcd.mul(A, l0.x))
+		pY: T = fixed_bcd.add(fixed_bcd.mul(A, p.x), B)
+		t: T = {}
+		t_: T
+		if p.y.i == pY.i {
+			minX: T = min_fixed(l0.x, l1.x)
+			maxX: T = max_fixed(l0.x, l1.x)
+			t = fixed_bcd.sub(p.x, minX)
+			t_ = fixed_bcd.sub(maxX, minX)
+		} else {
+			t_ = fixed_bcd.init(1, 0, intrinsics.type_polymorphic_record_parameter_value(T, 0))
+		}
+		return p.y.i == pY.i &&
+			p.x.i >= min_fixed(l0.x, l1.x).i &&
+			p.x.i <= max_fixed(l0.x, l1.x).i &&
+			p.y.i >= min_fixed(l0.y, l1.y).i &&
+			p.y.i <= max_fixed(l0.y, l1.y).i,
+			t,
+			t_
 	} else {
 		A: T = fixed.div(fixed.sub(l0.y, l1.y), fixed.sub(l0.x, l1.x))
 		B: T = fixed.sub(l0.y, fixed.mul(A, l0.x))
-
 		pY: T = fixed.add(fixed.mul(A, p.x), B)
 		t: T = {}
 		t_: T
@@ -377,7 +398,6 @@ PointInLine :: proc "contextless" (
 				i = 1 << intrinsics.type_polymorphic_record_parameter_value(T, 1),
 			}
 		}
-
 		return p.y.i == pY.i &&
 			p.x.i >= min_fixed(l0.x, l1.x).i &&
 			p.x.i <= max_fixed(l0.x, l1.x).i &&
@@ -391,14 +411,16 @@ PointInLine :: proc "contextless" (
 min_fixed :: proc "contextless" (
 	v0: $T,
 	v1: T,
-) -> T where intrinsics.type_is_specialization_of(T, fixed.Fixed) {
+) -> T where intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
+	intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
 	return v0.i < v1.i ? v0 : v1
 }
 
 max_fixed :: proc "contextless" (
 	v0: $T,
 	v1: T,
-) -> T where intrinsics.type_is_specialization_of(T, fixed.Fixed) {
+) -> T where intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
+	intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
 	return v0.i > v1.i ? v0 : v1
 }
 
@@ -409,9 +431,13 @@ SubdivLine :: proc "contextless" (
 ) -> (
 	pt01: [2]T,
 ) where intrinsics.type_is_float(T) ||
-	intrinsics.type_is_specialization_of(T, fixed.Fixed) {
+	intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
+	intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
 	when intrinsics.type_is_float(T) {
 		pt01 = linalg.lerp(pts[0], pts[1], subdiv)
+	} else when intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
+		subdiv2 := splat_2_bcd(subdiv)
+		pt01 = lerp_bcd(pts[0], pts[1], subdiv2)
 	} else {
 		subdiv2 := splat_2_fixed(subdiv)
 		pt01 = lerp_fixed(pts[0], pts[1], subdiv2)
@@ -425,11 +451,17 @@ SubdivQuadraticBezier :: proc "contextless" (
 ) -> (
 	pt01, pt12, pt012: [2]T,
 ) where intrinsics.type_is_float(T) ||
-	intrinsics.type_is_specialization_of(T, fixed.Fixed) {
+	intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
+	intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
 	when intrinsics.type_is_float(T) {
 		pt01 = linalg.lerp(pts[0], pts[1], subdiv)
 		pt12 = linalg.lerp(pts[1], pts[2], subdiv)
 		pt012 = linalg.lerp(pt01, pt12, subdiv)
+	} else when intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
+		subdiv2 := splat_2_bcd(subdiv)
+		pt01 = lerp_bcd(pts[0], pts[1], subdiv2)
+		pt12 = lerp_bcd(pts[1], pts[2], subdiv2)
+		pt012 = lerp_bcd(pt01, pt12, subdiv2)
 	} else {
 		subdiv2 := splat_2_fixed(subdiv)
 		pt01 = lerp_fixed(pts[0], pts[1], subdiv2)
@@ -445,7 +477,8 @@ SubdivCubicBezier :: proc "contextless" (
 ) -> (
 	pt01, pt12, pt23, pt012, pt123, pt0123: [2]T,
 ) where intrinsics.type_is_float(T) ||
-	intrinsics.type_is_specialization_of(T, fixed.Fixed) {
+	intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
+	intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
 	when intrinsics.type_is_float(T) {
 		pt01 = linalg.lerp(pts[0], pts[1], subdiv)
 		pt12 = linalg.lerp(pts[1], pts[2], subdiv)
@@ -453,6 +486,14 @@ SubdivCubicBezier :: proc "contextless" (
 		pt012 = linalg.lerp(pt01, pt12, subdiv)
 		pt123 = linalg.lerp(pt12, pt23, subdiv)
 		pt0123 = linalg.lerp(pt012, pt123, subdiv)
+	} else when intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
+		subdiv2 := splat_2_bcd(subdiv)
+		pt01 = lerp_bcd(pts[0], pts[1], subdiv2)
+		pt12 = lerp_bcd(pts[1], pts[2], subdiv2)
+		pt23 = lerp_bcd(pts[2], pts[3], subdiv2)
+		pt012 = lerp_bcd(pt01, pt12, subdiv2)
+		pt123 = lerp_bcd(pt12, pt23, subdiv2)
+		pt0123 = lerp_bcd(pt012, pt123, subdiv2)
 	} else {
 		subdiv2 := splat_2_fixed(subdiv)
 		pt01 = lerp_fixed(pts[0], pts[1], subdiv2)
@@ -466,7 +507,6 @@ SubdivCubicBezier :: proc "contextless" (
 }
 
 // Fixed-point version of linalg.lerp: result = a + t*(b - a). t is typically in [0, 1].
-// Single proc with type_is_array branch: scalar Fixed or [N]Fixed (component-wise with scalar t).
 lerp_fixed :: proc "contextless" (
 	a, b, t: $T,
 ) -> T where intrinsics.type_is_specialization_of(
@@ -482,6 +522,31 @@ lerp_fixed :: proc "contextless" (
 	} else {
 		return fixed.add(a, fixed.mul(t, fixed.sub(b, a)))
 	}
+}
+
+// BCD version of lerp: result = a + t*(b - a).
+lerp_bcd :: proc "contextless" (
+	a, b, t: $T,
+) -> T where intrinsics.type_is_specialization_of(
+		intrinsics.type_elem_type(T),
+		fixed_bcd.BCD,
+	) #no_bounds_check {
+	when intrinsics.type_is_array(T) {
+		res: T
+		#unroll for i in 0 ..< len(T) {
+			res[i] = lerp_bcd(a[i], b[i], t[i])
+		}
+		return res
+	} else {
+		return fixed_bcd.add(a, fixed_bcd.mul(t, fixed_bcd.sub(b, a)))
+	}
+}
+
+@(require_results)
+splat_2_bcd :: #force_inline proc "contextless" (
+	v: $T,
+) -> [2]T where intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
+	return [2]T{v, v}
 }
 
 PointDeltaInLine :: proc "contextless" (
@@ -502,13 +567,20 @@ PointInVector :: proc "contextless" (
 	bool,
 	T,
 ) where intrinsics.type_is_float(T) ||
-	intrinsics.type_is_specialization_of(T, fixed.Fixed) {
+	intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
+	intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
 	when intrinsics.type_is_float(T) {
 		a := v1.y - v0.y
 		b := v0.x - v1.x
 		c := v1.x * v0.y + v0.x * v1.y
 		res := a * p.x + b * p.y + c
 		return res == 0, res
+	} else when intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
+		a := fixed_bcd.sub(v1.y, v0.y)
+		b := fixed_bcd.sub(v0.x, v1.x)
+		c := fixed_bcd.add(fixed_bcd.mul(v1.x, v0.y), fixed_bcd.mul(v0.x, v1.y))
+		res := fixed_bcd.add(fixed_bcd.add(fixed_bcd.mul(a, p.x), fixed_bcd.mul(b, p.y)), c)
+		return res.i == 0, res
 	} else {
 		a := fixed.sub(v1.y, v0.y)
 		b := fixed.sub(v0.x, v1.x)
@@ -523,9 +595,15 @@ PointLineLeftOrRight :: #force_inline proc "contextless" (
 	l0: [2]T,
 	l1: [2]T,
 ) -> T where intrinsics.type_is_float(T) ||
-	intrinsics.type_is_specialization_of(T, fixed.Fixed) {
+	intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
+	intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
 	when intrinsics.type_is_float(T) {
 		return (l1.x - l0.x) * (p.y - l0.y) - (p.x - l0.x) * (l1.y - l0.y)
+	} else when intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
+		return fixed_bcd.sub(
+			fixed_bcd.mul(fixed_bcd.sub(l1.x, l0.x), fixed_bcd.sub(p.y, l0.y)),
+			fixed_bcd.mul(fixed_bcd.sub(p.x, l0.x), fixed_bcd.sub(l1.y, l0.y)),
+		)
 	} else {
 		return fixed.sub(
 			fixed.mul(fixed.sub(l1.x, l0.x), fixed.sub(p.y, l0.y)),
@@ -538,7 +616,8 @@ PointInPolygon :: proc "contextless" (
 	p: [2]$T,
 	polygon: [][2]T,
 ) -> bool where intrinsics.type_is_float(T) ||
-	intrinsics.type_is_specialization_of(T, fixed.Fixed) {
+	intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
+	intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
 	when intrinsics.type_is_float(T) {
 		crossProduct :: proc "contextless" (p1: [2]$T, p2: [2]T, p3: [2]T) -> T {
 			return (p2.x - p1.x) * (p3.y - p1.y) - (p2.y - p1.y) * (p3.x - p1.x)
@@ -561,6 +640,35 @@ PointInPolygon :: proc "contextless" (
 				if p2.y > p.y && crossProduct(p1, p2, p) > 0 do windingNumber += 1
 			} else {
 				if p2.y <= p.y && crossProduct(p1, p2, p) < 0 do windingNumber -= 1
+			}
+		}
+		return windingNumber != 0
+	} else when intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
+		crossProduct :: proc "contextless" (p1: [2]$T, p2: [2]T, p3: [2]T) -> T {
+			return fixed_bcd.sub(
+				fixed_bcd.mul(fixed_bcd.sub(p2.x, p1.x), fixed_bcd.sub(p3.y, p1.y)),
+				fixed_bcd.mul(fixed_bcd.sub(p2.y, p1.y), fixed_bcd.sub(p3.x, p1.x)),
+			)
+		}
+		isPointOnSegment :: proc "contextless" (p: [2]$T, p1: [2]T, p2: [2]T) -> bool {
+			cp := crossProduct(p1, p2, p)
+			return(
+				cp.i == 0 &&
+				p.x.i >= min_fixed(p1.x, p2.x).i &&
+				p.x.i <= max_fixed(p1.x, p2.x).i &&
+				p.y.i >= min_fixed(p1.y, p2.y).i &&
+				p.y.i <= max_fixed(p1.y, p2.y).i \
+			)
+		}
+		windingNumber := 0
+		for i in 0 ..< len(polygon) {
+			p1 := polygon[i]
+			p2 := polygon[(i + 1) % len(polygon)]
+			if isPointOnSegment(p, p1, p2) do return false
+			if p1.y.i <= p.y.i {
+				if p2.y.i > p.y.i && crossProduct(p1, p2, p).i > 0 do windingNumber += 1
+			} else {
+				if p2.y.i <= p.y.i && crossProduct(p1, p2, p).i < 0 do windingNumber -= 1
 			}
 		}
 		return windingNumber != 0
@@ -602,10 +710,17 @@ vector_cross2_fixed :: #force_inline proc "contextless" (
 	return fixed.sub(fixed.mul(a.x, b.y), fixed.mul(a.y, b.x))
 }
 
+vector_cross2_bcd :: #force_inline proc "contextless" (
+	a, b: [2]$E,
+) -> E where intrinsics.type_is_specialization_of(E, fixed_bcd.BCD) {
+	return fixed_bcd.sub(fixed_bcd.mul(a.x, b.y), fixed_bcd.mul(a.y, b.x))
+}
+
 CenterPointInPolygon :: proc "contextless" (
 	polygon: [][2]$T,
 ) -> [2]T where intrinsics.type_is_float(T) ||
-	intrinsics.type_is_specialization_of(T, fixed.Fixed) {
+	intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
+	intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
 	when intrinsics.type_is_float(T) {
 		area: f32 = 0
 		p: [2]T = {0, 0}
@@ -617,6 +732,25 @@ CenterPointInPolygon :: proc "contextless" (
 		}
 		area = area / 2 * 6
 		p /= math.splat_2(area)
+		return p
+	} else when intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
+		area: T = {}
+		p: [2]T = {}
+		three := fixed_bcd.init(3, 0, type_of(T).FRAC_DIGITS)
+		for i in 0 ..< len(polygon) {
+			j := (i + 1) % len(polygon)
+			factor := vector_cross2_bcd(polygon[i], polygon[j])
+			area = fixed_bcd.add(area, factor)
+			sum_pt := [2]T {
+				fixed_bcd.add(polygon[i].x, polygon[j].x),
+				fixed_bcd.add(polygon[i].y, polygon[j].y),
+			}
+			p.x = fixed_bcd.add(p.x, fixed_bcd.mul(sum_pt.x, factor))
+			p.y = fixed_bcd.add(p.y, fixed_bcd.mul(sum_pt.y, factor))
+		}
+		area = fixed_bcd.mul(area, three)
+		p.x = fixed_bcd.div(p.x, area)
+		p.y = fixed_bcd.div(p.y, area)
 		return p
 	} else {
 		F :: intrinsics.type_polymorphic_record_parameter_value(T, 1)
@@ -643,7 +777,8 @@ CenterPointInPolygon :: proc "contextless" (
 GetPolygonOrientation :: proc "contextless" (
 	polygon: [][2]$T,
 ) -> PolyOrientation where intrinsics.type_is_float(T) ||
-	intrinsics.type_is_specialization_of(T, fixed.Fixed) {
+	intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
+	intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
 	when intrinsics.type_is_float(T) {
 		res: T = 0
 		for i in 0 ..< len(polygon) {
@@ -753,19 +888,35 @@ LinesIntersect3 :: proc "contextless" (
 	b1: [2]T,
 	b2: [2]T,
 ) -> IntersectKind where intrinsics.type_is_float(T) ||
-	intrinsics.type_is_specialization_of(T, fixed.Fixed) {
+	intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
+	intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
 	when intrinsics.type_is_float(T) {
-		//if a1 == b1 || a2 == b1 || a1 == b2 || a2 == b2 do return .none
 		den: T = (b2.y - b1.y) * (a2.x - a1.x) - (b2.x - b1.x) * (a2.y - a1.y)
 		if den == 0.0 {
-			return .collinear, {}
+			return .collinear
 		}
-
-		ua := ((b2.x - b1.x) * (a1.y - b1.y) - (b2.y - b1.y) * (a1.x - b1.x)) //den으로 나눌 필요 없다.
+		ua := ((b2.x - b1.x) * (a1.y - b1.y) - (b2.y - b1.y) * (a1.x - b1.x))
 		ub := ((a2.x - a1.x) * (a1.y - b1.y) - (a2.y - a1.y) * (a1.x - b1.x))
-
 		res_den :=
 			den > 0.0 ? (ua >= 0.0 && ub >= 0.0 && ua <= den && ub <= den) : (ua >= den && ub >= den && ua <= 0.0 && ub <= 0.0)
+		return res_den ? .intersect : .none
+	} else when intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
+		if (a1.x.i == b1.x.i && a1.y.i == b1.y.i) || (a2.x.i == b1.x.i && a2.y.i == b1.y.i) || (a1.x.i == b2.x.i && a1.y.i == b2.y.i) || (a2.x.i == b2.x.i && a2.y.i == b2.y.i) do return .none
+		den: T = fixed_bcd.sub(
+			fixed_bcd.mul(fixed_bcd.sub(b2.y, b1.y), fixed_bcd.sub(a2.x, a1.x)),
+			fixed_bcd.mul(fixed_bcd.sub(b2.x, b1.x), fixed_bcd.sub(a2.y, a1.y)),
+		)
+		if den.i == 0 do return .collinear
+		ua := fixed_bcd.sub(
+			fixed_bcd.mul(fixed_bcd.sub(b2.x, b1.x), fixed_bcd.sub(a1.y, b1.y)),
+			fixed_bcd.mul(fixed_bcd.sub(b2.y, b1.y), fixed_bcd.sub(a1.x, b1.x)),
+		)
+		ub := fixed_bcd.sub(
+			fixed_bcd.mul(fixed_bcd.sub(a2.x, a1.x), fixed_bcd.sub(a1.y, b1.y)),
+			fixed_bcd.mul(fixed_bcd.sub(a2.y, a1.y), fixed_bcd.sub(a1.x, b1.x)),
+		)
+		res_den :=
+			den.i > 0 ? (ua.i >= 0 && ub.i >= 0 && ua.i <= den.i && ub.i <= den.i) : (ua.i >= den.i && ub.i >= den.i && ua.i <= 0 && ub.i <= 0)
 		return res_den ? .intersect : .none
 	} else {
 		if fixed_ex.equal(a1, b1) || fixed_ex.equal(a2, b1) || fixed_ex.equal(a1, b2) || fixed_ex.array_equal(a2, b2) do return .none
@@ -773,24 +924,18 @@ LinesIntersect3 :: proc "contextless" (
 			fixed.mul(fixed.sub(b2.y, b1.y), fixed.sub(a2.x, a1.x)),
 			fixed.mul(fixed.sub(b2.x, b1.x), fixed.sub(a2.y, a1.y)),
 		)
-		if den.i == 0 {
-			return .collinear
-		}
-
+		if den.i == 0 do return .collinear
 		ua := fixed.sub(
 			fixed.mul(fixed.sub(b2.x, b1.x), fixed.sub(a1.y, b1.y)),
 			fixed.mul(fixed.sub(b2.y, b1.y), fixed.sub(a1.x, b1.x)),
-		) //den으로 나눌 필요 없다.
-
+		)
 		ub := fixed.sub(
 			fixed.mul(fixed.sub(a2.x, a1.x), fixed.sub(a1.y, b1.y)),
 			fixed.mul(fixed.sub(a2.y, a1.y), fixed.sub(a1.x, b1.x)),
 		)
-
 		res_den :=
 			den.i > 0 ? (ua.i >= 0 && ub.i >= 0 && ua.i <= den.i && ub.i <= den.i) : (ua.i >= den.i && ub.i >= den.i && ua.i <= 0 && ub.i <= 0)
 		return res_den ? .intersect : .none
-
 	}
 }
 
@@ -890,21 +1035,18 @@ ShortestLength2Line :: proc "contextless" (
 	T,
 	T,
 ) where intrinsics.type_is_float(T) ||
-	intrinsics.type_is_specialization_of(T, fixed.Fixed) {
+	intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
+	intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
 	when intrinsics.type_is_float(T) {
 		dx := l2.x - l1.x
 		dy := l2.y - l1.y
-
 		ax := pt.x - l1.x
 		ay := pt.y - l1.y
-
-		// q = (ax * dx + ay * dy) / (dx * dx + dy * dy)
 		qNum := ax * dx + ay * dy
 		denom := dx * dx + dy * dy
-
-		if qNum < 0 { 	// pt is closest to l1
+		if qNum < 0 {
 			return ax * ax + ay * ay, 1.0
-		} else if qNum > denom { 	// pt is closest to l2
+		} else if qNum > denom {
 			bx := pt.x - l2.x
 			by := pt.y - l2.y
 			return bx * bx + by * by, 1.0
@@ -912,21 +1054,35 @@ ShortestLength2Line :: proc "contextless" (
 			cross := ax * dy - dx * ay
 			return cross * cross, denom
 		}
+	} else when intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
+		dx := fixed_bcd.sub(l2.x, l1.x)
+		dy := fixed_bcd.sub(l2.y, l1.y)
+		ax := fixed_bcd.sub(pt.x, l1.x)
+		ay := fixed_bcd.sub(pt.y, l1.y)
+		qNum := fixed_bcd.add(fixed_bcd.mul(ax, dx), fixed_bcd.mul(ay, dy))
+		denom := fixed_bcd.add(fixed_bcd.mul(dx, dx), fixed_bcd.mul(dy, dy))
+		one_T := fixed_bcd.init(1, 0, intrinsics.type_polymorphic_record_parameter_value(T, 0))
+		if qNum.i < 0 {
+			return fixed_bcd.add(fixed_bcd.mul(ax, ax), fixed_bcd.mul(ay, ay)), one_T
+		} else if qNum.i > denom.i {
+			bx := fixed_bcd.sub(pt.x, l2.x)
+			by := fixed_bcd.sub(pt.y, l2.y)
+			return fixed_bcd.add(fixed_bcd.mul(bx, bx), fixed_bcd.mul(by, by)), one_T
+		} else {
+			cross := fixed_bcd.sub(fixed_bcd.mul(ax, dy), fixed_bcd.mul(dx, ay))
+			return fixed_bcd.mul(cross, cross), denom
+		}
 	} else {
 		dx := fixed.sub(l2.x, l1.x)
 		dy := fixed.sub(l2.y, l1.y)
-
 		ax := fixed.sub(pt.x, l1.x)
 		ay := fixed.sub(pt.y, l1.y)
-
-		// q = (ax * dx + ay * dy) / (dx * dx + dy * dy)
 		qNum := fixed.add(fixed.mul(ax, dx), fixed.mul(ay, dy))
 		denom := fixed.add(fixed.mul(dx, dx), fixed.mul(dy, dy))
-
 		F :: intrinsics.type_polymorphic_record_parameter_value(T, 1)
-		if qNum.i < 0 { 	// pt is closest to l1
+		if qNum.i < 0 {
 			return fixed.add(fixed.mul(ax, ax), fixed.mul(ay, ay)), T{i = 1 << F}
-		} else if qNum.i > denom.i { 	// pt is closest to l2
+		} else if qNum.i > denom.i {
 			bx := fixed.sub(pt.x, l2.x)
 			by := fixed.sub(pt.y, l2.y)
 			return fixed.add(fixed.mul(bx, bx), fixed.mul(by, by)), T{i = 1 << F}
@@ -1227,7 +1383,8 @@ poly_transform_matrix :: proc "contextless" (inout_poly: ^shapes, F: linalg.Matr
 CrossProductSign :: proc "contextless" (
 	p1, p2, p3: [2]$T,
 ) -> int where intrinsics.type_is_float(T) ||
-	intrinsics.type_is_specialization_of(T, fixed.Fixed) {
+	intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
+	intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
 	when intrinsics.type_is_float(T) {
 		a := p2.x - p1.x
 		b := p3.y - p2.y
@@ -1237,6 +1394,15 @@ CrossProductSign :: proc "contextless" (
 		cd := c * d
 		if ab > cd do return 1
 		if ab < cd do return -1
+	} else when intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
+		a := fixed_bcd.sub(p2.x, p1.x)
+		b := fixed_bcd.sub(p3.y, p2.y)
+		c := fixed_bcd.sub(p2.y, p1.y)
+		d := fixed_bcd.sub(p3.x, p2.x)
+		ab := fixed_bcd.mul(a, b)
+		cd := fixed_bcd.mul(c, d)
+		if ab.i > cd.i do return 1
+		if ab.i < cd.i do return -1
 	} else {
 		a := fixed.sub(p2.x, p1.x)
 		b := fixed.sub(p3.y, p2.y)
@@ -1251,11 +1417,11 @@ CrossProductSign :: proc "contextless" (
 }
 
 // InCircleTest: returns determinant. Positive => D inside circle through A,B,C (when ABC is CCW).
-// Used for Delaunay legality.
 InCircleTest :: proc "contextless" (
 	ptA, ptB, ptC, ptD: [2]$T,
 ) -> T where intrinsics.type_is_float(T) ||
-	intrinsics.type_is_specialization_of(T, fixed.Fixed) {
+	intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
+	intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
 	when intrinsics.type_is_specialization_of(T, fixed.Fixed) {
 		m00 := fixed.sub(ptA.x, ptD.x)
 		m01 := fixed.sub(ptA.y, ptD.y)
@@ -1272,6 +1438,29 @@ InCircleTest :: proc "contextless" (
 				fixed.mul(m20, fixed.sub(fixed.mul(m01, m12), fixed.mul(m11, m02))),
 			),
 			fixed.mul(m10, fixed.sub(fixed.mul(m01, m22), fixed.mul(m21, m02))),
+		)
+	} else when intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
+		m00 := fixed_bcd.sub(ptA.x, ptD.x)
+		m01 := fixed_bcd.sub(ptA.y, ptD.y)
+		m02 := fixed_bcd.add(fixed_bcd.mul(m00, m00), fixed_bcd.mul(m01, m01))
+		m10 := fixed_bcd.sub(ptB.x, ptD.x)
+		m11 := fixed_bcd.sub(ptB.y, ptD.y)
+		m12 := fixed_bcd.add(fixed_bcd.mul(m10, m10), fixed_bcd.mul(m11, m11))
+		m20 := fixed_bcd.sub(ptC.x, ptD.x)
+		m21 := fixed_bcd.sub(ptC.y, ptD.y)
+		m22 := fixed_bcd.add(fixed_bcd.mul(m20, m20), fixed_bcd.mul(m21, m21))
+		return fixed_bcd.sub(
+			fixed_bcd.add(
+				fixed_bcd.mul(
+					m00,
+					fixed_bcd.sub(fixed_bcd.mul(m11, m22), fixed_bcd.mul(m21, m12)),
+				),
+				fixed_bcd.mul(
+					m20,
+					fixed_bcd.sub(fixed_bcd.mul(m01, m12), fixed_bcd.mul(m11, m02)),
+				),
+			),
+			fixed_bcd.mul(m10, fixed_bcd.sub(fixed_bcd.mul(m01, m22), fixed_bcd.mul(m21, m02))),
 		)
 	} else {
 		m00 := ptA.x - ptD.x

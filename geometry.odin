@@ -8,45 +8,50 @@ import "core:math/linalg"
 import "core:mem"
 
 import "core:math/fixed"
+import "shared:utils_private/fixed_bcd"
 import "shared:utils_private/fixed_ex"
 
 import "shared:utils_private"
 
+DEF_FRAC_DIGITS :: 13
 
-//Cover MAX 741455 * 741455
-FIXED_SHIFT :: 24
-FixedDef :: fixed.Fixed(i64, FIXED_SHIFT)
 @(private)
-Fixed1 :: fixed.Fixed(i64, FIXED_SHIFT) {
-	i = 1 << FIXED_SHIFT,
-}
-@(private)
-Fixed2 :: fixed.Fixed(i64, FIXED_SHIFT) {
-	i = 2 << FIXED_SHIFT,
-}
-@(private)
-Fixed3 :: fixed.Fixed(i64, FIXED_SHIFT) {
-	i = 3 << FIXED_SHIFT,
-}
-@(private)
-Div2Fixed :: fixed.Fixed(i64, FIXED_SHIFT) {
-	i = (1 << FIXED_SHIFT) / 2,
-}
-@(private)
-Div3Fixed :: fixed.Fixed(i64, FIXED_SHIFT) {
-	i = (1 << FIXED_SHIFT) / 3,
-}
-@(private)
-Div3Mul2Fixed :: fixed.Fixed(i64, FIXED_SHIFT) {
-	i = (2 << FIXED_SHIFT) / 3,
+_length2_bcd :: proc "contextless" (
+	a, b: [2]fixed_bcd.BCD($FRAC_DIGITS),
+) -> fixed_bcd.BCD(FRAC_DIGITS) {
+	dx := fixed_bcd.sub(b.x, a.x)
+	dy := fixed_bcd.sub(b.y, a.y)
+	return fixed_bcd.add(fixed_bcd.mul(dx, dx), fixed_bcd.mul(dy, dy))
 }
 
-//use gpu shader std140 layout
-shape_vertex2di64 :: struct {
-	pos:   [2]FixedDef,
+@(private)
+_point_in_triangle_bcd :: proc "contextless" (p, a, b, c: [2]fixed_bcd.BCD($FRAC_DIGITS)) -> bool {
+	x0 := fixed_bcd.sub(c.x, a.x)
+	y0 := fixed_bcd.sub(c.y, a.y)
+	x1 := fixed_bcd.sub(b.x, a.x)
+	y1 := fixed_bcd.sub(b.y, a.y)
+	x2 := fixed_bcd.sub(p.x, a.x)
+	y2 := fixed_bcd.sub(p.y, a.y)
+	dot00 := fixed_bcd.add(fixed_bcd.mul(x0, x0), fixed_bcd.mul(y0, y0))
+	dot01 := fixed_bcd.add(fixed_bcd.mul(x0, x1), fixed_bcd.mul(y0, y1))
+	dot02 := fixed_bcd.add(fixed_bcd.mul(x0, x2), fixed_bcd.mul(y0, y2))
+	dot11 := fixed_bcd.add(fixed_bcd.mul(x1, x1), fixed_bcd.mul(y1, y1))
+	dot12 := fixed_bcd.add(fixed_bcd.mul(x1, x2), fixed_bcd.mul(y1, y2))
+	denominator := fixed_bcd.sub(fixed_bcd.mul(dot00, dot11), fixed_bcd.mul(dot01, dot01))
+	if denominator.i == 0 do return false
+	u := fixed_bcd.sub(fixed_bcd.mul(dot11, dot02), fixed_bcd.mul(dot01, dot12))
+	v := fixed_bcd.sub(fixed_bcd.mul(dot00, dot12), fixed_bcd.mul(dot01, dot02))
+	if denominator.i > 0 do return u.i > 0 && v.i > 0 && (u.i + v.i) < denominator.i
+	return u.i < 0 && v.i < 0 && (u.i + v.i) > denominator.i
+}
+
+@(private)
+shape_vertex2d_fixed :: struct($FRAC_DIGITS: int) {
+	pos:   [2]fixed_bcd.BCD(FRAC_DIGITS),
 	uvw:   linalg.Vector3f32,
 	color: linalg.Vector4f32,
 }
+
 //use gpu shader std140 layout
 shape_vertex2d :: struct {
 	pos:   linalg.Vector2f32,
@@ -59,8 +64,8 @@ raw_shape :: struct {
 	indices:  []u32,
 }
 
-raw_shapei64 :: struct {
-	vertices: []shape_vertex2di64,
+raw_shape_fixed :: struct($FIXED_DIGITS: int) {
+	vertices: []shape_vertex2d_fixed(FIXED_DIGITS),
 	indices:  []u32,
 }
 
@@ -113,17 +118,18 @@ shapes :: struct {
 	nodes: []shape_node,
 }
 
-shape_nodei64 :: struct {
-	pts:           [][][2]FixedDef,
+@(private)
+shape_node_fixed :: struct($FIXED_DIGITS: int) {
+	pts:           [][][2]fixed_bcd.BCD(FIXED_DIGITS),
 	curve_pts_ids: [][]u32,
 	color:         linalg.Vector4f32,
 	stroke_color:  linalg.Vector4f32,
-	thickness:     FixedDef,
+	thickness:     fixed_bcd.BCD(FIXED_DIGITS),
 	is_closed:     bool,
 }
 
-shapesi64 :: struct {
-	nodes: []shape_nodei64,
+shapes_fixed :: struct($FIXED_DIGITS: int) {
+	nodes: []shape_node_fixed(FIXED_DIGITS),
 }
 
 raw_shape_free :: proc(self: raw_shape, allocator := context.allocator) {
@@ -131,20 +137,23 @@ raw_shape_free :: proc(self: raw_shape, allocator := context.allocator) {
 	delete(self.indices, allocator)
 }
 
-raw_shapei64_free :: proc(self: raw_shapei64, allocator := context.allocator) {
+raw_shape_fixed_free :: proc(
+	self: raw_shape_fixed($FIXED_DIGITS),
+	allocator := context.allocator,
+) {
 	delete(self.vertices, allocator)
 	delete(self.indices, allocator)
 }
 
 raw_shapei64_clone :: proc(
-	self: raw_shapei64,
+	self: raw_shape_fixed($FIXED_DIGITS),
 	allocator := context.allocator,
 ) -> (
-	res: raw_shapei64,
+	res: raw_shape_fixed(FIXED_DIGITS),
 	err: runtime.Allocator_Error,
 ) #optional_allocator_error {
 	res.vertices = utils_private.make_non_zeroed_slice(
-		[]shape_vertex2di64,
+		[]shape_vertex2d_fixed(FIXED_DIGITS),
 		len(self.vertices),
 		allocator,
 	) or_return
@@ -159,7 +168,7 @@ raw_shapei64_clone :: proc(
 	intrinsics.mem_copy_non_overlapping(
 		&res.vertices[0],
 		&self.vertices[0],
-		len(self.vertices) * size_of(shape_vertex2di64),
+		len(self.vertices) * size_of(shape_vertex2d_fixed(FIXED_DIGITS)),
 	)
 	intrinsics.mem_copy_non_overlapping(
 		&res.indices[0],
@@ -220,34 +229,40 @@ GetCubicCurveType :: proc "contextless" (
 	d2: T,
 	err: shape_error = nil,
 ) where intrinsics.type_is_float(T) ||
-	intrinsics.type_is_specialization_of(T, fixed.Fixed) {
+	intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
 	if start == control0 && control0 == control1 && control1 == end {
 		err = .IsPointNotLine
 		return
 	}
 
-	when intrinsics.type_is_specialization_of(T, fixed.Fixed) {
-		using fixed
+	when intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
 		cross_1 := [3]T {
-			sub(end.y, control1.y),
-			sub(control1.x, end.x),
-			sub(mul(end.x, control1.y), mul(end.y, control1.x)),
+			fixed_bcd.sub(end.y, control1.y),
+			fixed_bcd.sub(control1.x, end.x),
+			fixed_bcd.sub(fixed_bcd.mul(end.x, control1.y), fixed_bcd.mul(end.y, control1.x)),
 		}
 		cross_2 := [3]T {
-			sub(start.y, end.y),
-			sub(end.x, start.x),
-			sub(mul(start.x, end.y), mul(start.y, end.x)),
+			fixed_bcd.sub(start.y, end.y),
+			fixed_bcd.sub(end.x, start.x),
+			fixed_bcd.sub(fixed_bcd.mul(start.x, end.y), fixed_bcd.mul(start.y, end.x)),
 		}
 		cross_3 := [3]T {
-			sub(control0.y, start.y),
-			sub(start.x, control0.x),
-			sub(mul(control0.x, start.y), mul(control0.y, start.x)),
+			fixed_bcd.sub(control0.y, start.y),
+			fixed_bcd.sub(start.x, control0.x),
+			fixed_bcd.sub(fixed_bcd.mul(control0.x, start.y), fixed_bcd.mul(control0.y, start.x)),
 		}
-
-		a1 := add(add(mul(start.x, cross_1.x), mul(start.y, cross_1.y)), cross_1.z)
-		a2 := add(add(mul(control0.x, cross_2.x), mul(control0.y, cross_2.y)), cross_2.z)
-		a3 := add(add(mul(control1.x, cross_3.x), mul(control1.y, cross_3.y)), cross_3.z)
-
+		a1 := fixed_bcd.add(
+			fixed_bcd.add(fixed_bcd.mul(start.x, cross_1.x), fixed_bcd.mul(start.y, cross_1.y)),
+			cross_1.z,
+		)
+		a2 := fixed_bcd.add(
+			fixed_bcd.mul(control0.x, cross_2.x),
+			fixed_bcd.add(fixed_bcd.mul(control0.y, cross_2.y), cross_2.z),
+		)
+		a3 := fixed_bcd.add(
+			fixed_bcd.mul(control1.x, cross_3.x),
+			fixed_bcd.add(fixed_bcd.mul(control1.y, cross_3.y), cross_3.z),
+		)
 		d0 = T {
 			i = a1.i - 2 * a2.i + 3 * a3.i,
 		}
@@ -257,29 +272,21 @@ GetCubicCurveType :: proc "contextless" (
 		d2 = T {
 			i = 3 * a3.i,
 		}
-
 		D := T {
-			i = 3 * mul(d1, d1).i - 4 * mul(d2, d0).i,
+			i = 3 * fixed_bcd.mul(d1, d1).i - 4 * fixed_bcd.mul(d2, d0).i,
 		}
-		discr := mul(mul(d0, d0), D)
-
+		discr := fixed_bcd.mul(fixed_bcd.mul(d0, d0), D)
 		if discr.i == 0 {
 			if d0.i == 0 && d1.i == 0 {
-				if d2.i == 0 {
-					type = .Line
-					return
-				}
-				type = .Quadratic
+				if d2.i == 0 do type = .Line
+				else do type = .Quadratic
 				return
 			}
 			type = .Cusp
 			return
 		}
-		if discr.i > 0 {
-			type = .Serpentine
-			return
-		}
-		type = .Loop
+		if discr.i > 0 do type = .Serpentine
+		else do type = .Loop
 		return
 	} else { 	// float
 		cross_1 := [3]T {
@@ -330,51 +337,72 @@ GetCubicCurveType :: proc "contextless" (
 
 @(private = "file")
 _Shapes_ComputeLine :: proc(
-	vertList: ^[dynamic]shape_vertex2di64,
+	vertList: ^[dynamic]shape_vertex2d_fixed($FRAC_DIGITS),
 	indList: ^[dynamic]u32,
 	color: linalg.Vector4f32,
-	pts: CURVE_STRUCT,
+	pts: curve_struct_fixed(FRAC_DIGITS),
 ) -> shape_error {
-
-	using fixed
-
 	curveType := pts.type
 	err: shape_error = nil
 	//loop_reverse := false
 	//if curveType == .LoopReverse do loop_reverse = true
 
 	reverse := false
-	d0, d1, d2: FixedDef
+	d0, d1, d2: fixed_bcd.BCD(FRAC_DIGITS)
 	if curveType != .Line && curveType != .Quadratic {
 		curveType, d0, d1, d2 = GetCubicCurveType(pts.start, pts.ctl0, pts.ctl1, pts.end) or_return
 	} else if curveType == .Quadratic {
 		vlen: u32 = u32(len(vertList))
-		if GetPolygonOrientation([][2]FixedDef{pts.start, pts.ctl0, pts.end}) ==
+		if GetPolygonOrientation([][2]fixed_bcd.BCD(FRAC_DIGITS){pts.start, pts.ctl0, pts.end}) ==
 		   .CounterClockwise {
 			non_zero_append(
 				vertList,
-				shape_vertex2di64{uvw = {0.0, 0.0, -5.0}, pos = pts.start, color = color}, //-5 check this is not cubic curve
+				shape_vertex2d_fixed(FRAC_DIGITS) {
+					uvw = {0.0, 0.0, -5.0},
+					pos = pts.start,
+					color = color,
+				}, //-5 check this is not cubic curve
 			)
 			non_zero_append(
 				vertList,
-				shape_vertex2di64{uvw = {-0.5, 0.0, -5.0}, pos = pts.ctl0, color = color},
+				shape_vertex2d_fixed(FRAC_DIGITS) {
+					uvw = {-0.5, 0.0, -5.0},
+					pos = pts.ctl0,
+					color = color,
+				},
 			)
 			non_zero_append(
 				vertList,
-				shape_vertex2di64{uvw = {-1.0, -1.0, -5.0}, pos = pts.end, color = color},
+				shape_vertex2d_fixed(FRAC_DIGITS) {
+					uvw = {-1.0, -1.0, -5.0},
+					pos = pts.end,
+					color = color,
+				},
 			)
 		} else {
 			non_zero_append(
 				vertList,
-				shape_vertex2di64{uvw = {0.0, 0.0, -5.0}, pos = pts.start, color = color},
+				shape_vertex2d_fixed(FRAC_DIGITS) {
+					uvw = {0.0, 0.0, -5.0},
+					pos = pts.start,
+					color = color,
+				},
 			)
 			non_zero_append(
 				vertList,
-				shape_vertex2di64{uvw = {0.5, 0.0, -5.0}, pos = pts.ctl0, color = color},
+				shape_vertex2d_fixed(FRAC_DIGITS) {
+					uvw = {0.5, 0.0, -5.0},
+					pos = pts.ctl0,
+					color = color,
+				},
 			)
 			non_zero_append(
 				vertList,
-				shape_vertex2di64{uvw = {1.0, 1.0, -5.0}, pos = pts.end, color = color},
+				shape_vertex2d_fixed(FRAC_DIGITS) {
+					uvw = {1.0, 1.0, -5.0},
+					pos = pts.end,
+					color = color,
+				},
 			)
 		}
 		non_zero_append(indList, vlen, vlen + 1, vlen + 2)
@@ -393,9 +421,9 @@ _Shapes_ComputeLine :: proc(
 
 	#partial switch curveType {
 	case .Serpentine:
-		d0f: f32 = f32(fixed.to_f64(d0))
-		d1f: f32 = f32(fixed.to_f64(d1))
-		d2f: f32 = f32(fixed.to_f64(d2))
+		d0f: f32 = f32(fixed_bcd.to_f64(d0))
+		d1f: f32 = f32(fixed_bcd.to_f64(d1))
+		d2f: f32 = f32(fixed_bcd.to_f64(d2))
 		t1 := math.sqrt(9 * d1f * d1f - 12 * d0f * d2f)
 		ls := 3 * d1f - t1
 		lt := 6 * d0f
@@ -426,9 +454,9 @@ _Shapes_ComputeLine :: proc(
 
 		if d0.i < 0 do reverse = true
 	case .Loop:
-		d0f: f32 = f32(fixed.to_f64(d0))
-		d1f: f32 = f32(fixed.to_f64(d1))
-		d2f: f32 = f32(fixed.to_f64(d2))
+		d0f: f32 = f32(fixed_bcd.to_f64(d0))
+		d1f: f32 = f32(fixed_bcd.to_f64(d1))
+		d2f: f32 = f32(fixed_bcd.to_f64(d2))
 
 		t1 := math.sqrt_f32(4 * d0f * d2f - 3 * d1f * d1f)
 		ls := d1f - t1
@@ -463,8 +491,8 @@ _Shapes_ComputeLine :: proc(
 
 		reverse = (d0.i > 0 && F[1][0] < 0.0) || (d0.i < 0 && F[1][0] > 0.0) //? F[1][0]이 오차가생길수 있지만 일단 이렇게
 	case .Cusp:
-		d1f: f32 = f32(fixed.to_f64(d1))
-		d2f: f32 = f32(fixed.to_f64(d2))
+		d1f: f32 = f32(fixed_bcd.to_f64(d1))
+		d2f: f32 = f32(fixed_bcd.to_f64(d2))
 		ls := d2f
 		lt := 3.0 * d1f
 		lsMinusLt := ls - lt
@@ -495,28 +523,28 @@ _Shapes_ComputeLine :: proc(
 	}
 
 	appendLine :: proc(
-		vertList: ^[dynamic]shape_vertex2di64,
+		vertList: ^[dynamic]shape_vertex2d_fixed($FRAC_DIGITS),
 		indList: ^[dynamic]u32,
 		color: linalg.Vector4f32,
-		pts: CURVE_STRUCT,
+		pts: curve_struct_fixed(FRAC_DIGITS),
 		F: [4][3]f32,
 	) {
 		start: u32 = u32(len(vertList))
 		non_zero_append(
 			vertList,
-			shape_vertex2di64{uvw = {F[0][0], F[0][1], F[0][2]}, color = color},
+			shape_vertex2d_fixed(FRAC_DIGITS){uvw = {F[0][0], F[0][1], F[0][2]}, color = color},
 		)
 		non_zero_append(
 			vertList,
-			shape_vertex2di64{uvw = {F[1][0], F[1][1], F[1][2]}, color = color},
+			shape_vertex2d_fixed(FRAC_DIGITS){uvw = {F[1][0], F[1][1], F[1][2]}, color = color},
 		)
 		non_zero_append(
 			vertList,
-			shape_vertex2di64{uvw = {F[2][0], F[2][1], F[2][2]}, color = color},
+			shape_vertex2d_fixed(FRAC_DIGITS){uvw = {F[2][0], F[2][1], F[2][2]}, color = color},
 		)
 		non_zero_append(
 			vertList,
-			shape_vertex2di64{uvw = {F[3][0], F[3][1], F[3][2]}, color = color},
+			shape_vertex2d_fixed(FRAC_DIGITS){uvw = {F[3][0], F[3][1], F[3][2]}, color = color},
 		)
 		vertList[start].pos = pts.start
 		vertList[start + 1].pos = pts.ctl0
@@ -548,7 +576,7 @@ _Shapes_ComputeLine :: proc(
 					idx += 1
 				}
 			}
-			if PointInTriangle(
+			if _point_in_triangle_bcd(
 				vertList[start + i].pos,
 				vertList[indices[0]].pos,
 				vertList[indices[1]].pos,
@@ -570,8 +598,8 @@ _Shapes_ComputeLine :: proc(
 			vertList[start + 3].pos,
 		)
 		if b == .intersect {
-			if fixed_ex.length2(fixed_ex.sub2(vertList[start + 2].pos, vertList[start].pos)).i <
-			   fixed_ex.length2(fixed_ex.sub2(vertList[start + 3].pos, vertList[start + 1].pos)).i {
+			if _length2_bcd(vertList[start + 2].pos, vertList[start].pos).i <
+			   _length2_bcd(vertList[start + 3].pos, vertList[start + 1].pos).i {
 				non_zero_append(indList, start, start + 1, start + 2, start, start + 2, start + 3)
 			} else {
 				non_zero_append(
@@ -593,8 +621,8 @@ _Shapes_ComputeLine :: proc(
 			vertList[start + 2].pos,
 		)
 		if b == .intersect {
-			if fixed_ex.length2(fixed_ex.sub2(vertList[start + 3].pos, vertList[start].pos)).i <
-			   fixed_ex.length2(fixed_ex.sub2(vertList[start + 2].pos, vertList[start + 1].pos)).i {
+			if _length2_bcd(vertList[start + 3].pos, vertList[start].pos).i <
+			   _length2_bcd(vertList[start + 2].pos, vertList[start + 1].pos).i {
 				non_zero_append(indList, start, start + 1, start + 3, start, start + 3, start + 2)
 			} else {
 				non_zero_append(
@@ -609,8 +637,8 @@ _Shapes_ComputeLine :: proc(
 			}
 			return
 		}
-		if fixed_ex.length2(fixed_ex.sub2(vertList[start + 1].pos, vertList[start].pos)).i <
-		   fixed_ex.length2(fixed_ex.sub2(vertList[start + 3].pos, vertList[start + 2].pos)).i {
+		if _length2_bcd(vertList[start + 1].pos, vertList[start].pos).i <
+		   _length2_bcd(vertList[start + 3].pos, vertList[start + 2].pos).i {
 			non_zero_append(indList, start, start + 2, start + 1, start, start + 1, start + 3)
 		} else {
 			non_zero_append(indList, start, start + 2, start + 3, start + 3, start + 2, start + 1)
@@ -623,7 +651,7 @@ _Shapes_ComputeLine :: proc(
 
 @(require_results)
 cvt_raw_shapei64_to_raw_shape :: proc(
-	raw64: raw_shapei64,
+	raw64: raw_shape_fixed($FRAC_DIGITS),
 	allocator := context.allocator,
 ) -> (
 	res: raw_shape,
@@ -643,8 +671,8 @@ cvt_raw_shapei64_to_raw_shape :: proc(
 	defer if err != nil do delete(res.indices, allocator)
 
 	for v, i in raw64.vertices {
-		res.vertices[i].pos.x = f32(fixed.to_f64(v.pos.x))
-		res.vertices[i].pos.y = f32(fixed.to_f64(v.pos.y))
+		res.vertices[i].pos.x = f32(fixed_bcd.to_f64(v.pos.x))
+		res.vertices[i].pos.y = f32(fixed_bcd.to_f64(v.pos.y))
 
 		res.vertices[i].color = v.color
 		res.vertices[i].uvw = v.uvw
@@ -659,11 +687,12 @@ cvt_raw_shapei64_to_raw_shape :: proc(
 }
 
 @(require_results)
-cvt_raw_shape_to_raw_shapei64 :: proc(
+cvt_raw_shape_to_raw_shape_fixed :: proc(
 	raw: raw_shape,
+	$FRAC_DIGITS: int,
 	allocator := context.allocator,
 ) -> (
-	res: raw_shapei64,
+	res: raw_shape_fixed(FRAC_DIGITS),
 	err: runtime.Allocator_Error,
 ) #optional_allocator_error {
 	res.vertices = utils_private.make_non_zeroed_slice(
@@ -676,8 +705,8 @@ cvt_raw_shape_to_raw_shapei64 :: proc(
 	defer if err != nil do delete(res.indices, allocator)
 
 	for v, i in raw.vertices {
-		fixed.init_from_f64(&res.vertices[i].pos.x, f64(v.pos.x))
-		fixed.init_from_f64(&res.vertices[i].pos.y, f64(v.pos.y))
+		res.vertices[i].pos.x = fixed_bcd.from_f64(FRAC_DIGITS, f64(v.pos.x))
+		res.vertices[i].pos.y = fixed_bcd.from_f64(FRAC_DIGITS, f64(v.pos.y))
 
 		res.vertices[i].color = v.color
 		res.vertices[i].uvw = v.uvw
@@ -692,16 +721,17 @@ cvt_raw_shape_to_raw_shapei64 :: proc(
 }
 
 @(require_results)
-cvt_shapes_to_shapesi64 :: proc(
+cvt_shapes_to_shapes_fixed :: proc(
 	poly: shapes,
+	$FRAC_DIGITS: int,
 	allocator := context.allocator,
 ) -> (
-	poly64: shapesi64,
+	poly64: shapes_fixed(FRAC_DIGITS),
 	err: runtime.Allocator_Error,
 ) #optional_allocator_error {
-	poly64 = shapesi64 {
+	poly64 = shapes_fixed(FRAC_DIGITS) {
 		nodes = utils_private.make_non_zeroed_slice(
-			[]shape_nodei64,
+			[]shape_node_fixed(FRAC_DIGITS),
 			len(poly.nodes),
 			allocator,
 		) or_return,
@@ -722,7 +752,7 @@ cvt_shapes_to_shapesi64 :: proc(
 			}
 		}
 		poly64.nodes[i].pts = utils_private.make_non_zeroed_slice(
-			[][][2]FixedDef,
+			[][][2]fixed_bcd.BCD(FRAC_DIGITS),
 			len(n.pts),
 			allocator,
 		) or_return
@@ -737,14 +767,14 @@ cvt_shapes_to_shapesi64 :: proc(
 				}
 			}
 			poly64.nodes[i].pts[j] = utils_private.make_non_zeroed_slice(
-				[][2]FixedDef,
+				[][2]fixed_bcd.BCD(FRAC_DIGITS),
 				len(p),
 				allocator,
 			) or_return
 
 			for pp, e in p {
-				fixed.init_from_f64(&poly64.nodes[i].pts[j][e].x, f64(pp.x))
-				fixed.init_from_f64(&poly64.nodes[i].pts[j][e].y, f64(pp.y))
+				poly64.nodes[i].pts[j][e].x = fixed_bcd.from_f64(FRAC_DIGITS, f64(pp.x))
+				poly64.nodes[i].pts[j][e].y = fixed_bcd.from_f64(FRAC_DIGITS, f64(pp.y))
 			}
 		}
 
@@ -784,7 +814,7 @@ cvt_shapes_to_shapesi64 :: proc(
 		}
 
 		poly64.nodes[i].is_closed = n.is_closed
-		fixed.init_from_f64(&poly64.nodes[i].thickness, n.thickness)
+		poly64.nodes[i].thickness = fixed_bcd.from_f64(FRAC_DIGITS, n.thickness)
 		poly64.nodes[i].color = n.color
 		poly64.nodes[i].stroke_color = n.stroke_color
 	}
@@ -792,8 +822,8 @@ cvt_shapes_to_shapesi64 :: proc(
 }
 
 @(require_results)
-cvt_shapesi64_to_shapes :: proc(
-	poly: shapesi64,
+cvt_shapes_fixed_to_shapes :: proc(
+	poly: shapes_fixed($FRAC_DIGITS),
 	allocator := context.allocator,
 ) -> (
 	poly32: shapes,
@@ -843,8 +873,8 @@ cvt_shapesi64_to_shapes :: proc(
 			) or_return
 
 			for pp, e in p {
-				poly32.nodes[i].pts[j][e].x = f32(fixed.to_f64(pp.x))
-				poly32.nodes[i].pts[j][e].y = f32(fixed.to_f64(pp.y))
+				poly32.nodes[i].pts[j][e].x = f32(fixed_bcd.to_f64(pp.x))
+				poly32.nodes[i].pts[j][e].y = f32(fixed_bcd.to_f64(pp.y))
 			}
 		}
 
@@ -884,23 +914,29 @@ cvt_shapesi64_to_shapes :: proc(
 		}
 
 		poly32.nodes[i].is_closed = n.is_closed
-		poly32.nodes[i].thickness = fixed.to_f64(n.thickness)
+		poly32.nodes[i].thickness = fixed_bcd.to_f64(n.thickness)
 		poly32.nodes[i].color = n.color
 		poly32.nodes[i].stroke_color = n.stroke_color
 	}
 	return
 }
 
-shapes_compute_polygon :: proc(
+shapes_compute_polygon :: proc {
+	__shapes_compute_polygon,
+	__shapes_compute_polygon_explict,
+}
+
+__shapes_compute_polygon_explict :: proc(
 	poly: shapes,
+	$FRAC_DIGITS: int,
 	allocator := context.allocator,
 ) -> (
 	res: raw_shape,
 	err: shape_error = nil,
 ) {
-	poly64 := cvt_shapes_to_shapesi64(poly, allocator) or_return
+	poly64 := cvt_shapes_to_shapes_fixed(poly, FRAC_DIGITS, allocator) or_return
 
-	res64 := shapes_compute_polygoni64(poly64, context.temp_allocator) or_return
+	res64 := shapes_compute_polygon_fixed(poly64, context.temp_allocator) or_return
 
 	res.vertices = utils_private.make_non_zeroed_slice(
 		[]shape_vertex2d,
@@ -916,8 +952,8 @@ shapes_compute_polygon :: proc(
 	defer if err != nil do delete(res.indices, allocator) // not working
 
 	for v, i in res64.vertices {
-		res.vertices[i].pos.x = f32(fixed.to_f64(v.pos.x))
-		res.vertices[i].pos.y = f32(fixed.to_f64(v.pos.y))
+		res.vertices[i].pos.x = f32(fixed_bcd.to_f64(v.pos.x))
+		res.vertices[i].pos.y = f32(fixed_bcd.to_f64(v.pos.y))
 
 		res.vertices[i].color = v.color
 		res.vertices[i].uvw = v.uvw
@@ -931,44 +967,56 @@ shapes_compute_polygon :: proc(
 	return
 }
 
+
+__shapes_compute_polygon :: proc(
+	poly: shapes,
+	allocator := context.allocator,
+) -> (
+	res: raw_shape,
+	err: shape_error = nil,
+) {
+	return __shapes_compute_polygon_explict(poly, 13, allocator)
+}
+
 @(private)
-CURVE_STRUCT :: struct {
-	start: [2]FixedDef,
-	ctl0:  [2]FixedDef,
-	ctl1:  [2]FixedDef,
-	end:   [2]FixedDef,
+curve_struct_fixed :: struct($FRAC_DIGITS: int) {
+	start: [2]fixed_bcd.BCD(FRAC_DIGITS),
+	ctl0:  [2]fixed_bcd.BCD(FRAC_DIGITS),
+	ctl1:  [2]fixed_bcd.BCD(FRAC_DIGITS),
+	end:   [2]fixed_bcd.BCD(FRAC_DIGITS),
 	type:  curve_type,
 }
 
-shapes_compute_polygoni64 :: proc(
-	poly: shapesi64,
+shapes_compute_polygon_fixed :: proc(
+	poly: shapes_fixed($FRAC_DIGITS),
 	allocator := context.allocator,
 ) -> (
-	res: raw_shapei64,
+	res: raw_shape_fixed(FRAC_DIGITS),
 	err: shape_error = nil,
 ) {
-	vertList: [dynamic]shape_vertex2di64 = make([dynamic]shape_vertex2di64, context.temp_allocator)
+	vertList: [dynamic]shape_vertex2d_fixed(FRAC_DIGITS) = make(
+		[dynamic]shape_vertex2d_fixed(FRAC_DIGITS),
+		context.temp_allocator,
+	)
 	indList: [dynamic]u32 = make([dynamic]u32, context.temp_allocator)
 
 	shapes_compute_polygon_in :: proc(
-		vertList: ^[dynamic]shape_vertex2di64,
+		vertList: ^[dynamic]shape_vertex2d_fixed($FRAC_DIGITS),
 		indList: ^[dynamic]u32,
-		poly: shapesi64,
+		poly: shapes_fixed(FRAC_DIGITS),
 	) -> (
 		err: shape_error = nil,
 	) {
-		using fixed
-
-		non_curves := make([dynamic][][2]FixedDef, context.temp_allocator)
-		non_curves2: [dynamic][dynamic][2]FixedDef = make(
-			[dynamic][dynamic][2]FixedDef,
+		non_curves := make([dynamic][][2]fixed_bcd.BCD(FRAC_DIGITS), context.temp_allocator)
+		non_curves2: [dynamic][dynamic][2]fixed_bcd.BCD(FRAC_DIGITS) = make(
+			[dynamic][dynamic][2]fixed_bcd.BCD(FRAC_DIGITS),
 			context.temp_allocator,
 		)
-		curves2: [dynamic][dynamic]CURVE_STRUCT = make(
-			[dynamic][dynamic]CURVE_STRUCT,
+		curves2: [dynamic][dynamic]curve_struct_fixed(FRAC_DIGITS) = make(
+			[dynamic][dynamic]curve_struct_fixed(FRAC_DIGITS),
 			context.temp_allocator,
 		)
-		insert_ar := make([dynamic][2]FixedDef, context.temp_allocator)
+		insert_ar := make([dynamic][2]fixed_bcd.BCD(FRAC_DIGITS), context.temp_allocator)
 
 		for node, nidx in poly.nodes {
 			if node.color.a > 0 { 	//TODO Handle If is_close == false
@@ -978,10 +1026,13 @@ shapes_compute_polygoni64 :: proc(
 				for i in 0 ..< len(node.pts) {
 					if non_curves2[i] == nil {
 						non_curves2[i] = make(
-							[dynamic][2]FixedDef,
+							[dynamic][2]fixed_bcd.BCD(FRAC_DIGITS),
 							context.temp_allocator,
 						) or_return
-						curves2[i] = make([dynamic]CURVE_STRUCT, context.temp_allocator) or_return
+						curves2[i] = make(
+							[dynamic]curve_struct_fixed(FRAC_DIGITS),
+							context.temp_allocator,
+						) or_return
 					} else {
 						non_zero_resize_dynamic_array(&non_curves2[i], 0) or_return
 						non_zero_resize_dynamic_array(&curves2[i], 0) or_return
@@ -997,7 +1048,7 @@ shapes_compute_polygoni64 :: proc(
 							   node.curve_pts_ids[npi][curve_idx + 1] == u32(i) {
 								non_zero_append(
 									&curves2[npi],
-									CURVE_STRUCT {
+									curve_struct_fixed(FRAC_DIGITS) {
 										start = np[i - 1],
 										ctl0 = np[i],
 										ctl1 = np[i + 1],
@@ -1009,7 +1060,7 @@ shapes_compute_polygoni64 :: proc(
 							} else {
 								non_zero_append(
 									&curves2[npi],
-									CURVE_STRUCT {
+									curve_struct_fixed(FRAC_DIGITS) {
 										start = np[i - 1],
 										ctl0 = np[i],
 										end = np[(i + 1) % len(np)],
@@ -1036,31 +1087,35 @@ shapes_compute_polygoni64 :: proc(
 								c.end,
 							) or_return
 							if curveType == .Loop {
-								t1 := FixedDef {
-									i = utils_private.sqrt_i64(
-										(4 * d0.i * d2.i - 3 * d1.i * d1.i),
-										//<< FIXED_SHIFT >> FIXED_SHIFT, //결국 똑같음
-									),
-								}
-								ls := sub(d1, t1)
-								lt := mul(Fixed2, d0)
-								ms := add(d1, t1)
+								disc := 4 * d0.i * d2.i - 3 * d1.i * d1.i
+								t1 := fixed_bcd.init(
+									int(utils_private.sqrt_i64(i64(disc))),
+									0,
+									FRAC_DIGITS,
+								)
+								ls := fixed_bcd.sub(d1, t1)
+								two := fixed_bcd.init(2, 0, FRAC_DIGITS)
+								lt := fixed_bcd.mul(two, d0)
+								ms := fixed_bcd.add(d1, t1)
 								mt := lt
-								ql := ls //div(ls, lt) // loop면 d0이 0이 아니라서 0으로 나누지 않는다.
-								qm := ms //div(ms, mt)
-								subdiv_at: FixedDef
-								if lt.i > 0 ? (0 < ql.i && ql.i < lt.i) : (0 > ql.i && ql.i > lt.i) {
-									subdiv_at = div(ls, lt)
-								} else if mt.i > 0 ? (0 < qm.i && qm.i < mt.i) : (0 > qm.i && qm.i > mt.i) {
-									subdiv_at = div(ms, mt)
+								subdiv_at: fixed_bcd.BCD(FRAC_DIGITS)
+								if lt.i > 0 ? (0 < ls.i && ls.i < lt.i) : (0 > ls.i && ls.i > lt.i) {
+									subdiv_at = fixed_bcd.div(ls, lt)
+								} else if mt.i > 0 ? (0 < ms.i && ms.i < mt.i) : (0 > ms.i && ms.i > mt.i) {
+									subdiv_at = fixed_bcd.div(ms, mt)
 								} else {
 									continue
 								}
 								pt01, pt12, pt23, pt012, pt123, pt0123 := SubdivCubicBezier(
-									[4][2]FixedDef{c.start, c.ctl0, c.ctl1, c.end},
+									[4][2]fixed_bcd.BCD(FRAC_DIGITS) {
+										c.start,
+										c.ctl0,
+										c.ctl1,
+										c.end,
+									},
 									subdiv_at,
 								)
-								curves_npi[i] = CURVE_STRUCT {
+								curves_npi[i] = curve_struct_fixed(FRAC_DIGITS) {
 									start = c.start,
 									ctl0  = pt01,
 									ctl1  = pt012,
@@ -1070,7 +1125,7 @@ shapes_compute_polygoni64 :: proc(
 								utils_private.non_zero_inject_at_elem(
 									curves_npi,
 									i + 1,
-									CURVE_STRUCT {
+									curve_struct_fixed(FRAC_DIGITS) {
 										start = pt0123,
 										ctl0 = pt123,
 										ctl1 = pt23,
@@ -1096,12 +1151,12 @@ shapes_compute_polygoni64 :: proc(
 									cur := curves_i[i]
 									cur2 := curves_j[j]
 									poly1 :=
-										cur.type == .Quadratic ? [][2]FixedDef{cur.start, cur.ctl0, cur.end} : [][2]FixedDef{cur.start, cur.ctl0, cur.ctl1, cur.end}
+										cur.type == .Quadratic ? [][2]fixed_bcd.BCD(FRAC_DIGITS){cur.start, cur.ctl0, cur.end} : [][2]fixed_bcd.BCD(FRAC_DIGITS){cur.start, cur.ctl0, cur.ctl1, cur.end}
 									poly2 :=
-										cur2.type == .Quadratic ? [][2]FixedDef{cur2.start, cur2.ctl0, cur2.end} : [][2]FixedDef{cur2.start, cur2.ctl0, cur2.ctl1, cur2.end}
+										cur2.type == .Quadratic ? [][2]fixed_bcd.BCD(FRAC_DIGITS){cur2.start, cur2.ctl0, cur2.end} : [][2]fixed_bcd.BCD(FRAC_DIGITS){cur2.start, cur2.ctl0, cur2.ctl1, cur2.end}
 									if !PolygonOverlapsPolygon(poly1, poly2) do continue
-									subdiv_t: FixedDef
-									subdiv_t_: FixedDef
+									subdiv_t: fixed_bcd.BCD(FRAC_DIGITS)
+									subdiv_t_: fixed_bcd.BCD(FRAC_DIGITS)
 									if cur2.type == .Quadratic {
 										_, subdiv_t, subdiv_t_ = PointInLine(
 											cur2.ctl0,
@@ -1109,22 +1164,24 @@ shapes_compute_polygoni64 :: proc(
 											cur.end,
 										)
 									} else {
+										half_pt := fixed_bcd.init(0, 5, FRAC_DIGITS)
+										half2 := [2]fixed_bcd.BCD(FRAC_DIGITS){half_pt, half_pt}
 										_, subdiv_t, subdiv_t_ = PointInLine(
-											lerp_fixed(
-												cur2.ctl0,
-												cur2.ctl1,
-												splat_2_fixed(Div2Fixed),
-											),
+											lerp_bcd(cur2.ctl0, cur2.ctl1, half2),
 											cur.start,
 											cur.end,
 										)
 									}
 									if cur.type == .Quadratic {
 										pt01, pt12, pt012 := SubdivQuadraticBezier(
-											[3][2]FixedDef{cur.start, cur.ctl0, cur.end},
-											fixed.div(subdiv_t, subdiv_t_),
+											[3][2]fixed_bcd.BCD(FRAC_DIGITS) {
+												cur.start,
+												cur.ctl0,
+												cur.end,
+											},
+											fixed_bcd.div(subdiv_t, subdiv_t_),
 										)
-										curves_i[i] = CURVE_STRUCT {
+										curves_i[i] = curve_struct_fixed(FRAC_DIGITS) {
 											start = cur.start,
 											ctl0  = pt01,
 											end   = pt012,
@@ -1133,7 +1190,7 @@ shapes_compute_polygoni64 :: proc(
 										utils_private.non_zero_inject_at_elem(
 											curves_i,
 											i + 1,
-											CURVE_STRUCT {
+											curve_struct_fixed(FRAC_DIGITS) {
 												start = pt012,
 												ctl0 = pt12,
 												end = cur.end,
@@ -1143,15 +1200,15 @@ shapes_compute_polygoni64 :: proc(
 									} else {
 										pt01, pt12, pt23, pt012, pt123, pt0123 :=
 											SubdivCubicBezier(
-												[4][2]FixedDef {
+												[4][2]fixed_bcd.BCD(FRAC_DIGITS) {
 													cur.start,
 													cur.ctl0,
 													cur.ctl1,
 													cur.end,
 												},
-												fixed.div(subdiv_t, subdiv_t_),
+												fixed_bcd.div(subdiv_t, subdiv_t_),
 											)
-										curves_i[i] = CURVE_STRUCT {
+										curves_i[i] = curve_struct_fixed(FRAC_DIGITS) {
 												start = cur.start,
 												ctl0  = pt01,
 												ctl1  = pt012,
@@ -1161,7 +1218,7 @@ shapes_compute_polygoni64 :: proc(
 										utils_private.non_zero_inject_at_elem(
 											curves_i,
 											i + 1,
-											CURVE_STRUCT {
+											curve_struct_fixed(FRAC_DIGITS) {
 												start = pt0123,
 												ctl0 = pt123,
 												ctl1 = pt23,
@@ -1279,7 +1336,7 @@ shapes_compute_polygoni64 :: proc(
 					for vv in v {
 						non_zero_append(
 							vertList,
-							shape_vertex2di64 {
+							shape_vertex2d_fixed(FRAC_DIGITS) {
 								pos   = vv,
 								uvw   = linalg.Vector3f32{0.0, 0.0, -100.0}, //-100 check this is not curve
 								color = poly.nodes[i].color,

@@ -7,10 +7,8 @@ import "core:math/linalg"
 import "core:mem"
 import "core:slice"
 
-import "core:math/fixed"
-
 import utils "shared:utils_private"
-import "shared:utils_private/fixed_ex"
+import "shared:utils_private/fixed_bcd"
 
 __Trianguate_Error :: enum {
 	FIRST_ACTIVE_MISSING,
@@ -29,7 +27,7 @@ Trianguate_Error :: union #shared_nil {
 }
 
 // Precondition: ctx.all_edges must be sorted ascending on edge.vL.p.x
-FixupEdgeIntersects :: proc(ctx: ^Context) -> (err: Trianguate_Error) {
+FixupEdgeIntersects :: proc(ctx: ^Context($T)) -> (err: Trianguate_Error) {
 	for i1 in 0 ..< len(ctx.all_edges) {
 		e1 := ctx.all_edges[i1]
 		for i2 in i1 + 1 ..< len(ctx.all_edges) {
@@ -50,65 +48,54 @@ FixupEdgeIntersects :: proc(ctx: ^Context) -> (err: Trianguate_Error) {
 }
 
 TrianguatePolygons_Fixed :: proc(
-	poly: [][][2]FixedDef,
+	poly: [][][2]$T,
 	allocator := context.allocator,
 ) -> (
 	indices: []u32,
 	err: Trianguate_Error,
-) {
-	ctx := Context {
-		all_verts            = make([dynamic]^Vertex, context.temp_allocator) or_return,
-		all_tris             = make([dynamic]^Triangle, context.temp_allocator) or_return,
-		all_edges            = make([dynamic]^Edge, context.temp_allocator) or_return,
-		pendingDelaunayStack = make([dynamic]^Edge, context.temp_allocator) or_return,
-		loc_min_stack        = make([dynamic]^Vertex, context.temp_allocator) or_return,
-		horz_edge_stack      = make([dynamic]^Edge, context.temp_allocator) or_return,
+) where intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
+	ctx := Context(T) {
+		all_verts            = make([dynamic]^Vertex(T), context.temp_allocator) or_return,
+		all_tris             = make([dynamic]^Triangle(T), context.temp_allocator) or_return,
+		all_edges            = make([dynamic]^Edge(T), context.temp_allocator) or_return,
+		pendingDelaunayStack = make([dynamic]^Edge(T), context.temp_allocator) or_return,
+		loc_min_stack        = make([dynamic]^Vertex(T), context.temp_allocator) or_return,
+		horz_edge_stack      = make([dynamic]^Edge(T), context.temp_allocator) or_return,
 		polys                = poly,
 	}
 	non_zero_reserve(&ctx.all_edges, len(poly)) or_return
 
 	AddPaths(&ctx) or_return
 
-
-	// if necessary fix path orientation because the algorithm
-	// expects clockwise outer paths and counter-clockwise inner paths
-	if ctx.lowermostVertex.innerLM {
-		// the orientation of added paths must be wrong, so
-		// 1. reverse innerLM flags ...
-		lm: ^Vertex
+	if ctx.lowermostVertex != nil && ctx.lowermostVertex.innerLM {
+		lm: ^Vertex(T)
 		for len(ctx.loc_min_stack) > 0 {
 			lm = ctx.loc_min_stack[len(ctx.loc_min_stack) - 1]
 			lm.innerLM = !lm.innerLM
 			non_zero_resize(&ctx.loc_min_stack, len(ctx.loc_min_stack) - 1)
 		}
-		// 2. swap edge kinds
 		for &e in ctx.all_edges {
-			if e.kind == .ascend {
-				e.kind = .descend
-			} else {
-				e.kind = .ascend
-			}
+			if e.kind == .ascend do e.kind = .descend
+			else do e.kind = .ascend
 		}
 	} else {
-		// path orientation is fine so ...
 		clear(&ctx.loc_min_stack)
 	}
 
-	slice.sort_by(ctx.all_edges[:], proc(a, b: ^Edge) -> bool {
+	slice.sort_by(ctx.all_edges[:], proc(a, b: ^Edge(T)) -> bool {
 		return a.vL.p.x.i < b.vL.p.x.i
 	})
 	FixupEdgeIntersects(&ctx) or_return
-	slice.sort_by(ctx.all_verts[:], proc(a, b: ^Vertex) -> bool {
+	slice.sort_by(ctx.all_verts[:], proc(a, b: ^Vertex(T)) -> bool {
 		if a.p.y.i == b.p.y.i do return a.p.x.i < b.p.x.i
 		return a.p.y.i > b.p.y.i
 	})
 	MergeDupOrCollinearVertices(&ctx) or_return
 
-
-	currY := ctx.all_verts[0].p.y.i
+	currY: T = ctx.all_verts[0].p.y
 	for &v in ctx.all_verts {
 		if len(v.e) == 0 do continue
-		if v.p.y.i != currY {
+		if v.p.y.i != currY.i {
 			// JOIN AN INNER LOCMIN WITH A SUITABLE EDGE BELOW
 			for len(ctx.loc_min_stack) > 0 {
 				lm := ctx.loc_min_stack[len(ctx.loc_min_stack) - 1]
@@ -145,7 +132,7 @@ TrianguatePolygons_Fixed :: proc(
 					}
 				}
 			}
-			currY = v.p.y.i
+			currY = v.p.y
 		}
 
 		// inner edge loop (내림차순 인덱스 — 루프 중 edges 추가/삭제에 안전)
@@ -166,9 +153,9 @@ TrianguatePolygons_Fixed :: proc(
 				if IsHorizontal(e) {
 					non_zero_append(&ctx.horz_edge_stack, e) or_return
 				} else if IsLeftEdge(e) {
-					DoTriangulateLeft(&ctx, e, e.vB, v.p.y.i) or_return
+					DoTriangulateLeft(&ctx, e, e.vB, v.p.y) or_return
 				} else {
-					DoTriangulateRight(&ctx, e, e.vB, v.p.y.i) or_return
+					DoTriangulateRight(&ctx, e, e.vB, v.p.y) or_return
 				}
 			}
 		} // inner edge loop
@@ -218,32 +205,28 @@ TrianguatePolygons_Fixed :: proc(
 	return
 }
 
-// Matches Clipper2 PathFromTriangle: uses vL/vR of edges
 @(private = "file")
-triangle_vertices :: proc "contextless" (tri: ^Triangle) -> [3]^Vertex {
+triangle_vertices :: proc "contextless" (tri: ^Triangle($T)) -> [3]^Vertex(T) {
 	e0, e1 := tri.edges[0], tri.edges[1]
-	vs: [3]^Vertex
+	vs: [3]^Vertex(T)
 	vs[0] = e0.vL
 	vs[1] = e0.vR
-	if e1.vL == vs[0] || e1.vL == vs[1] {
-		vs[2] = e1.vR
-	} else {
-		vs[2] = e1.vL
-	}
+	if e1.vL == vs[0] || e1.vL == vs[1] do vs[2] = e1.vR
+	else do vs[2] = e1.vL
 	return vs
 }
 
 @(private = "file")
 DoTriangulateLeft :: proc(
-	ctx: ^Context,
-	edge: ^Edge,
-	pivot: ^Vertex,
-	minY: i64,
+	ctx: ^Context($T),
+	edge: ^Edge(T),
+	pivot: ^Vertex(T),
+	minY: T,
 ) -> (
 	err: Trianguate_Error,
-) {
-	vAlt: ^Vertex = nil
-	eAlt: ^Edge = nil
+) where intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
+	vAlt: ^Vertex(T) = nil
+	eAlt: ^Edge(T) = nil
 	v := edge.vT if edge.vB == pivot else edge.vB
 	for e in pivot.e {
 		if e == edge || !e.isActive do continue
@@ -259,9 +242,7 @@ DoTriangulateLeft :: proc(
 		vAlt = vX
 		eAlt = e
 	}
-	if vAlt == nil || vAlt.p.y.i < minY do return
-
-	// Don't triangulate **across** fixed edges
+	if vAlt == nil || vAlt.p.y.i < minY.i do return
 	if vAlt.p.y.i < pivot.p.y.i {
 		if IsLeftEdge(eAlt) do return
 	} else if vAlt.p.y.i > pivot.p.y.i {
@@ -269,7 +250,7 @@ DoTriangulateLeft :: proc(
 	}
 	eX := FindLinkingEdge(vAlt, v, vAlt.p.y.i < v.p.y.i)
 	if eX == nil {
-		if vAlt.p.y.i == v.p.y.i && v.p.y.i == minY && HorizontalBetween(ctx, vAlt, v) != nil {
+		if vAlt.p.y.i == v.p.y.i && v.p.y.i == minY.i && HorizontalBetween(ctx, vAlt, v) != nil {
 			return
 		}
 		gerr: Geometry_Error
@@ -283,15 +264,15 @@ DoTriangulateLeft :: proc(
 
 @(private = "file")
 DoTriangulateRight :: proc(
-	ctx: ^Context,
-	edge: ^Edge,
-	pivot: ^Vertex,
-	minY: i64,
+	ctx: ^Context($T),
+	edge: ^Edge(T),
+	pivot: ^Vertex(T),
+	minY: T,
 ) -> (
 	err: Trianguate_Error,
-) {
-	vAlt: ^Vertex = nil
-	eAlt: ^Edge = nil
+) where intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
+	vAlt: ^Vertex(T) = nil
+	eAlt: ^Edge(T) = nil
 	v := edge.vT if edge.vB == pivot else edge.vB
 	for e in pivot.e {
 		if e == edge || !e.isActive do continue
@@ -308,17 +289,15 @@ DoTriangulateRight :: proc(
 		vAlt = vX
 		eAlt = e
 	}
-	if vAlt == nil || vAlt.p.y.i < minY do return
-
+	if vAlt == nil || vAlt.p.y.i < minY.i do return
 	if vAlt.p.y.i < pivot.p.y.i {
 		if IsRightEdge(eAlt) do return
 	} else if vAlt.p.y.i > pivot.p.y.i {
 		if IsLeftEdge(eAlt) do return
 	}
-
 	eX := FindLinkingEdge(vAlt, v, vAlt.p.y.i > v.p.y.i)
 	if eX == nil {
-		if vAlt.p.y.i == v.p.y.i && v.p.y.i == minY && HorizontalBetween(ctx, vAlt, v) != nil {
+		if vAlt.p.y.i == v.p.y.i && v.p.y.i == minY.i && HorizontalBetween(ctx, vAlt, v) != nil {
 			return
 		}
 		gerr: Geometry_Error
@@ -333,23 +312,12 @@ DoTriangulateRight :: proc(
 }
 
 @(private = "file")
-ForceLegal :: proc(ctx: ^Context, edge: ^Edge) -> (err: Trianguate_Error) {
-	// don't try to make empty triangles legal
+ForceLegal :: proc(ctx: ^Context($T), edge: ^Edge(T)) -> (err: Trianguate_Error) {
 	if edge.triA == nil || edge.triB == nil do return
-
-	// vertA will be assigned the vertex in edge's triangleA
-	// that is NOT an end vertex of edge
-	// Likewise, vertB will be assigned the vertex in edge's
-	// triangleB that is NOT an end vertex of edge
-	// If edge is rotated, vertA & vertB will become its end vertices.
-	vertA: ^Vertex = nil
-	vertB: ^Vertex = nil
-
-	// Excluding 'edge', edgesA will contain two edges (one from
-	// triangleA and one from triangleB) that touch edge.vL.
-	// And edgesB will contain the two edges that touch edge.vR.
-	edgesA: [3]^Edge = {nil, nil, nil}
-	edgesB: [3]^Edge = {nil, nil, nil}
+	vertA: ^Vertex(T) = nil
+	vertB: ^Vertex(T) = nil
+	edgesA: [3]^Edge(T) = {nil, nil, nil}
+	edgesB: [3]^Edge(T) = {nil, nil, nil}
 
 	for i in 0 ..< 3 {
 		if edge.triA.edges[i] == edge do continue
@@ -434,23 +402,18 @@ ForceLegal :: proc(ctx: ^Context, edge: ^Edge) -> (err: Trianguate_Error) {
 
 @(private = "file")
 CreateInnerLocMinLooseEdge :: proc(
-	ctx: ^Context,
-	vAbove: ^Vertex,
+	ctx: ^Context($T),
+	vAbove: ^Vertex(T),
 ) -> (
-	ed: ^Edge,
+	ed: ^Edge(T),
 	err: Trianguate_Error,
-) {
+) where intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
 	if ctx.firstActive == nil do return nil, .FIRST_ACTIVE_MISSING
-
 	xAbove := vAbove.p.x.i
 	yAbove := vAbove.p.y.i
-
-	// find the closest 'active' edge with a vertex that's not above vAbove
 	e := ctx.firstActive
-	eBelow: ^Edge = nil
-	bestD: FixedDef = FixedDef {
-		i = -(1 << FIXED_SHIFT),
-	}
+	eBelow: ^Edge(T) = nil
+	bestD: T = {}
 	for e != nil {
 		in_range :=
 			e.vL.p.x.i <= xAbove &&
@@ -461,19 +424,16 @@ CreateInnerLocMinLooseEdge :: proc(
 			!(CrossProductSign(e.vL.p, vAbove.p, e.vR.p) < 0)
 		if in_range {
 			d, d_ := ShortestLength2Line(vAbove.p, e.vL.p, e.vR.p)
-			if eBelow == nil || d_.i > 0 ? d.i < fixed.mul(bestD, d_).i : d.i > fixed.mul(bestD, d_).i {
+			if eBelow == nil ||
+			   (d_.i > 0 ? d.i < fixed_bcd.mul(bestD, d_).i : d.i > fixed_bcd.mul(bestD, d_).i) {
 				eBelow = e
 				bestD = d
 			}
 		}
 		e = e.nextE
 	}
-
 	if eBelow == nil do return nil, .EBELLOW_MISSING
-
-
-	// get the best vertex from 'eBelow'
-	vBest: ^Vertex = eBelow.vB if eBelow.vT.p.y.i <= yAbove else eBelow.vT
+	vBest: ^Vertex(T) = eBelow.vB if eBelow.vT.p.y.i <= yAbove else eBelow.vT
 	xBest := vBest.p.x.i
 	yBest := vBest.p.y.i
 
@@ -519,14 +479,15 @@ CreateInnerLocMinLooseEdge :: proc(
 
 
 @(private = "file")
-MergeDupOrCollinearVertices :: proc(ctx: ^Context) -> (err: Trianguate_Error) {
+MergeDupOrCollinearVertices :: proc(ctx: ^Context($T)) -> (err: Trianguate_Error) {
 	// note: this procedure may add new edges and change the
 	// number of edges connected with a given vertex, but it
 	// won't add or delete vertices (so it's safe to use iterators)
 	// Precondition: all_verts must be sorted (y desc, then x asc)
 	v1_idx := 0
 	for i in 1 ..< len(ctx.all_verts) {
-		if !fixed_ex.equal(ctx.all_verts[i].p, ctx.all_verts[v1_idx].p) {
+		if !fixed_bcd.eq(ctx.all_verts[i].p.x, ctx.all_verts[v1_idx].p.x) ||
+		   !fixed_bcd.eq(ctx.all_verts[i].p.y, ctx.all_verts[v1_idx].p.y) {
 			v1_idx = i
 			continue
 		}
@@ -575,26 +536,25 @@ MergeDupOrCollinearVertices :: proc(ctx: ^Context) -> (err: Trianguate_Error) {
 
 
 @(private = "file")
-AddPath :: proc(ctx: ^Context, pts: [][2]FixedDef) -> (err: Trianguate_Error) {
+AddPath :: proc(
+	ctx: ^Context($T),
+	pts: [][2]T,
+) -> (
+	err: Trianguate_Error,
+) where intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
 	i0 := 0
-
-	// find the first locMin for the current path
 	if !FindLocMinIdx(pts, &i0) do return
 	iPrev := utils.Prev(i0, len(pts))
-	for fixed_ex.equal(pts[iPrev], pts[i0]) {
+	for pts[iPrev].x == pts[i0].x && pts[iPrev].y == pts[i0].y {
 		iPrev = utils.Prev(iPrev, len(pts))
 	}
 	iNext := utils.Next(i0, len(pts))
-
-	// it is possible for a locMin here to simply be a
-	// collinear spike that should be ignored, so ...
 	i := i0
 	for CrossProductSign(pts[iPrev], pts[i], pts[iNext]) == 0 {
-		FindLocMinIdx(pts, &i) //find again
-		if i == i0 do return // this is an entirely collinear path
-
+		FindLocMinIdx(pts, &i)
+		if i == i0 do return
 		iPrev = utils.Prev(i, len(pts))
-		for fixed_ex.equal(pts[iPrev], pts[i]) {
+		for pts[iPrev].x == pts[i].x && pts[iPrev].y == pts[i].y {
 			iPrev = utils.Prev(iPrev, len(pts))
 		}
 		iNext = utils.Next(i, len(pts))
@@ -699,7 +659,7 @@ Geometry_To_Triangulate_Error :: proc "contextless" (err: Geometry_Error) -> Tri
 }
 
 @(private = "file")
-AddPaths :: proc(ctx: ^Context) -> (err: Trianguate_Error) {
+AddPaths :: proc(ctx: ^Context($T)) -> (err: Trianguate_Error) {
 	total_vert_count := 0
 	for p in ctx.polys {
 		total_vert_count += len(p)
@@ -717,7 +677,10 @@ AddPaths :: proc(ctx: ^Context) -> (err: Trianguate_Error) {
 }
 
 @(private = "file")
-FindLocMinIdx :: proc "contextless" (pts: [][2]FixedDef, in_out_idx: ^int) -> bool {
+FindLocMinIdx :: proc "contextless" (
+	pts: [][2]$T,
+	in_out_idx: ^int,
+) -> bool where intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
 	if len(pts) < 3 do return false
 
 	i0 := in_out_idx^
@@ -737,8 +700,8 @@ FindLocMinIdx :: proc "contextless" (pts: [][2]FixedDef, in_out_idx: ^int) -> bo
 }
 
 @(private = "file")
-CreateTriangle :: proc(ctx: ^Context, e1, e2, e3: ^Edge) -> (err: Trianguate_Error) {
-	tri := new(Triangle, context.temp_allocator) or_return
+CreateTriangle :: proc(ctx: ^Context($T), e1, e2, e3: ^Edge(T)) -> (err: Trianguate_Error) {
+	tri := new(Triangle(T), context.temp_allocator) or_return
 	tri.edges = {e1, e2, e3}
 	non_zero_append(&ctx.all_tris, tri) or_return
 	// nb: only expire loose edges when both sides of these edges have triangles.

@@ -1301,3 +1301,4 @@ GetAngle :: proc(a, b, c: [2]$T) -> T where intrinsics.type_is_float(T) {
 	cp := abx * bcy - aby * bcx
 	return math.atan2(cp, dp) //range between -Pi and Pi
 }
+

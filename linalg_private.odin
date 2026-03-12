@@ -49,7 +49,7 @@ Vertex :: struct {
 }
 
 Context :: struct {
-	all_verts:            [dynamic]Vertex,
+	all_verts:            [dynamic]^Vertex,
 	loc_min_stack:        [dynamic]^Vertex,
 	horz_edge_stack:      [dynamic]^Edge,
 	all_edges:            [dynamic]^Edge,
@@ -64,6 +64,7 @@ Context :: struct {
 HorizontalBetween :: proc(ctx: ^Context, v1, v2: ^Vertex) -> ^Edge {
 	y := v1.p.y.i
 	l, r: FixedDef
+
 	if v1.p.x.i > v2.p.x.i {
 		l = v2.p.x
 		r = v1.p.x
@@ -93,14 +94,14 @@ EdgeContains :: proc "contextless" (edge: ^Edge, v: ^Vertex) -> EdgeContainsResu
 	return .neither
 }
 
-RemoveEdgeFromVertex :: proc(vert: ^Vertex, edge: ^Edge) {
+RemoveEdgeFromVertex :: proc(vert: ^Vertex, edge: ^Edge) -> (err: Geometry_Error) {
 	for e, i in vert.e {
 		if e == edge {
 			ordered_remove(&vert.e, i)
-			return
+			return nil
 		}
 	}
-	panic("edge not found in vertex")
+	return .NO_EDGE_IN_VERTEX
 }
 
 
@@ -108,11 +109,8 @@ IsHorizontal :: proc "contextless" (e: ^Edge) -> bool {
 	return e.vB.p.y.i == e.vT.p.y.i
 }
 
-MakeVertex :: proc(p: [2]FixedDef) -> (res:Vertex, err:Geometry_Error) {
-	res = Vertex {
-		p       = p,
-		innerLM = false,
-	}
+MakeVertex :: proc(p: [2]FixedDef) -> (res: ^Vertex, err: Geometry_Error) {
+	res = new_clone(Vertex{p = p, innerLM = false}, context.temp_allocator) or_return
 	res.e = make([dynamic]^Edge, context.temp_allocator) or_return
 	non_zero_reserve(&res.e, 2) or_return
 	return
@@ -173,22 +171,23 @@ SetEdgeToActive :: proc "contextless" (ctx: ^Context, edge: ^Edge) {
 	ctx.firstActive = edge
 }
 
-RemoveEdgeFromActives :: proc (ctx: ^Context, edge: ^Edge) {
-	RemoveEdgeFromVertex(edge.vB, edge)
-	RemoveEdgeFromVertex(edge.vT, edge)
+RemoveEdgeFromActives :: proc(ctx: ^Context, edge: ^Edge) -> (err: Geometry_Error) {
+	RemoveEdgeFromVertex(edge.vB, edge) or_return
+	RemoveEdgeFromVertex(edge.vT, edge) or_return
 	prev := edge.prevE
 	next := edge.nextE
 	if next != nil do next.prevE = prev
 	if prev != nil do prev.nextE = next
 	edge.isActive = false
 	if ctx.firstActive == edge do ctx.firstActive = next
+	return nil
 }
 
 SplitEdge :: proc(ctx: ^Context, longE, shortE: ^Edge) -> (err: Geometry_Error) {
 	oldT := longE.vT
 	newT := shortE.vT
 	// remove longEdge from longEdge.vT.edges
-	RemoveEdgeFromVertex(oldT, longE)
+	RemoveEdgeFromVertex(oldT, longE) or_return
 	// shorten longEdge
 	longE.vT = newT
 	if longE.vL == oldT {
@@ -239,7 +238,7 @@ RemoveIntersection :: proc(
 	}
 	// split 'tmpE' into 2 edges at 'v'
 	v2 := tmpE.vT
-	RemoveEdgeFromVertex(v2, tmpE)
+	RemoveEdgeFromVertex(v2, tmpE) or_return
 	// replace v2 in tmpE with v
 	if tmpE.vL == v2 {
 		tmpE.vL = v
@@ -282,7 +281,7 @@ GetLocMinAngle :: proc(v: ^Vertex) -> f64 {
 
 vertex_index :: proc "contextless" (ctx: ^Context, v: ^Vertex) -> u32 {
 	for i in 0 ..< len(ctx.all_verts) {
-		if &ctx.all_verts[i] == v do return u32(i)
+		if ctx.all_verts[i] == v do return u32(i)
 	}
 	return 0
 }
@@ -311,8 +310,7 @@ FindLinkingEdge :: proc "contextless" (vert1, vert2: ^Vertex, prefer_ascending: 
 	res: ^Edge = nil
 	for e in vert1.e {
 		if e.vL == vert2 || e.vR == vert2 {
-			if e.kind == .loose ||
-			   (e.kind == .ascend) == prefer_ascending {
+			if e.kind == .loose || (e.kind == .ascend) == prefer_ascending {
 				return e
 			}
 			res = e
@@ -320,3 +318,4 @@ FindLinkingEdge :: proc "contextless" (vert1, vert2: ^Vertex, prefer_ascending: 
 	}
 	return res
 }
+

@@ -1,5 +1,6 @@
 package geometry
 
+import "core:hash"
 import "core:math"
 import "core:math/fixed"
 import "core:testing"
@@ -8,12 +9,24 @@ import "shared:utils_private"
 
 // make_square_path returns a CCW square (4 vertices). Arguments in FixedDef.
 @(private)
-make_square_path :: proc(x0, y0, size: FixedDef, allocator := context.allocator) -> [][2]FixedDef {
+make_square_path :: proc(
+	x0, y0, size: FixedDef,
+	invent := false,
+	allocator := context.allocator,
+) -> [][2]FixedDef {
 	result := utils_private.make_non_zeroed_slice([][2]FixedDef, 4, allocator)
-	result[0] = {fixed.add(x0, size), y0}
-	result[1] = {x0, y0}
-	result[2] = {x0, fixed.sub(y0, size)}
-	result[3] = {fixed.add(x0, size), fixed.sub(y0, size)}
+	half := fixed.div(size, FixedDef{i = 2 << FIXED_SHIFT})
+	if !invent {
+		result[0] = {fixed.add(x0, half), fixed.add(y0, half)}
+		result[1] = {fixed.sub(x0, half), fixed.add(y0, half)}
+		result[2] = {fixed.sub(x0, half), fixed.sub(y0, half)}
+		result[3] = {fixed.add(x0, half), fixed.sub(y0, half)}
+	} else {
+		result[0] = {fixed.sub(x0, half), fixed.sub(y0, half)}
+		result[1] = {fixed.add(x0, half), fixed.sub(y0, half)}
+		result[2] = {fixed.add(x0, half), fixed.add(y0, half)}
+		result[3] = {fixed.sub(x0, half), fixed.add(y0, half)}
+	}
 	return result
 }
 
@@ -43,6 +56,41 @@ test_triangulation_square :: proc(t: ^testing.T) {
 }
 
 @(test)
+test_triangulation_2square :: proc(t: ^testing.T) {
+	// square from (0,0) with edge length 100 in fixed units
+	scale := i64(1 << FIXED_SHIFT)
+	x0 := FixedDef {
+		i = 0,
+	}
+	y0 := FixedDef {
+		i = 0,
+	}
+	size := FixedDef {
+		i = 100 * scale,
+	}
+	x1 := FixedDef {
+		i = 25 * scale,
+	}
+	y1 := FixedDef {
+		i = -25 * scale,
+	}
+	size2 := FixedDef {
+		i = 50 * scale,
+	}
+	square := make_square_path(x0, y0, size)
+	defer delete(square)
+	square2 := make_square_path(x1, y1, size2)
+	defer delete(square2)
+
+	poly := [][][2]FixedDef{square, square2}
+	indices, err := TrianguatePolygons_Fixed(poly)
+	defer delete(indices)
+
+	testing.expect_value(t, err, nil)
+	testing.expect_value(t, len(indices), 12)
+}
+
+@(test)
 test_cross_product_sign_convention :: proc(t: ^testing.T) {
 	scale := i64(1 << FIXED_SHIFT)
 
@@ -66,3 +114,4 @@ test_cross_product_sign_convention :: proc(t: ^testing.T) {
 		PolyOrientation.Clockwise,
 	)
 }
+

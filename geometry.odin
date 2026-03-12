@@ -84,6 +84,7 @@ __shape_error :: enum {
 __Geometry_Error :: enum {
 	TOO_MANY_EDGES,
 	NO_PATHS,
+	NO_EDGE_IN_VERTEX,
 }
 
 Geometry_Error :: union #shared_nil {
@@ -1260,10 +1261,7 @@ shapes_compute_polygoni64 :: proc(
 				for npi in 0 ..< len(non_curves2) {
 					non_curves[npi] = non_curves2[npi][:]
 				}
-				indices, tri_err := TrianguatePolygons_Fixed(
-					non_curves[:],
-					context.temp_allocator,
-				)
+				indices, tri_err := TrianguatePolygons_Fixed(non_curves[:], context.temp_allocator)
 				if tri_err != nil {
 					switch tri in tri_err {
 					case __Trianguate_Error:
@@ -1306,3 +1304,4 @@ shapes_compute_polygoni64 :: proc(
 	shapes_compute_polygon_in(&vertList, &indList, poly) or_return
 	return
 }
+

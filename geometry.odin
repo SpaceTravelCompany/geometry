@@ -13,7 +13,7 @@ import "shared:utils_private/fixed_ex"
 
 import "shared:utils_private"
 
-DEF_FRAC_DIGITS :: 13
+DEF_FRAC_DIGITS :: 14
 
 @(private)
 _length2_bcd :: proc "contextless" (

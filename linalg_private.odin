@@ -225,21 +225,29 @@ RemoveIntersection :: proc(
 	tmpE.vT = v
 	non_zero_append(&v.e, tmpE) or_return
 	v.innerLM = false
-	if tmpE.vB.innerLM && GetLocMinAngle(tmpE.vB) <= 0 do tmpE.vB.innerLM = false
+	if tmpE.vB.innerLM && GetLocMinAngleCheck(tmpE.vB) do tmpE.vB.innerLM = false
 	MakeEdge(ctx, v, v2, tmpE.kind) or_return
 	return true, nil
 }
 
-GetLocMinAngle :: proc(
+GetLocMinAngleCheck :: proc(
 	v: ^Vertex($T),
-) -> f64 where intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
+) -> bool where intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
+	// Original (atan2): return GetAngle(des.vT.p, v.p, asc.vT.p) <= 0.
 	asc, des: int
 	if v.e[0].kind == .ascend {asc = 0; des = 1} else {des = 0; asc = 1}
-	return GetAngle(
-		[2]f64{fixed_bcd.to_f64(v.e[des].vT.p.x), fixed_bcd.to_f64(v.e[des].vT.p.y)},
-		[2]f64{fixed_bcd.to_f64(v.p.x), fixed_bcd.to_f64(v.p.y)},
-		[2]f64{fixed_bcd.to_f64(v.e[asc].vT.p.x), fixed_bcd.to_f64(v.e[asc].vT.p.y)},
-	)
+	// Check whether the local-minimum angle is <= 0: sign of 2D cross product cp = (b - a) x (b - c).
+	a := v.e[des].vT.p
+	b := v.p
+	c := v.e[asc].vT.p
+
+	abx := fixed_bcd.sub(b.x, a.x)
+	aby := fixed_bcd.sub(b.y, a.y)
+	bcx := fixed_bcd.sub(b.x, c.x)
+	bcy := fixed_bcd.sub(b.y, c.y)
+
+	cp := fixed_bcd.sub(fixed_bcd.mul(abx, bcy), fixed_bcd.mul(aby, bcx))
+	return cp.i <= 0
 }
 
 vertex_index :: proc "contextless" (ctx: ^Context($T), v: ^Vertex(T)) -> u32 {

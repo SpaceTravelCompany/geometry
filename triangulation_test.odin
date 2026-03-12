@@ -36,9 +36,11 @@ test_triangulation_square :: proc(t: ^testing.T) {
 	size := fixed_bcd.init(100, 0, DEF_FRAC_DIGITS)
 	square := _make_square_path_bcd(x0, y0, size)
 	defer delete(square)
+
 	poly := [][][2]fixed_bcd.BCD(DEF_FRAC_DIGITS){square}
 	indices, err := TrianguatePolygons_Fixed(poly)
 	defer delete(indices)
+
 	testing.expect_value(t, err, nil)
 	testing.expect_value(t, len(indices), 6)
 }
@@ -48,16 +50,21 @@ test_triangulation_2square :: proc(t: ^testing.T) {
 	x0 := fixed_bcd.init(0, 0, DEF_FRAC_DIGITS)
 	y0 := fixed_bcd.init(0, 0, DEF_FRAC_DIGITS)
 	size := fixed_bcd.init(100, 0, DEF_FRAC_DIGITS)
+
 	x1 := fixed_bcd.init(25, 0, DEF_FRAC_DIGITS)
 	y1 := fixed_bcd.init(-25, 0, DEF_FRAC_DIGITS)
 	size2 := fixed_bcd.init(50, 0, DEF_FRAC_DIGITS)
+
 	square := _make_square_path_bcd(x0, y0, size)
 	defer delete(square)
+
 	square2 := _make_square_path_bcd(x1, y1, size2)
 	defer delete(square2)
+
 	poly := [][][2]fixed_bcd.BCD(DEF_FRAC_DIGITS){square, square2}
 	indices, err := TrianguatePolygons_Fixed(poly)
 	defer delete(indices)
+
 	testing.expect_value(t, err, nil)
 	testing.expect_value(t, len(indices), 12)
 }
@@ -76,6 +83,7 @@ test_cross_product_sign_convention :: proc(t: ^testing.T) {
 		fixed_bcd.init(1, 0, DEF_FRAC_DIGITS),
 		fixed_bcd.init(1, 0, DEF_FRAC_DIGITS),
 	}
+
 	testing.expect_value(t, CrossProductSign(p0, p1, p2), 1)
 	testing.expect_value(
 		t,

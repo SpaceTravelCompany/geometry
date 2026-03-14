@@ -1061,7 +1061,7 @@ shapes_compute_polygon_fixed :: proc(
 									FRAC_DIGITS,
 								)
 								ls := fixed_bcd.sub(d1, t1)
-								two := fixed_bcd.init(2, 0, FRAC_DIGITS)
+								two := fixed_bcd.init_const(2, FRAC_DIGITS)
 								lt := fixed_bcd.mul(two, d0)
 								ms := fixed_bcd.add(d1, t1)
 								mt := lt
@@ -1131,7 +1131,7 @@ shapes_compute_polygon_fixed :: proc(
 											cur.end,
 										)
 									} else {
-										half_pt := fixed_bcd.init(0, 5, FRAC_DIGITS)
+										half_pt := fixed_bcd.init_const2(0, 5, FRAC_DIGITS)
 										half2 := [2]fixed_bcd.BCD(FRAC_DIGITS){half_pt, half_pt}
 										_, subdiv_t, subdiv_t_ = PointInLine(
 											lerp_fixed(cur2.ctl0, cur2.ctl1, half2),

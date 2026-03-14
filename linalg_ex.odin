@@ -442,7 +442,7 @@ PointInLine :: proc "contextless" (
 			minX := min(l0.x, l1.x)
 			maxX := max(l0.x, l1.x)
 			t = (p.x - minX)
-			t_ = (maxX - minX)
+			t_ = (maxX - minX) // always positive
 		}
 		return res &&
 			p.x >= min(l0.x, l1.x) &&
@@ -479,7 +479,7 @@ PointInLine :: proc "contextless" (
 			minX: T = min_fixed(l0.x, l1.x)
 			maxX: T = max_fixed(l0.x, l1.x)
 			t = sub(p.x, minX)
-			t_ = sub(maxX, minX)
+			t_ = sub(maxX, minX) // always positive
 		} else {
 			t_ = one_T
 		}
@@ -999,25 +999,30 @@ NearestPointBetweenPointAndLine :: proc "contextless" (
 	p: [2]$T,
 	l0: [2]T,
 	l1: [2]T,
-) -> [2]T where intrinsics.type_is_float(T) {
-	//when intrinsics.type_is_float(T) {
-	AB := l1 - l0
-	AC := p - l0
+) -> [2]T where intrinsics.type_is_float(T) ||
+	intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
+	intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
+	when intrinsics.type_is_float(T) {
+		AB := l1 - l0
+		AC := p - l0
 
-	return l0 + AB * (linalg.vector_dot(AB, AC) / linalg.vector_dot(AB, AB))
-	//}
-	// else {
-	// 	AB := fixed.sub(l1, l0)
-	// 	AC := fixed.sub(p, l0)
+		return l0 + AB * (linalg.vector_dot(AB, AC) / linalg.vector_dot(AB, AB))
+	} else {
+		when intrinsics.type_is_specialization_of(T, fixed.Fixed) {
+			sub :: fixed.sub
+			mul :: fixed.mul
+			div :: fixed.div
+		} else {
+			sub :: fixed_bcd.sub
+			mul :: fixed_bcd.mul
+			div :: fixed_bcd.div
+		}
 
-	// 	return fixed.add(
-	// 		l0,
-	// 		fixed.mul(
-	// 			AB,
-	// 			fixed.div(linalg.vector_dot_fixed(AB, AC), linalg.vector_dot_fixed(AB, AB)),
-	// 		),
-	// 	)
-	// }
+		AB := sub(l1, l0)
+		AC := sub(p, l0)
+
+		return fixed.add(l0, mul(AB, div(vector_dot_fixed(AB, AC), vector_dot_fixed(AB, AB))))
+	}
 }
 
 Circle :: struct(T: typeid) where intrinsics.type_is_float(T) {
@@ -1300,7 +1305,15 @@ vector_dot_fixed :: proc "contextless" (
 	a, b: $T/[$N]$E,
 ) -> (
 	c: E,
-) where intrinsics.type_is_specialization_of(E, fixed.Fixed) #no_bounds_check {
+) where intrinsics.type_is_specialization_of(E, fixed.Fixed) ||
+	intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) #no_bounds_check {
+	when intrinsics.type_is_specialization_of(T, fixed.Fixed) {
+		add :: fixed.add
+		mul :: fixed.mul
+	} else {
+		add :: fixed_bcd.add
+		mul :: fixed_bcd.mul
+	}
 	#unroll for i in 0 ..< N {
 		c = fixed.add(c, fixed.mul(a[i], b[i]))
 	}

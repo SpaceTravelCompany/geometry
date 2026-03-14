@@ -1055,11 +1055,11 @@ shapes_compute_polygon_fixed :: proc(
 							) or_return
 							if curveType == .Loop {
 								disc := 4 * d0.i * d2.i - 3 * d1.i * d1.i
-								t1 := fixed_bcd.init(
-									int(utils_private.sqrt_i64(i64(disc))),
-									0,
-									FRAC_DIGITS,
-								)
+								t1 := fixed_bcd.BCD(FRAC_DIGITS) {
+									i = utils_private.sqrt_i128(
+										disc * fixed_bcd._SCALE_TABLE[FRAC_DIGITS - 1],
+									),
+								}
 								ls := fixed_bcd.sub(d1, t1)
 								two := fixed_bcd.init_const(2, FRAC_DIGITS)
 								lt := fixed_bcd.mul(two, d0)

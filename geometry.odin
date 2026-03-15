@@ -57,6 +57,7 @@ __Geometry_Error :: enum {
 	TOO_MANY_EDGES,
 	NO_PATHS,
 	NO_EDGE_IN_VERTEX,
+	ADD_LOCAL_MAX_POLY_FAILED,
 }
 
 Geometry_Error :: union #shared_nil {
@@ -1060,11 +1061,13 @@ shapes_compute_polygon_fixed :: proc(
 										disc * fixed_bcd._SCALE_TABLE[FRAC_DIGITS - 1],
 									),
 								}
+
 								ls := fixed_bcd.sub(d1, t1)
 								two := fixed_bcd.init_const(2, FRAC_DIGITS)
 								lt := fixed_bcd.mul(two, d0)
 								ms := fixed_bcd.add(d1, t1)
 								mt := lt
+
 								subdiv_at: fixed_bcd.BCD(FRAC_DIGITS)
 								if lt.i > 0 ? (0 < ls.i && ls.i < lt.i) : (0 > ls.i && ls.i > lt.i) {
 									subdiv_at = fixed_bcd.div(ls, lt)
@@ -1073,6 +1076,7 @@ shapes_compute_polygon_fixed :: proc(
 								} else {
 									continue
 								}
+
 								pt01, pt12, pt23, pt012, pt123, pt0123 := SubdivCubicBezier(
 									[4][2]fixed_bcd.BCD(FRAC_DIGITS) {
 										c.start,

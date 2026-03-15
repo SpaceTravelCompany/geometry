@@ -1497,6 +1497,36 @@ CrossProductSign :: proc "contextless" (
 	return 0
 }
 
+DotProduct :: proc "contextless" (
+	p1, p2, p3: [2]$T,
+) -> T where intrinsics.type_is_float(T) ||
+	intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
+	intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
+	when intrinsics.type_is_float(T) {
+		a := p2.x - p1.x
+		b := p3.x - p2.x
+		c := p2.y - p1.y
+		d := p3.y - p2.y
+		return a * b + c * d
+	} else {
+		when intrinsics.type_is_specialization_of(T, fixed.Fixed) {
+			add :: fixed.add
+			sub :: fixed.sub
+			mul :: fixed.mul
+		} else {
+			add :: fixed_bcd.add
+			sub :: fixed_bcd.sub
+			mul :: fixed_bcd.mul
+		}
+
+		a := sub(p2.x, p1.x)
+		b := sub(p3.x, p2.x)
+		c := sub(p2.y, p1.y)
+		d := sub(p3.y, p2.y)
+		return add(mul(a, b), mul(c, d))
+	}
+}
+
 // InCircleTest: returns determinant. Positive => D inside circle through A,B,C (when ABC is CCW).
 InCircleTest :: proc "contextless" (
 	ptA, ptB, ptC, ptD: [2]$T,

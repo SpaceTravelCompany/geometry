@@ -1,5 +1,8 @@
 package geometry
 
+import "./clipper"
+import "./linalg_ex"
+import "./triangulation"
 import "base:intrinsics"
 import "base:runtime"
 import "core:math"
@@ -9,8 +12,6 @@ import "core:mem"
 import "shared:utils_private/fixed_bcd"
 
 import "shared:utils_private"
-
-DEF_FRAC_DIGITS :: 14
 
 
 shape_vertex2d_fixed :: struct($FRAC_DIGITS: int) {
@@ -53,23 +54,11 @@ __shape_error :: enum {
 	EmptyColor,
 }
 
-__Geometry_Error :: enum {
-	TOO_MANY_EDGES,
-	NO_PATHS,
-	NO_EDGE_IN_VERTEX,
-	ADD_LOCAL_MAX_POLY_FAILED,
-}
-
-Geometry_Error :: union #shared_nil {
-	__Geometry_Error,
-	runtime.Allocator_Error,
-}
-
 
 shape_error :: union #shared_nil {
 	__shape_error,
-	__Trianguate_Error,
-	__Geometry_Error,
+	triangulation.__Trianguate_Error,
+	clipper.__Clipper_Error,
 	runtime.Allocator_Error,
 }
 
@@ -496,24 +485,24 @@ _Shapes_ComputeLine :: proc(
 		color: linalg.Vector4f32,
 		pts: curve_struct_fixed(FRAC_DIGITS),
 		F: [4][3]f32,
-	) {
+	) -> shape_error {
 		start: u32 = u32(len(vertList))
 		non_zero_append(
 			vertList,
 			shape_vertex2d_fixed(FRAC_DIGITS){uvw = {F[0][0], F[0][1], F[0][2]}, color = color},
-		)
+		) or_return
 		non_zero_append(
 			vertList,
 			shape_vertex2d_fixed(FRAC_DIGITS){uvw = {F[1][0], F[1][1], F[1][2]}, color = color},
-		)
+		) or_return
 		non_zero_append(
 			vertList,
 			shape_vertex2d_fixed(FRAC_DIGITS){uvw = {F[2][0], F[2][1], F[2][2]}, color = color},
-		)
+		) or_return
 		non_zero_append(
 			vertList,
 			shape_vertex2d_fixed(FRAC_DIGITS){uvw = {F[3][0], F[3][1], F[3][2]}, color = color},
-		)
+		) or_return
 		vertList[start].pos = pts.start
 		vertList[start + 1].pos = pts.ctl0
 		vertList[start + 2].pos = pts.ctl1
@@ -530,7 +519,7 @@ _Shapes_ComputeLine :: proc(
 							idx += 1
 						}
 					}
-					non_zero_append(indList, ..indices[:])
+					non_zero_append(indList, ..indices[:]) or_return
 					return
 				}
 			}
@@ -544,22 +533,22 @@ _Shapes_ComputeLine :: proc(
 					idx += 1
 				}
 			}
-			if PointInTriangle(
+			if linalg_ex.PointInTriangle(
 				vertList[start + i].pos,
 				vertList[indices[0]].pos,
 				vertList[indices[1]].pos,
 				vertList[indices[2]].pos,
 			) {
 				for k: u32 = 0; k < 3; k += 1 {
-					non_zero_append(indList, indices[k])
-					non_zero_append(indList, indices[(k + 1) % 3])
-					non_zero_append(indList, start + i)
+					non_zero_append(indList, indices[k]) or_return
+					non_zero_append(indList, indices[(k + 1) % 3]) or_return
+					non_zero_append(indList, start + i) or_return
 				}
 				return
 			}
 		}
 
-		b := LinesIntersect3(
+		b := linalg_ex.LinesIntersect3(
 			vertList[start].pos,
 			vertList[start + 2].pos,
 			vertList[start + 1].pos,
@@ -568,7 +557,15 @@ _Shapes_ComputeLine :: proc(
 		if b == .intersect {
 			if fixed_bcd.length2(vertList[start + 2].pos, vertList[start].pos).i <
 			   fixed_bcd.length2(vertList[start + 3].pos, vertList[start + 1].pos).i {
-				non_zero_append(indList, start, start + 1, start + 2, start, start + 2, start + 3)
+				non_zero_append(
+					indList,
+					start,
+					start + 1,
+					start + 2,
+					start,
+					start + 2,
+					start + 3,
+				) or_return
 			} else {
 				non_zero_append(
 					indList,
@@ -578,7 +575,7 @@ _Shapes_ComputeLine :: proc(
 					start + 1,
 					start + 2,
 					start + 3,
-				)
+				) or_return
 			}
 			return
 		}
@@ -601,18 +598,34 @@ _Shapes_ComputeLine :: proc(
 					start + 2,
 					start + 1,
 					start + 3,
-				)
+				) or_return
 			}
 			return
 		}
 		if fixed_bcd.length2(vertList[start + 1].pos, vertList[start].pos).i <
 		   fixed_bcd.length2(vertList[start + 3].pos, vertList[start + 2].pos).i {
-			non_zero_append(indList, start, start + 2, start + 1, start, start + 1, start + 3)
+			non_zero_append(
+				indList,
+				start,
+				start + 2,
+				start + 1,
+				start,
+				start + 1,
+				start + 3,
+			) or_return
 		} else {
-			non_zero_append(indList, start, start + 2, start + 3, start + 3, start + 2, start + 1)
+			non_zero_append(
+				indList,
+				start,
+				start + 2,
+				start + 3,
+				start + 3,
+				start + 2,
+				start + 1,
+			) or_return
 		}
 	}
-	appendLine(vertList, indList, color, pts, F)
+	appendLine(vertList, indList, color, pts, F) or_return
 
 	return nil
 }
@@ -1063,7 +1076,7 @@ shapes_compute_polygon_fixed :: proc(
 								}
 
 								ls := fixed_bcd.sub(d1, t1)
-								two := fixed_bcd.init_const(2, FRAC_DIGITS)
+								two := fixed_bcd.init_const(2, 0, 0, FRAC_DIGITS)
 								lt := fixed_bcd.mul(two, d0)
 								ms := fixed_bcd.add(d1, t1)
 								mt := lt
@@ -1077,22 +1090,23 @@ shapes_compute_polygon_fixed :: proc(
 									continue
 								}
 
-								pt01, pt12, pt23, pt012, pt123, pt0123 := SubdivCubicBezier(
-									[4][2]fixed_bcd.BCD(FRAC_DIGITS) {
-										c.start,
-										c.ctl0,
-										c.ctl1,
-										c.end,
-									},
-									subdiv_at,
-								)
+								pt01, pt12, pt23, pt012, pt123, pt0123 :=
+									linalg_ex.SubdivCubicBezier(
+										[4][2]fixed_bcd.BCD(FRAC_DIGITS) {
+											c.start,
+											c.ctl0,
+											c.ctl1,
+											c.end,
+										},
+										subdiv_at,
+									)
 								curves_npi[i] = curve_struct_fixed(FRAC_DIGITS) {
-									start = c.start,
-									ctl0  = pt01,
-									ctl1  = pt012,
-									end   = pt0123,
-									type  = .Unknown,
-								}
+										start = c.start,
+										ctl0  = pt01,
+										ctl1  = pt012,
+										end   = pt0123,
+										type  = .Unknown,
+									}
 								utils_private.non_zero_inject_at_elem(
 									curves_npi,
 									i + 1,
@@ -1125,26 +1139,26 @@ shapes_compute_polygon_fixed :: proc(
 										cur.type == .Quadratic ? [][2]fixed_bcd.BCD(FRAC_DIGITS){cur.start, cur.ctl0, cur.end} : [][2]fixed_bcd.BCD(FRAC_DIGITS){cur.start, cur.ctl0, cur.ctl1, cur.end}
 									poly2 :=
 										cur2.type == .Quadratic ? [][2]fixed_bcd.BCD(FRAC_DIGITS){cur2.start, cur2.ctl0, cur2.end} : [][2]fixed_bcd.BCD(FRAC_DIGITS){cur2.start, cur2.ctl0, cur2.ctl1, cur2.end}
-									if !PolygonOverlapsPolygon(poly1, poly2) do continue
+									if !linalg_ex.PolygonOverlapsPolygon(poly1, poly2) do continue
 									subdiv_t: fixed_bcd.BCD(FRAC_DIGITS)
 									subdiv_t_: fixed_bcd.BCD(FRAC_DIGITS)
 									if cur2.type == .Quadratic {
-										_, subdiv_t, subdiv_t_ = PointInLine(
+										_, subdiv_t, subdiv_t_ = linalg_ex.PointInLine(
 											cur2.ctl0,
 											cur.start,
 											cur.end,
 										)
 									} else {
-										half_pt := fixed_bcd.init_const2(0, 5, FRAC_DIGITS)
+										half_pt := fixed_bcd.init_const(0, 5, 1, FRAC_DIGITS)
 										half2 := [2]fixed_bcd.BCD(FRAC_DIGITS){half_pt, half_pt}
-										_, subdiv_t, subdiv_t_ = PointInLine(
-											lerp_fixed(cur2.ctl0, cur2.ctl1, half2),
+										_, subdiv_t, subdiv_t_ = linalg_ex.PointInLine(
+											linalg_ex.lerp_fixed(cur2.ctl0, cur2.ctl1, half2),
 											cur.start,
 											cur.end,
 										)
 									}
 									if cur.type == .Quadratic {
-										pt01, pt12, pt012 := SubdivQuadraticBezier(
+										pt01, pt12, pt012 := linalg_ex.SubdivQuadraticBezier(
 											[3][2]fixed_bcd.BCD(FRAC_DIGITS) {
 												cur.start,
 												cur.ctl0,
@@ -1170,7 +1184,7 @@ shapes_compute_polygon_fixed :: proc(
 										) or_return
 									} else {
 										pt01, pt12, pt23, pt012, pt123, pt0123 :=
-											SubdivCubicBezier(
+											linalg_ex.SubdivCubicBezier(
 												[4][2]fixed_bcd.BCD(FRAC_DIGITS) {
 													cur.start,
 													cur.ctl0,
@@ -1214,7 +1228,7 @@ shapes_compute_polygon_fixed :: proc(
 					curves_npi := curves2[npi]
 					curve_idx := 0
 					poly_pts := non_curves_npi[:]
-					orient := GetPolygonOrientation(poly_pts)
+					orient := linalg_ex.GetPolygonOrientation(poly_pts)
 					invent_b := orient != .CounterClockwise
 
 					i := 0
@@ -1234,17 +1248,22 @@ shapes_compute_polygon_fixed :: proc(
 							for ; j < len(curves_npi) && non_next != curves_npi[j].start; j += 1 {}
 							non_zero_resize_dynamic_array(&insert_ar, 0) or_return
 
-							if utils_private.invent_bool(
-								PointInPolygon(curves_npi[curve_idx].ctl0, poly_pts),
-								invent_b,
-							) {
+
+							if ok :=
+								   linalg_ex.PointInPolygon(
+									   curves_npi[curve_idx].ctl0,
+									   poly_pts,
+								   ) ==
+								   .Inside; invent_b ? !ok : ok {
 								non_zero_append(&insert_ar, curves_npi[curve_idx].ctl0) or_return
 							}
 							if curves_npi[curve_idx].type != .Quadratic {
-								if utils_private.invent_bool(
-									PointInPolygon(curves_npi[curve_idx].ctl1, poly_pts),
-									invent_b,
-								) {
+								if ok :=
+									   linalg_ex.PointInPolygon(
+										   curves_npi[curve_idx].ctl1,
+										   poly_pts,
+									   ) ==
+									   .Inside; invent_b ? !ok : ok {
 									non_zero_append(
 										&insert_ar,
 										curves_npi[curve_idx].ctl1,
@@ -1253,17 +1272,20 @@ shapes_compute_polygon_fixed :: proc(
 							}
 							for e := curve_idx + 1; e < j; e += 1 {
 								non_zero_append(&insert_ar, curves_npi[e].start) or_return
-								if utils_private.invent_bool(
-									PointInPolygon(curves_npi[e].ctl0, poly_pts),
-									invent_b,
-								) {
+
+								if ok :=
+									   linalg_ex.PointInPolygon(curves_npi[e].ctl0, poly_pts) ==
+									   .Inside; invent_b ? !ok : ok {
 									non_zero_append(&insert_ar, curves_npi[e].ctl0) or_return
 								}
+
 								if curves_npi[e].type != .Quadratic {
-									if utils_private.invent_bool(
-										PointInPolygon(curves_npi[e].ctl1, poly_pts),
-										invent_b,
-									) {
+									if ok :=
+										   linalg_ex.PointInPolygon(
+											   curves_npi[e].ctl1,
+											   poly_pts,
+										   ) ==
+										   .Inside; invent_b ? !ok : ok {
 										non_zero_append(&insert_ar, curves_npi[e].ctl1) or_return
 									}
 								}
@@ -1289,19 +1311,19 @@ shapes_compute_polygon_fixed :: proc(
 				for npi in 0 ..< len(non_curves2) {
 					non_curves[npi] = non_curves2[npi][:]
 				}
-				indices, tri_err := TrianguatePolygons_Fixed(non_curves[:], context.temp_allocator)
+				indices, tri_err := triangulation.TrianguatePolygons_Fixed(
+					non_curves[:],
+					context.temp_allocator,
+				)
 				if tri_err != nil {
-					switch tri in tri_err {
-					case __Trianguate_Error:
-						err = tri_err.(__Trianguate_Error)
+					switch e in tri_err {
+					case triangulation.__Trianguate_Error:
+						return e
 					case runtime.Allocator_Error:
-						err = tri_err.(runtime.Allocator_Error)
-					case __Geometry_Error:
-						err = tri_err.(__Geometry_Error)
+						return e
 					}
-					return
 				}
-				non_zero_append(indList, ..indices)
+				non_zero_append(indList, ..indices) or_return
 
 				for v, i in non_curves {
 					for vv in v {
@@ -1333,3 +1355,14 @@ shapes_compute_polygon_fixed :: proc(
 	return
 }
 
+
+poly_transform_matrix :: proc "contextless" (inout_poly: ^shapes, F: linalg.Matrix4x4f32) {
+	for &node in inout_poly.nodes {
+		for pts in node.pts {
+			for &pt in pts {
+				out := linalg.mul(F, linalg.Vector4f32{pt.x, pt.y, 0.0, 1.0})
+				pt = linalg.Vector2f32{out.x, out.y} / out.w
+			}
+		}
+	}
+}

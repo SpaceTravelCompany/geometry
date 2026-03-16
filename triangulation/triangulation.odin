@@ -1,5 +1,6 @@
-package geometry
+package triangulation
 
+import "../linalg_ex"
 import "base:intrinsics"
 import "base:runtime"
 import "core:math"
@@ -11,6 +12,9 @@ import utils "shared:utils_private"
 import "shared:utils_private/fixed_bcd"
 
 __Trianguate_Error :: enum {
+	TOO_MANY_EDGES,
+	NO_PATHS,
+	NO_EDGE_IN_VERTEX,
 	FIRST_ACTIVE_MISSING,
 	EBELLOW_MISSING,
 	PATHS_INTERSECTS,
@@ -21,7 +25,6 @@ __Trianguate_Error :: enum {
 }
 
 Trianguate_Error :: union #shared_nil {
-	__Geometry_Error,
 	__Trianguate_Error,
 	runtime.Allocator_Error,
 }
@@ -117,10 +120,8 @@ FixupEdgeIntersects :: proc(ctx: ^Context($T)) -> (err: Trianguate_Error) {
 				break
 			}
 			if e2.vT.p.y.i < e1.vB.p.y.i && e2.vB.p.y.i > e1.vT.p.y.i {
-				if LinesIntersect3(e2.vL.p, e2.vR.p, e1.vL.p, e1.vR.p) == .intersect {
-					ok, gerr := RemoveIntersection(ctx, e2, e1)
-					if gerr != nil do return Geometry_To_Triangulate_Error(gerr)
-					if !ok do return __Trianguate_Error.PATHS_INTERSECTS
+				if linalg_ex.LinesIntersect3(e2.vL.p, e2.vR.p, e1.vL.p, e1.vR.p) == .intersect {
+					RemoveIntersection(ctx, e2, e1) or_return
 				}
 			}
 		}
@@ -270,7 +271,7 @@ TrianguatePolygons_Fixed :: proc(
 	for tri in ctx.all_tris {
 		vs := triangle_vertices(tri)
 		p0, p1, p2 := vs[0].p, vs[1].p, vs[2].p
-		cps := CrossProductSign(p0, p1, p2)
+		cps := linalg_ex.CrossProductSign(p0, p1, p2)
 		if cps == 0 do continue // skip degenerate triangles
 		i0 := vertex_index(&ctx, vs[0])
 		i1 := vertex_index(&ctx, vs[1])
@@ -313,11 +314,12 @@ DoTriangulateLeft :: proc(
 		if e == edge || !e.isActive do continue
 		vX := e.vB if e.vT == pivot else e.vT
 		if vX == v do continue
-		cps := CrossProductSign(v.p, pivot.p, vX.p)
+		cps := linalg_ex.CrossProductSign(v.p, pivot.p, vX.p)
 		if cps == 0 {
 			// if pivot is between v and vX then continue
 			if (v.p.x.i > pivot.p.x.i) == (pivot.p.x.i > vX.p.x.i) do continue
-		} else if cps > 0 || (vAlt != nil && !(CrossProductSign(vX.p, pivot.p, vAlt.p) < 0)) {
+		} else if cps > 0 ||
+		   (vAlt != nil && !(linalg_ex.CrossProductSign(vX.p, pivot.p, vAlt.p) < 0)) {
 			continue
 		}
 		vAlt = vX
@@ -334,9 +336,7 @@ DoTriangulateLeft :: proc(
 		if vAlt.p.y.i == v.p.y.i && v.p.y.i == minY.i && HorizontalBetween(ctx, vAlt, v) != nil {
 			return
 		}
-		gerr: Geometry_Error
-		eX, gerr = MakeEdge(ctx, vAlt, v, .loose)
-		if gerr != nil do return Geometry_To_Triangulate_Error(gerr)
+		eX = MakeEdge(ctx, vAlt, v, .loose) or_return
 	}
 	CreateTriangle(ctx, edge, eAlt, eX) or_return
 	if !EdgeCompleted(eX) do DoTriangulateLeft(ctx, eX, vAlt, minY) or_return
@@ -359,12 +359,13 @@ DoTriangulateRight :: proc(
 		if e == edge || !e.isActive do continue
 		vX := e.vB if e.vT == pivot else e.vT
 		if vX == v do continue
-		cps := CrossProductSign(v.p, pivot.p, vX.p)
+		cps := linalg_ex.CrossProductSign(v.p, pivot.p, vX.p)
 		if cps == 0 {
 			// if pivot is between v and vX then continue;
 			// nb: this is important for both horiz and non-horiz collinear
 			if (v.p.x.i > pivot.p.x.i) == (pivot.p.x.i > vX.p.x.i) do continue
-		} else if cps < 0 || (vAlt != nil && !(CrossProductSign(vX.p, pivot.p, vAlt.p) > 0)) { 	// else if right-turning or not the best edge, then continue
+		} else if cps < 0 ||
+		   (vAlt != nil && !(linalg_ex.CrossProductSign(vX.p, pivot.p, vAlt.p) > 0)) { 	// else if right-turning or not the best edge, then continue
 			continue
 		}
 		vAlt = vX
@@ -381,9 +382,7 @@ DoTriangulateRight :: proc(
 		if vAlt.p.y.i == v.p.y.i && v.p.y.i == minY.i && HorizontalBetween(ctx, vAlt, v) != nil {
 			return
 		}
-		gerr: Geometry_Error
-		eX, gerr = MakeEdge(ctx, vAlt, v, .loose)
-		if gerr != nil do return Geometry_To_Triangulate_Error(gerr)
+		eX = MakeEdge(ctx, vAlt, v, .loose) or_return
 	}
 
 	CreateTriangle(ctx, edge, eX, eAlt) or_return
@@ -430,12 +429,12 @@ ForceLegal :: proc(ctx: ^Context($T), edge: ^Edge(T)) -> (err: Trianguate_Error)
 
 	// InCircleTest reqires edge.triangleA to be a valid triangle
 	// if IsEmptyTriangle(edge.triangleA) then Exit; // slower
-	if CrossProductSign(vertA.p, edge.vL.p, edge.vR.p) == 0 do return
+	if linalg_ex.CrossProductSign(vertA.p, edge.vL.p, edge.vR.p) == 0 do return
 
 	// ictResult - result sign is dependant on triangleA's orientation
-	ict := InCircleTest(vertA.p, edge.vL.p, edge.vR.p, vertB.p)
+	ict := linalg_ex.InCircleTest(vertA.p, edge.vL.p, edge.vR.p, vertB.p)
 	if ict.i == 0 do return
-	right_turn := CrossProductSign(vertA.p, edge.vL.p, edge.vR.p) > 0
+	right_turn := linalg_ex.CrossProductSign(vertA.p, edge.vL.p, edge.vR.p) > 0
 	if right_turn == (ict.i < 0) do return // if on or out of circle then exit
 
 	// TRIANGLES HERE ARE **NOT** DELAUNAY COMPLIANT, SO MAKE THEM SO.
@@ -502,9 +501,9 @@ CreateInnerLocMinLooseEdge :: proc(
 			e.vB.p.y.i >= yAbove &&
 			e.vB != vAbove &&
 			e.vT != vAbove &&
-			!(CrossProductSign(e.vL.p, vAbove.p, e.vR.p) < 0)
+			!(linalg_ex.CrossProductSign(e.vL.p, vAbove.p, e.vR.p) < 0)
 		if in_range {
-			d, d_ := ShortestLength2Line(vAbove.p, e.vL.p, e.vR.p)
+			d, d_ := linalg_ex.ShortestLength2Line(vAbove.p, e.vL.p, e.vR.p)
 			if eBelow == nil ||
 			   (d_.i > 0 ? d.i < fixed_bcd.mul(bestD, d_).i : d.i > fixed_bcd.mul(bestD, d_).i) {
 				eBelow = e
@@ -529,7 +528,8 @@ CreateInnerLocMinLooseEdge :: proc(
 			   e.vL.p.x.i < xAbove &&
 			   e.vB.p.y.i > yAbove &&
 			   e.vT.p.y.i < yBest {
-				if res := LinesIntersect3(e.vB.p, e.vT.p, vBest.p, vAbove.p); res == .intersect {
+				if res := linalg_ex.LinesIntersect3(e.vB.p, e.vT.p, vBest.p, vAbove.p);
+				   res == .intersect {
 					vBest = e.vT if e.vT.p.y.i > yAbove else e.vB
 					xBest = vBest.p.x.i
 					yBest = vBest.p.y.i
@@ -543,7 +543,8 @@ CreateInnerLocMinLooseEdge :: proc(
 			   e.vL.p.x.i > xAbove &&
 			   e.vB.p.y.i > yAbove &&
 			   e.vT.p.y.i < yBest {
-				if res := LinesIntersect3(e.vB.p, e.vT.p, vBest.p, vAbove.p); res == .intersect {
+				if res := linalg_ex.LinesIntersect3(e.vB.p, e.vT.p, vBest.p, vAbove.p);
+				   res == .intersect {
 					vBest = e.vT if e.vT.p.y.i > yAbove else e.vB
 					xBest = vBest.p.x.i
 					yBest = vBest.p.y.i
@@ -552,9 +553,7 @@ CreateInnerLocMinLooseEdge :: proc(
 			e = e.nextE
 		}
 	}
-	gerr: Geometry_Error
-	ed, gerr = MakeEdge(ctx, vBest, vAbove, .loose)
-	if gerr != nil do return ed, Geometry_To_Triangulate_Error(gerr)
+	ed = MakeEdge(ctx, vBest, vAbove, .loose) or_return
 	return
 }
 
@@ -598,15 +597,13 @@ MergeDupOrCollinearVertices :: proc(ctx: ^Context($T)) -> (err: Trianguate_Error
 			if IsHorizontal(e1) || e1.vB != vt do continue
 			for j := i + 1; j < len(vt.e); j += 1 {
 				e2 := vt.e[j]
-				if e2.vB != vt || e1.vT.p.y.i == e2.vT.p.y.i || CrossProductSign(e1.vT.p, vt.p, e2.vT.p) != 0 do continue
+				if e2.vB != vt || e1.vT.p.y.i == e2.vT.p.y.i || linalg_ex.CrossProductSign(e1.vT.p, vt.p, e2.vT.p) != 0 do continue
 				// we have parallel edges, both heading up from vt.p.
 				// split the longer edge at the top of the shorter edge.
 				if e1.vT.p.y.i < e2.vT.p.y.i {
-					gerr := SplitEdge(ctx, e1, e2)
-					if gerr != nil do return Geometry_To_Triangulate_Error(gerr)
+					SplitEdge(ctx, e1, e2) or_return
 				} else {
-					gerr := SplitEdge(ctx, e2, e1)
-					if gerr != nil do return Geometry_To_Triangulate_Error(gerr)
+					SplitEdge(ctx, e2, e1) or_return
 				}
 				break // because only two edges can be collinear
 			}
@@ -631,7 +628,7 @@ AddPath :: proc(
 	}
 	iNext := utils.Next(i0, len(pts))
 	i := i0
-	for CrossProductSign(pts[iPrev], pts[i], pts[iNext]) == 0 {
+	for linalg_ex.CrossProductSign(pts[iPrev], pts[i], pts[iNext]) == 0 {
 		FindLocMinIdx(pts, &i)
 		if i == i0 do return
 		iPrev = utils.Prev(i, len(pts))
@@ -645,11 +642,11 @@ AddPath :: proc(
 	vert_cnt := len(ctx.all_verts)
 
 	// we are now at the first legitimate locMin
-	vert, vert_err := MakeVertex(pts[i])
-	if vert_err != nil do return Geometry_To_Triangulate_Error(vert_err)
+	vert := MakeVertex(pts[i]) or_return
+
 	non_zero_append(&ctx.all_verts, vert) or_return
 	v0 := ctx.all_verts[vert_cnt]
-	v0.innerLM = CrossProductSign(pts[iPrev], pts[i], pts[iNext]) < 0
+	v0.innerLM = linalg_ex.CrossProductSign(pts[iPrev], pts[i], pts[iNext]) < 0
 	vPrev := v0
 	i = iNext
 
@@ -664,15 +661,15 @@ AddPath :: proc(
 		}
 
 		iNext = utils.Next(i, len(pts))
-		if CrossProductSign(vPrev.p, pts[i], pts[iNext]) == 0 { 	//skips collinear path (vPrev, pts[i], pts[iNext] is straight)
+		if linalg_ex.CrossProductSign(vPrev.p, pts[i], pts[iNext]) == 0 { 	//skips collinear path (vPrev, pts[i], pts[iNext] is straight)
 			i = iNext
 			continue
 		}
 
 
 		for pts[i].y.i <= vPrev.p.y.i { 	// ascend up next bound to LocMax
-			vert, vert_err := MakeVertex(pts[i])
-			if vert_err != nil do return Geometry_To_Triangulate_Error(vert_err)
+			vert := MakeVertex(pts[i]) or_return
+
 			non_zero_append(&ctx.all_verts, vert) or_return
 			v := ctx.all_verts[len(ctx.all_verts) - 1]
 
@@ -681,7 +678,7 @@ AddPath :: proc(
 			i = iNext
 
 			for iNext = utils.Next(i, len(pts));
-			    CrossProductSign(vPrev.p, pts[i], pts[iNext]) == 0; {
+			    linalg_ex.CrossProductSign(vPrev.p, pts[i], pts[iNext]) == 0; {
 				i = iNext
 				iNext = utils.Next(i, len(pts))
 			}
@@ -691,8 +688,8 @@ AddPath :: proc(
 		// Now at a locMax, so descend to next locMin
 		vPrevPrev := vPrev
 		for i != i0 && pts[i].y.i >= vPrev.p.y.i {
-			vert, vert_err := MakeVertex(pts[i])
-			if vert_err != nil do return Geometry_To_Triangulate_Error(vert_err)
+			vert := MakeVertex(pts[i]) or_return
+
 			non_zero_append(&ctx.all_verts, vert) or_return
 			v := ctx.all_verts[len(ctx.all_verts) - 1]
 			MakeEdge(ctx, v, vPrev, .descend)
@@ -701,7 +698,7 @@ AddPath :: proc(
 			i = iNext
 
 			for iNext = utils.Next(i, len(pts));
-			    CrossProductSign(vPrev.p, pts[i], pts[iNext]) == 0; {
+			    linalg_ex.CrossProductSign(vPrev.p, pts[i], pts[iNext]) == 0; {
 				i = iNext
 				iNext = utils.Next(i, len(pts))
 			}
@@ -710,12 +707,11 @@ AddPath :: proc(
 		if i == i0 do break
 		// Determine inner local minima per-locMin (Clipper2 behavior).
 		// Only set to true when the vertex turns left at the next locMin.
-		if CrossProductSign(vPrevPrev.p, vPrev.p, pts[i]) < 0 {
+		if linalg_ex.CrossProductSign(vPrevPrev.p, vPrev.p, pts[i]) < 0 {
 			vPrev.innerLM = true
 		}
 	}
-	_, ed_err := MakeEdge(ctx, v0, vPrev, .descend)
-	if ed_err != nil do return Geometry_To_Triangulate_Error(ed_err)
+	MakeEdge(ctx, v0, vPrev, .descend) or_return
 
 	len_fin := len(ctx.all_verts) - vert_cnt // finally, ignore this path if is not a polygon or too small
 	i = vert_cnt
@@ -726,17 +722,6 @@ AddPath :: proc(
 	}
 
 	return
-}
-
-@(private = "file")
-Geometry_To_Triangulate_Error :: proc "contextless" (err: Geometry_Error) -> Trianguate_Error {
-	switch g in err {
-	case __Geometry_Error:
-		return err.(__Geometry_Error)
-	case runtime.Allocator_Error:
-		return err.(runtime.Allocator_Error)
-	}
-	return nil
 }
 
 @(private = "file")
@@ -811,7 +796,7 @@ EdgeContains :: proc "contextless" (edge: ^Edge($T), v: ^Vertex(T)) -> EdgeConta
 }
 
 @(private = "file")
-RemoveEdgeFromVertex :: proc(vert: ^Vertex($T), edge: ^Edge(T)) -> (err: Geometry_Error) {
+RemoveEdgeFromVertex :: proc(vert: ^Vertex($T), edge: ^Edge(T)) -> (err: Trianguate_Error) {
 	for e, i in vert.e {
 		if e == edge {
 			ordered_remove(&vert.e, i)
@@ -834,7 +819,7 @@ MakeEdge :: proc(
 	kind: EdgeKind,
 ) -> (
 	res: ^Edge(T),
-	err: Geometry_Error,
+	err: Trianguate_Error,
 ) where intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
 	non_zero_append(&ctx.all_edges, new(Edge(T), context.temp_allocator) or_return) or_return
 	if len(ctx.all_edges) >= int(max(u32) - 1) do return nil, .TOO_MANY_EDGES
@@ -880,7 +865,7 @@ SetEdgeToActive :: proc "contextless" (ctx: ^Context($T), edge: ^Edge(T)) {
 }
 
 @(private = "file")
-RemoveEdgeFromActives :: proc(ctx: ^Context($T), edge: ^Edge(T)) -> (err: Geometry_Error) {
+RemoveEdgeFromActives :: proc(ctx: ^Context($T), edge: ^Edge(T)) -> (err: Trianguate_Error) {
 	RemoveEdgeFromVertex(edge.vB, edge) or_return
 	if edge.vT != edge.vB do RemoveEdgeFromVertex(edge.vT, edge) or_return
 	prev := edge.prevE
@@ -893,7 +878,7 @@ RemoveEdgeFromActives :: proc(ctx: ^Context($T), edge: ^Edge(T)) -> (err: Geomet
 }
 
 @(private = "file")
-SplitEdge :: proc(ctx: ^Context($T), longE, shortE: ^Edge(T)) -> (err: Geometry_Error) {
+SplitEdge :: proc(ctx: ^Context($T), longE, shortE: ^Edge(T)) -> (err: Trianguate_Error) {
 	oldT := longE.vT
 	newT := shortE.vT
 	RemoveEdgeFromVertex(oldT, longE) or_return
@@ -911,30 +896,29 @@ RemoveIntersection :: proc(
 	e1: ^Edge(T),
 	e2: ^Edge(T),
 ) -> (
-	res: bool,
-	err: Geometry_Error,
+	err: Trianguate_Error,
 ) where intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
 	v: ^Vertex(T) = e1.vL
 	tmpE: ^Edge(T) = e2
-	d, d_ := ShortestLength2Line(e1.vL.p, e2.vL.p, e2.vR.p)
-	d2, d2_ := ShortestLength2Line(e1.vR.p, e2.vL.p, e2.vR.p)
+	d, d_ := linalg_ex.ShortestLength2Line(e1.vL.p, e2.vL.p, e2.vR.p)
+	d2, d2_ := linalg_ex.ShortestLength2Line(e1.vR.p, e2.vL.p, e2.vR.p)
 	if fixed_bcd.mul(d2, d_).i < fixed_bcd.mul(d, d2_).i {
 		d = d2; d_ = d2_
 		v = e1.vR
 	}
-	d2, d2_ = ShortestLength2Line(e2.vL.p, e1.vL.p, e1.vR.p)
+	d2, d2_ = linalg_ex.ShortestLength2Line(e2.vL.p, e1.vL.p, e1.vR.p)
 	if fixed_bcd.mul(d2, d_).i < fixed_bcd.mul(d, d2_).i {
 		d = d2; d_ = d2_
 		tmpE = e1
 		v = e2.vL
 	}
-	d2, d2_ = ShortestLength2Line(e2.vR.p, e1.vL.p, e1.vR.p)
+	d2, d2_ = linalg_ex.ShortestLength2Line(e2.vR.p, e1.vL.p, e1.vR.p)
 	if fixed_bcd.mul(d2, d_).i < fixed_bcd.mul(d, d2_).i {
 		d = d2; d_ = d2_
 		tmpE = e1
 		v = e2.vR
 	}
-	if d.i > d_.i do return false, nil
+	if d.i > d_.i do return .PATHS_INTERSECTS
 	v2 := tmpE.vT
 	RemoveEdgeFromVertex(v2, tmpE) or_return
 	if tmpE.vL == v2 do tmpE.vL = v
@@ -944,7 +928,7 @@ RemoveIntersection :: proc(
 	v.innerLM = false
 	if tmpE.vB.innerLM && GetLocMinAngleCheck(tmpE.vB) do tmpE.vB.innerLM = false
 	MakeEdge(ctx, v, v2, tmpE.kind) or_return
-	return true, nil
+	return nil
 }
 
 @(private = "file")
@@ -1018,11 +1002,10 @@ MakeVertex :: proc(
 	p: [2]$T,
 ) -> (
 	res: ^Vertex(T),
-	err: Geometry_Error,
+	err: Trianguate_Error,
 ) where intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
 	res = new_clone(Vertex(T){p = p, innerLM = false}, context.temp_allocator) or_return
 	res.e = make([dynamic]^Edge(T), context.temp_allocator) or_return
 	non_zero_reserve(&res.e, 2) or_return
 	return
 }
-

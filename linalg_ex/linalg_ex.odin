@@ -1,4 +1,4 @@
-package geometry
+package linalg_ex
 
 import "base:intrinsics"
 import "core:math"
@@ -25,6 +25,12 @@ center_pt_pos :: enum {
 	BottomLeft,
 	Bottom,
 	BottomRight,
+}
+
+PointInPolygonResult :: enum u8 {
+	On,
+	Outside,
+	Inside,
 }
 
 Rect_ :: struct($T: typeid) where intrinsics.type_is_numeric(T) {
@@ -308,10 +314,10 @@ PolygonOverlapsPolygon :: proc "contextless" (
 	intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
 	if len(poly1) < 3 || len(poly2) < 3 do return false
 	for p in poly1 {
-		if PointInPolygon(p, poly2) do return true
+		if PointInPolygon(p, poly2) == .Inside do return true
 	}
 	for p in poly2 {
-		if PointInPolygon(p, poly1) do return true
+		if PointInPolygon(p, poly1) == .Inside do return true
 	}
 	for i in 0 ..< len(poly1) {
 		a1 := poly1[i]
@@ -668,7 +674,7 @@ PointLineLeftOrRight :: #force_inline proc "contextless" (
 PointInPolygon :: proc "contextless" (
 	p: [2]$T,
 	polygon: [][2]T,
-) -> bool where intrinsics.type_is_float(T) ||
+) -> PointInPolygonResult where intrinsics.type_is_float(T) ||
 	intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
 	intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
 	when intrinsics.type_is_float(T) {
@@ -688,14 +694,14 @@ PointInPolygon :: proc "contextless" (
 		for i in 0 ..< len(polygon) {
 			p1 := polygon[i]
 			p2 := polygon[(i + 1) % len(polygon)]
-			if isPointOnSegment(p, p1, p2) do return false
+			if isPointOnSegment(p, p1, p2) do return .On
 			if p1.y <= p.y {
 				if p2.y > p.y && crossProduct(p1, p2, p) > 0 do windingNumber += 1
 			} else {
 				if p2.y <= p.y && crossProduct(p1, p2, p) < 0 do windingNumber -= 1
 			}
 		}
-		return windingNumber != 0
+		return windingNumber != 0 ? .Inside : .Outside
 	} else when intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
 		crossProduct :: proc "contextless" (p1: [2]$T, p2: [2]T, p3: [2]T) -> T {
 			return fixed_bcd.sub(
@@ -717,14 +723,14 @@ PointInPolygon :: proc "contextless" (
 		for i in 0 ..< len(polygon) {
 			p1 := polygon[i]
 			p2 := polygon[(i + 1) % len(polygon)]
-			if isPointOnSegment(p, p1, p2) do return false
+			if isPointOnSegment(p, p1, p2) do return .On
 			if p1.y.i <= p.y.i {
 				if p2.y.i > p.y.i && crossProduct(p1, p2, p).i > 0 do windingNumber += 1
 			} else {
 				if p2.y.i <= p.y.i && crossProduct(p1, p2, p).i < 0 do windingNumber -= 1
 			}
 		}
-		return windingNumber != 0
+		return windingNumber != 0 ? .Inside : .Outside
 	} else {
 		crossProduct :: proc "contextless" (p1: [2]$T, p2: [2]T, p3: [2]T) -> T {
 			return fixed.sub(
@@ -746,14 +752,14 @@ PointInPolygon :: proc "contextless" (
 		for i in 0 ..< len(polygon) {
 			p1 := polygon[i]
 			p2 := polygon[(i + 1) % len(polygon)]
-			if isPointOnSegment(p, p1, p2) do return false
+			if isPointOnSegment(p, p1, p2) do return .On
 			if p1.y.i <= p.y.i {
 				if p2.y.i > p.y.i && crossProduct(p1, p2, p).i > 0 do windingNumber += 1
 			} else {
 				if p2.y.i <= p.y.i && crossProduct(p1, p2, p).i < 0 do windingNumber -= 1
 			}
 		}
-		return windingNumber != 0
+		return windingNumber != 0 ? .Inside : .Outside
 	}
 }
 
@@ -1448,17 +1454,6 @@ ellipse_cubic_init :: proc "contextless" (
 	}, [8]u32{1, 2, 4, 5, 7, 8, 10, 11}
 }
 
-poly_transform_matrix :: proc "contextless" (inout_poly: ^shapes, F: linalg.Matrix4x4f32) {
-	for &node in inout_poly.nodes {
-		for pts in node.pts {
-			for &pt in pts {
-				out := linalg.mul(F, linalg.Vector4f32{pt.x, pt.y, 0.0, 1.0})
-				pt = linalg.Vector2f32{out.x, out.y} / out.w
-			}
-		}
-	}
-}
-
 @(require_results)
 CrossProductSign :: proc "contextless" (
 	p1, p2, p3: [2]$T,
@@ -1588,4 +1583,3 @@ GetAngle :: proc(a, b, c: [2]$T) -> T where intrinsics.type_is_float(T) {
 	cp := abx * bcy - aby * bcx
 	return math.atan2(cp, dp) //range between -Pi and Pi
 }
-

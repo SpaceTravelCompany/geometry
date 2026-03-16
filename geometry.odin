@@ -310,7 +310,9 @@ _Shapes_ComputeLine :: proc(
 		curveType, d0, d1, d2 = GetCubicCurveType(pts.start, pts.ctl0, pts.ctl1, pts.end) or_return
 	} else if curveType == .Quadratic {
 		vlen: u32 = u32(len(vertList))
-		if GetPolygonOrientation([][2]fixed_bcd.BCD(FRAC_DIGITS){pts.start, pts.ctl0, pts.end}) ==
+		if linalg_ex.GetPolygonOrientation(
+			   [][2]fixed_bcd.BCD(FRAC_DIGITS){pts.start, pts.ctl0, pts.end},
+		   ) ==
 		   .CounterClockwise {
 			non_zero_append(
 				vertList,
@@ -503,6 +505,7 @@ _Shapes_ComputeLine :: proc(
 			vertList,
 			shape_vertex2d_fixed(FRAC_DIGITS){uvw = {F[3][0], F[3][1], F[3][2]}, color = color},
 		) or_return
+
 		vertList[start].pos = pts.start
 		vertList[start + 1].pos = pts.ctl0
 		vertList[start + 2].pos = pts.ctl1
@@ -520,10 +523,11 @@ _Shapes_ComputeLine :: proc(
 						}
 					}
 					non_zero_append(indList, ..indices[:]) or_return
-					return
+					return nil
 				}
 			}
 		}
+
 		for i: u32 = 0; i < 4; i += 1 {
 			indices: [3]u32 = {start, start, start}
 			idx: u32 = 0
@@ -544,7 +548,7 @@ _Shapes_ComputeLine :: proc(
 					non_zero_append(indList, indices[(k + 1) % 3]) or_return
 					non_zero_append(indList, start + i) or_return
 				}
-				return
+				return nil
 			}
 		}
 
@@ -577,9 +581,9 @@ _Shapes_ComputeLine :: proc(
 					start + 3,
 				) or_return
 			}
-			return
+			return nil
 		}
-		b = LinesIntersect3(
+		b = linalg_ex.LinesIntersect3(
 			vertList[start].pos,
 			vertList[start + 3].pos,
 			vertList[start + 1].pos,
@@ -600,7 +604,7 @@ _Shapes_ComputeLine :: proc(
 					start + 3,
 				) or_return
 			}
-			return
+			return nil
 		}
 		if fixed_bcd.length2(vertList[start + 1].pos, vertList[start].pos).i <
 		   fixed_bcd.length2(vertList[start + 3].pos, vertList[start + 2].pos).i {
@@ -624,6 +628,7 @@ _Shapes_ComputeLine :: proc(
 				start + 1,
 			) or_return
 		}
+		return nil
 	}
 	appendLine(vertList, indList, color, pts, F) or_return
 
@@ -644,6 +649,7 @@ cvt_raw_shapei64_to_raw_shape :: proc(
 		allocator,
 	) or_return
 	defer if err != nil do delete(res.vertices, allocator)
+
 	res.indices = utils_private.make_non_zeroed_slice(
 		[]u32,
 		len(raw64.indices),
@@ -658,12 +664,12 @@ cvt_raw_shapei64_to_raw_shape :: proc(
 		res.vertices[i].color = v.color
 		res.vertices[i].uvw = v.uvw
 	}
+
 	mem.copy_non_overlapping(
 		raw_data(res.indices),
 		raw_data(raw64.indices),
 		len(raw64.indices) * size_of(u32),
 	)
-
 	return
 }
 
@@ -681,6 +687,7 @@ cvt_raw_shape_to_raw_shape_fixed :: proc(
 		len(raw.vertices),
 		allocator,
 	) or_return
+
 	defer if err != nil do delete(res.vertices, allocator)
 	res.indices = utils_private.make_non_zeroed_slice([]u32, len(raw.indices), allocator) or_return
 	defer if err != nil do delete(res.indices, allocator)
@@ -692,12 +699,12 @@ cvt_raw_shape_to_raw_shape_fixed :: proc(
 		res.vertices[i].color = v.color
 		res.vertices[i].uvw = v.uvw
 	}
+
 	mem.copy_non_overlapping(
 		raw_data(res.indices),
 		raw_data(raw.indices),
 		len(res.indices) * size_of(u32),
 	)
-
 	return
 }
 
@@ -732,6 +739,7 @@ cvt_shapes_to_shapes_fixed :: proc(
 				}
 			}
 		}
+
 		poly64.nodes[i].pts = utils_private.make_non_zeroed_slice(
 			[][][2]fixed_bcd.BCD(FRAC_DIGITS),
 			len(n.pts),
@@ -904,10 +912,10 @@ cvt_shapes_fixed_to_shapes :: proc(
 
 shapes_compute_polygon :: proc {
 	__shapes_compute_polygon,
-	__shapes_compute_polygon_explict,
+	__shapes_compute_polygon_explicit,
 }
 
-__shapes_compute_polygon_explict :: proc(
+__shapes_compute_polygon_explicit :: proc(
 	poly: shapes,
 	$FRAC_DIGITS: int,
 	allocator := context.allocator,
@@ -956,7 +964,7 @@ __shapes_compute_polygon :: proc(
 	res: raw_shape,
 	err: shape_error = nil,
 ) {
-	return __shapes_compute_polygon_explict(poly, 13, allocator)
+	return __shapes_compute_polygon_explicit(poly, fixed_bcd.MAX_FRAC_DIGITS, allocator)
 }
 
 @(private)
@@ -1334,13 +1342,13 @@ shapes_compute_polygon_fixed :: proc(
 								uvw   = linalg.Vector3f32{0.0, 0.0, -100.0}, //-100 check this is not curve
 								color = poly.nodes[i].color,
 							},
-						)
+						) or_return
 					}
 				}
 
 				for c, i in curves2 {
 					for cc in c {
-						_Shapes_ComputeLine(vertList, indList, poly.nodes[i].color, cc)
+						_Shapes_ComputeLine(vertList, indList, poly.nodes[i].color, cc) or_return
 					}
 				}
 				for &idx in indList[len(indices):] {
@@ -1354,7 +1362,6 @@ shapes_compute_polygon_fixed :: proc(
 	shapes_compute_polygon_in(&vertList, &indList, poly) or_return
 	return
 }
-
 
 poly_transform_matrix :: proc "contextless" (inout_poly: ^shapes, F: linalg.Matrix4x4f32) {
 	for &node in inout_poly.nodes {

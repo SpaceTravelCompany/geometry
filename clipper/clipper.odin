@@ -404,7 +404,7 @@ IsHorizontal :: proc "contextless" (e: ^Active($FRAC_DIGITS)) -> bool {
 
 @(private = "file")
 GetDx :: proc "contextless" (
-	pt1, pt2: [2]fixed_bcd.BCD($F),
+	pt1, pt2: [2]fixed_bcd.BCD($FRAC_DIGITS),
 ) -> (
 	fixed_bcd.BCD(FRAC_DIGITS),
 	DxCheck,
@@ -533,7 +533,7 @@ TopX :: proc "contextless" (
 }
 
 @(private = "file")
-TrimHorz :: proc "contextless" (horz_edge: ^Active(FRAC_DIGITS), preserve_collinear: bool) {
+TrimHorz :: proc "contextless" (horz_edge: ^Active($FRAC_DIGITS), preserve_collinear: bool) {
 	was_trimmed := false
 	pt := NextVertex(horz_edge).pt
 
@@ -760,7 +760,7 @@ InsertLeftEdge :: proc "contextless" (ctx: ^Context($FRAC_DIGITS), e: ^Active(FR
 }
 
 @(private = "file")
-InsertRightEdge :: proc "contextless" (e: ^Active(FRAC_DIGITS), e2: ^Active(FRAC_DIGITS)) {
+InsertRightEdge :: proc "contextless" (e: ^Active($FRAC_DIGITS), e2: ^Active(FRAC_DIGITS)) {
 	e2.next_in_ael = e.next_in_ael
 	if e.next_in_ael != nil do e.next_in_ael.prev_in_ael = e2
 	e2.prev_in_ael = e
@@ -960,12 +960,12 @@ CheckJoinRight :: proc(
 //
 
 @(private = "file")
-OutrecIsAscending :: proc "contextless" (hot_edge: ^Active(FRAC_DIGITS)) -> bool {
+OutrecIsAscending :: proc "contextless" (hot_edge: ^Active($FRAC_DIGITS)) -> bool {
 	return hot_edge == hot_edge.outrec.front_edge
 }
 
 @(private = "file")
-IsOpenEnd :: proc "contextless" (ae: ^Active(FRAC_DIGITS)) -> bool {
+IsOpenEnd :: proc "contextless" (ae: ^Active($FRAC_DIGITS)) -> bool {
 	return IsOpenEndVertex(ae.vertex_top)
 }
 
@@ -982,7 +982,7 @@ GetPrevHotEdge :: proc "contextless" (
 }
 
 @(private = "file")
-SetOwner :: proc "contextless" (outrec: ^OutRec(FRAC_DIGITS), new_owner: ^OutRec(FRAC_DIGITS)) {
+SetOwner :: proc "contextless" (outrec: ^OutRec($FRAC_DIGITS), new_owner: ^OutRec(FRAC_DIGITS)) {
 	// precondition: new_owner is never null
 	new_owner.owner = GetRealOutRec(new_owner.owner)
 	tmp := new_owner
@@ -994,7 +994,7 @@ SetOwner :: proc "contextless" (outrec: ^OutRec(FRAC_DIGITS), new_owner: ^OutRec
 }
 
 @(private = "file")
-SwapFrontBackSides :: proc "contextless" (outrec: ^OutRec(FRAC_DIGITS)) {
+SwapFrontBackSides :: proc "contextless" (outrec: ^OutRec($FRAC_DIGITS)) {
 	tmp := outrec.front_edge
 	outrec.front_edge = outrec.back_edge
 	outrec.back_edge = tmp
@@ -1002,7 +1002,7 @@ SwapFrontBackSides :: proc "contextless" (outrec: ^OutRec(FRAC_DIGITS)) {
 }
 
 @(private = "file")
-UncoupleOutRec :: proc "contextless" (e: ^Active(FRAC_DIGITS)) {
+UncoupleOutRec :: proc "contextless" (e: ^Active($FRAC_DIGITS)) {
 	outrec := e.outrec
 	if outrec == nil do return
 	outrec.front_edge.outrec = nil
@@ -1217,7 +1217,7 @@ AddOutPt :: proc(
 }
 
 @(private = "file")
-GetRealOutRec :: proc "contextless" (outrec: ^OutRec) -> ^OutRec {
+GetRealOutRec :: proc "contextless" (outrec: ^OutRec($FRAC_DIGITS)) -> ^OutRec(FRAC_DIGITS) {
 	for outrec != nil && outrec->pts == nil do outrec = outrec->owner
 	return outrec
 }
@@ -1228,7 +1228,7 @@ IsValidClosedPath :: proc "contextless" (op: ^OutPt($FRAC_DIGITS)) -> bool {
 }
 
 @(private = "file")
-DisposeOutPt :: proc "contextless" (op: ^OutPt($FRAC_DIGITS)) -> ^OutPt($FRAC_DIGITS) {
+DisposeOutPt :: proc "contextless" (op: ^OutPt($FRAC_DIGITS)) -> ^OutPt(FRAC_DIGITS) {
 	result := op.next
 	op.prev.next = op.next
 	op.next.prev = op.prev
@@ -1366,7 +1366,7 @@ FixSelfIntersects :: proc(
 }
 
 @(private = "file")
-UpdateOutrecOwner :: proc "contextless" (outrec: ^OutRec(FRAC_DIGITS)) {
+UpdateOutrecOwner :: proc "contextless" (outrec: ^OutRec($FRAC_DIGITS)) {
 	op_curr := outrec.pts
 	for {
 		op_curr.outrec = outrec
@@ -1380,26 +1380,26 @@ UpdateOutrecOwner :: proc "contextless" (outrec: ^OutRec(FRAC_DIGITS)) {
 //
 
 @(private = "file")
-NextVertex :: proc "contextless" (e: ^Active(FRAC_DIGITS)) -> ^Vertex(FRAC_DIGITS) {
+NextVertex :: proc "contextless" (e: ^Active($FRAC_DIGITS)) -> ^Vertex(FRAC_DIGITS) {
 	if e.wind_dx > 0 do return e.vertex_top.next
 	return e.vertex_top.prev
 }
 
 @(private = "file")
-IsMaxima :: proc "contextless" (e: ^Active(FRAC_DIGITS)) -> bool {
+IsMaxima :: proc "contextless" (e: ^Active($FRAC_DIGITS)) -> bool {
 	return .LocalMax in e.vertex_top.flags
 }
 
 //PrevPrevVertex: useful to get the (inverted Y-axis) top of the
 //alternate edge (ie left or right bound) during edge insertion.
 @(private = "file")
-PrevPrevVertex :: proc "contextless" (ae: ^Active(FRAC_DIGITS)) -> ^Vertex(FRAC_DIGITS) {
+PrevPrevVertex :: proc "contextless" (ae: ^Active($FRAC_DIGITS)) -> ^Vertex(FRAC_DIGITS) {
 	if ae.wind_dx > 0 do return ae.vertex_top.prev.prev
 	return ae.vertex_top.next.next
 }
 
 @(private = "file")
-GetMaximaPair :: proc "contextless" (e: ^Active(FRAC_DIGITS)) -> ^Active(FRAC_DIGITS) {
+GetMaximaPair :: proc "contextless" (e: ^Active($FRAC_DIGITS)) -> ^Active(FRAC_DIGITS) {
 	e2 := e.next_in_ael
 	for e2 != nil {
 		if e2.vertex_top == e.vertex_top do return e2
@@ -1409,12 +1409,12 @@ GetMaximaPair :: proc "contextless" (e: ^Active(FRAC_DIGITS)) -> ^Active(FRAC_DI
 }
 
 @(private = "file")
-IsJoined :: proc "contextless" (e: ^Active(FRAC_DIGITS)) -> bool {
+IsJoined :: proc "contextless" (e: ^Active($FRAC_DIGITS)) -> bool {
 	return e.join_with != .NoJoin
 }
 
 @(private = "file")
-IsHotEdge :: proc "contextless" (e: ^Active(FRAC_DIGITS)) -> bool {
+IsHotEdge :: proc "contextless" (e: ^Active($FRAC_DIGITS)) -> bool {
 	return e.outrec != nil
 }
 
@@ -1430,7 +1430,7 @@ IsInvalidPath :: proc "contextless" (op: ^OutPt($FRAC_DIGITS)) -> bool {
 
 @(private = "file")
 SetSides :: proc "contextless" (
-	outrec: ^OutRec(FRAC_DIGITS),
+	outrec: ^OutRec($FRAC_DIGITS),
 	start_edge: ^Active(FRAC_DIGITS),
 	end_edge: ^Active(FRAC_DIGITS),
 ) {
@@ -1558,7 +1558,7 @@ StartOpenPath :: proc(
 
 @(private = "file")
 FindEdgeWithMatchingLocMin :: proc "contextless" (
-	e: ^Active(FRAC_DIGITS),
+	e: ^Active($FRAC_DIGITS),
 ) -> ^Active(FRAC_DIGITS) {
 	result := e.next_in_ael
 	for result != nil {
@@ -1791,7 +1791,10 @@ IntersectEdges :: proc(
 }
 
 @(private = "file")
-IsSamePolyType :: proc "contextless" (e1, e2: ^Active(FRAC_DIGITS)) -> bool {
+IsSamePolyType :: proc "contextless" (
+	e1: ^Active($FRAC_DIGITS),
+	e2: ^Active(FRAC_DIGITS),
+) -> bool {
 	return e1.local_min.polytype == e2.local_min.polytype
 }
 
@@ -1822,7 +1825,7 @@ PerpendicDistFromLineSqrd :: proc(
 
 @(private = "file")
 IsValidAelOrder :: proc "contextless" (
-	resident: ^Active(FRAC_DIGITS),
+	resident: ^Active($FRAC_DIGITS),
 	newcomer: ^Active(FRAC_DIGITS),
 ) -> bool {
 	if !fixed_bcd.equal(newcomer.curr_x, resident.curr_x) {
@@ -2117,7 +2120,7 @@ DuplicateOp :: proc(
 }
 
 @(private = "file")
-FixOutRecPts :: proc(outrec: ^OutRec(FRAC_DIGITS)) {
+FixOutRecPts :: proc(outrec: ^OutRec($FRAC_DIGITS)) {
 	op := outrec.pts
 	for {
 		op.outrec = outrec
@@ -2256,7 +2259,7 @@ PointInOpPolygon :: proc "contextless" (
 
 @(private = "file")
 SetHorzSegHeadingForward :: proc "contextless" (
-	hs: ^HorzSegment(FRAC_DIGITS),
+	hs: ^HorzSegment($FRAC_DIGITS),
 	op_p: ^OutPt(FRAC_DIGITS),
 	op_n: ^OutPt(FRAC_DIGITS),
 ) -> bool {
@@ -2325,7 +2328,7 @@ AddNewIntersectNode :: proc(
 }
 
 @(private = "file")
-ExtractFromSEL :: proc "contextless" (e: ^Active(FRAC_DIGITS)) -> ^Active(FRAC_DIGITS) {
+ExtractFromSEL :: proc "contextless" (e: ^Active($FRAC_DIGITS)) -> ^Active(FRAC_DIGITS) {
 	res := e.next_in_sel
 	if res != nil do res.prev_in_sel = e.prev_in_sel
 	e.prev_in_sel.next_in_sel = res
@@ -2333,7 +2336,7 @@ ExtractFromSEL :: proc "contextless" (e: ^Active(FRAC_DIGITS)) -> ^Active(FRAC_D
 }
 
 @(private = "file")
-Insert1Before2InSEL :: proc "contextless" (e1: ^Active(FRAC_DIGITS), e2: ^Active(FRAC_DIGITS)) {
+Insert1Before2InSEL :: proc "contextless" (e1: ^Active($FRAC_DIGITS), e2: ^Active(FRAC_DIGITS)) {
 	e1.next_in_sel = e2
 	if e1.prev_in_sel != nil do e1.prev_in_sel.next_in_sel = e1
 	e1.next_in_sel = e2
@@ -2405,7 +2408,7 @@ BuildIntersectList :: proc(
 
 
 @(private = "file")
-EdgesAdjacentInAEL :: proc "contextless" (node: IntersectNode(FRAC_DIGITS)) -> bool {
+EdgesAdjacentInAEL :: proc "contextless" (node: IntersectNode($FRAC_DIGITS)) -> bool {
 	return node.edge1.next_in_ael == node.edge2 || node.edge1.prev_in_ael == node.edge2
 }
 
@@ -2643,7 +2646,7 @@ ProcessHorzJoins :: proc(ctx: ^Context($FRAC_DIGITS)) -> Clipper_Error {
 
 @(private = "file")
 BuildPath64 :: proc(
-	op: ^OutPt(FRAC_DIGITS),
+	op: ^OutPt($FRAC_DIGITS),
 	reverse: bool,
 	is_open: bool,
 	path: ^[dynamic][dynamic][2]fixed_bcd.BCD(FRAC_DIGITS),

@@ -2796,10 +2796,37 @@ BooleanOpCustomData :: proc(
 	}
 
 	if len(solution_close) > 0 {
-		res = make([][][2]fixed_bcd.BCD(FRAC_DIGITS), len(solution_close), allocator) or_return
+		res = utils_private.make_non_zeroed_slice(
+			[][][2]fixed_bcd.BCD(FRAC_DIGITS),
+			len(solution_close),
+			allocator,
+		) or_return
+		for i in 0 ..< len(solution_close) {
+			res[i] = utils_private.make_non_zeroed_slice(
+				[][2]fixed_bcd.BCD(FRAC_DIGITS),
+				len(solution_close[i]),
+				allocator,
+			) or_return
+
+			intrinsics.mem_copy_non_overlapping(
+				raw_data(res[i]),
+				raw_data(solution_close[i]),
+				len(solution_close[i]) * size_of([2]fixed_bcd.BCD(FRAC_DIGITS)),
+			)
+		}
 	}
 	if len(solution_open) > 0 {
-		res_open = make([][][2]fixed_bcd.BCD(FRAC_DIGITS), len(solution_open), allocator) or_return
+		res_open = utils_private.make_non_zeroed_slice(
+			[][][2]fixed_bcd.BCD(FRAC_DIGITS),
+			len(solution_open),
+			allocator,
+		) or_return
+
+		intrinsics.mem_copy_non_overlapping(
+			raw_data(res_open[i]),
+			raw_data(solution_open[i]),
+			len(solution_open[i]) * size_of([2]fixed_bcd.BCD(FRAC_DIGITS)),
+		)
 	}
 
 	return

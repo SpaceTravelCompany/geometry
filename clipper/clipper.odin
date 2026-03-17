@@ -328,6 +328,15 @@ AddSubject :: proc(
 }
 
 @(private = "file")
+AddOpenSubject :: proc(
+	ctx: ^Context($FRAC_DIGITS),
+	opens: [][][2]fixed_bcd.BCD(FRAC_DIGITS),
+) -> Clipper_Error {
+	AddPaths(ctx, opens, .Subject, true) or_return
+	return nil
+}
+
+@(private = "file")
 AddClip :: proc(
 	ctx: ^Context($FRAC_DIGITS),
 	clips: [][][2]fixed_bcd.BCD(FRAC_DIGITS),
@@ -2741,6 +2750,7 @@ BooleanOpCustomData :: proc(
 	}
 
 	AddSubject(ctx, subjects) or_return
+	AddOpenSubject(ctx, opens) or_return
 	AddClip(ctx, clips) or_return
 
 	y: fixed_bcd.BCD(FRAC_DIGITS)
@@ -2758,6 +2768,7 @@ BooleanOpCustomData :: proc(
 			ConvertHorzSegsToJoins(ctx) or_return
 			clear(&ctx.horz_seg_list_)
 		}
+
 		ctx.bot_y_ = y
 		pop_ok = PopScanline(ctx, &y) or_return
 		if !pop_ok do break

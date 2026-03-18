@@ -882,9 +882,11 @@ SplitEdge :: proc(ctx: ^Context($T), longE, shortE: ^Edge(T)) -> (err: Trianguat
 	oldT := longE.vT
 	newT := shortE.vT
 	RemoveEdgeFromVertex(oldT, longE) or_return
+
 	longE.vT = newT
 	if longE.vL == oldT do longE.vL = newT
 	else do longE.vR = newT
+
 	non_zero_append(&newT.e, longE) or_return
 	MakeEdge(ctx, newT, oldT, longE.kind) or_return
 	return
@@ -900,18 +902,21 @@ RemoveIntersection :: proc(
 ) where intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
 	v: ^Vertex(T) = e1.vL
 	tmpE: ^Edge(T) = e2
+
 	d, d_ := linalg_ex.ShortestLength2Line(e1.vL.p, e2.vL.p, e2.vR.p)
 	d2, d2_ := linalg_ex.ShortestLength2Line(e1.vR.p, e2.vL.p, e2.vR.p)
 	if fixed_bcd.mul(d2, d_).i < fixed_bcd.mul(d, d2_).i {
 		d = d2; d_ = d2_
 		v = e1.vR
 	}
+
 	d2, d2_ = linalg_ex.ShortestLength2Line(e2.vL.p, e1.vL.p, e1.vR.p)
 	if fixed_bcd.mul(d2, d_).i < fixed_bcd.mul(d, d2_).i {
 		d = d2; d_ = d2_
 		tmpE = e1
 		v = e2.vL
 	}
+
 	d2, d2_ = linalg_ex.ShortestLength2Line(e2.vR.p, e1.vL.p, e1.vR.p)
 	if fixed_bcd.mul(d2, d_).i < fixed_bcd.mul(d, d2_).i {
 		d = d2; d_ = d2_
@@ -919,6 +924,7 @@ RemoveIntersection :: proc(
 		v = e2.vR
 	}
 	if d.i > d_.i do return .PATHS_INTERSECTS
+
 	v2 := tmpE.vT
 	RemoveEdgeFromVertex(v2, tmpE) or_return
 	if tmpE.vL == v2 do tmpE.vL = v

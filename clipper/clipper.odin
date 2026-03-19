@@ -1279,11 +1279,12 @@ Split :: proc(
 ) -> (
 	err: Clipper_Error,
 ) {
-	e.join_with = .NoJoin
 	if e.join_with == .Right {
+		e.join_with = .NoJoin
 		e.next_in_ael.join_with = .NoJoin
 		AddLocalMinPoly(ctx, e, e.next_in_ael, pt, true) or_return
 	} else {
+		e.join_with = .NoJoin
 		e.prev_in_ael.join_with = .NoJoin
 		AddLocalMinPoly(ctx, e.prev_in_ael, e, pt, true) or_return
 	}
@@ -1342,11 +1343,12 @@ DoSplitOp :: proc(
 	// So the only way for these areas to have the same sign is if
 	// the split triangle is larger than the path containing prevOp or
 	// if there's more than one self-intersection.
-	if fixed_bcd.greater_than(abs_area2, fixed_bcd.init_const(1, 0, 0, FRAC_DIGITS)) &&
-	   fixed_bcd.greater(
-		   fixed_bcd.mul(abs_area2, fixed_bcd.init_const(2, 0, 0, FRAC_DIGITS)),
-		   double_abs_area1,
-	   ) {
+	if !fixed_bcd.less(abs_area2, fixed_bcd.init_const(1, 0, 0, FRAC_DIGITS)) &&
+	   (fixed_bcd.greater(
+		   	fixed_bcd.mul(abs_area2, fixed_bcd.init_const(2, 0, 0, FRAC_DIGITS)),
+		   	double_abs_area1,
+	    ) ||
+	   	(area2.i > 0) == (double_area1.i > 0)) {
 		newOr := NewOutRec(ctx) or_return
 		newOr.owner = outrec.owner
 
@@ -1361,7 +1363,8 @@ DoSplitOp :: proc(
 		split_op.prev = new_op
 		split_op.next.next = new_op
 	} else {
-		// delete split_op.next, split_op (caller manages allocator if needed)
+		_ = DisposeOutPt(split_op.next)
+		_ = DisposeOutPt(split_op)
 	}
 	return
 }

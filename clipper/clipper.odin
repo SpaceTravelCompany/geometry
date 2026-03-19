@@ -445,6 +445,34 @@ GetDx :: proc "contextless" (
 }
 
 @(private = "file")
+GetLineIntersectPt :: proc "contextless" (
+	a1: [2]fixed_bcd.BCD($FRAC_DIGITS),
+	a2: [2]fixed_bcd.BCD(FRAC_DIGITS),
+	b1: [2]fixed_bcd.BCD(FRAC_DIGITS),
+	b2: [2]fixed_bcd.BCD(FRAC_DIGITS),
+) -> (
+	ok: bool,
+	ip: [2]fixed_bcd.BCD(FRAC_DIGITS),
+) {
+	den := fixed_bcd.sub(
+		fixed_bcd.mul(fixed_bcd.sub(b2.y, b1.y), fixed_bcd.sub(a2.x, a1.x)),
+		fixed_bcd.mul(fixed_bcd.sub(b2.x, b1.x), fixed_bcd.sub(a2.y, a1.y)),
+	)
+	if den.i == 0 do return false, {}
+
+	ua := fixed_bcd.sub(
+		fixed_bcd.mul(fixed_bcd.sub(b2.x, b1.x), fixed_bcd.sub(a1.y, b1.y)),
+		fixed_bcd.mul(fixed_bcd.sub(b2.y, b1.y), fixed_bcd.sub(a1.x, b1.x)),
+	)
+	t := fixed_bcd.div(ua, den)
+	ip = [2]fixed_bcd.BCD(FRAC_DIGITS) {
+		fixed_bcd.add(a1.x, fixed_bcd.mul(t, fixed_bcd.sub(a2.x, a1.x))),
+		fixed_bcd.add(a1.y, fixed_bcd.mul(t, fixed_bcd.sub(a2.y, a1.y))),
+	}
+	return true, ip
+}
+
+@(private = "file")
 SetDx :: proc "contextless" (e: ^Active($FRAC_DIGITS)) {
 	e.dx, e.dx_check = GetDx(e.bot, e.top)
 }
@@ -688,11 +716,11 @@ InsertLocalMinimaIntoAEL :: proc(
 		//Currently LeftB is just the descending bound and RightB is the ascending.
 		//Now if the LeftB isn't on the left of RightB then we need swap them.
 		if left_bound != nil && right_bound != nil {
-			if (IsHorizontal(left_bound) && IsHeadingRightHorz(left_bound)) ||
-			   (IsHorizontal(right_bound) && IsHeadingLeftHorz(right_bound)) ||
-			   left_bound.dx.i < right_bound.dx.i {
-				left_bound, right_bound = right_bound, left_bound
-			}
+			if IsHorizontal(left_bound) {
+				if IsHeadingRightHorz(left_bound) do left_bound, right_bound = right_bound, left_bound
+			} else if IsHorizontal(right_bound) {
+				if IsHeadingLeftHorz(right_bound) do left_bound, right_bound = right_bound, left_bound
+			} else if left_bound.dx.i < right_bound.dx.i do left_bound, right_bound = right_bound, left_bound
 
 		} else if left_bound == nil {
 			left_bound = right_bound
@@ -1304,7 +1332,8 @@ DoSplitOp :: proc(
 	prev_op := split_op.prev
 	next_next_op := split_op.next.next
 	outrec.pts = prev_op
-	_, ip := linalg_ex.LinesIntersect2(prev_op.pt, split_op.pt, split_op.next.pt, next_next_op.pt)
+	_, ip := GetLineIntersectPt(prev_op.pt, split_op.pt, split_op.next.pt, next_next_op.pt)
+
 
 	double_area1 := Area_Double(outrec.pts)
 	double_abs_area1 := double_area1 // always positive
@@ -1345,10 +1374,10 @@ DoSplitOp :: proc(
 	// if there's more than one self-intersection.
 	if !fixed_bcd.less(abs_area2, fixed_bcd.init_const(1, 0, 0, FRAC_DIGITS)) &&
 	   (fixed_bcd.greater(
-		   	fixed_bcd.mul(abs_area2, fixed_bcd.init_const(2, 0, 0, FRAC_DIGITS)),
-		   	double_abs_area1,
-	    ) ||
-	   	(area2.i > 0) == (double_area1.i > 0)) {
+				   fixed_bcd.mul(abs_area2, fixed_bcd.init_const(2, 0, 0, FRAC_DIGITS)),
+				   double_abs_area1,
+			   ) ||
+			   (area2.i > 0) == (double_area1.i > 0)) {
 		newOr := NewOutRec(ctx) or_return
 		newOr.owner = outrec.owner
 
@@ -1380,8 +1409,7 @@ FixSelfIntersects :: proc(
 	if op2.prev == op2.next.next do return // because triangles can't self-intersect
 
 	for {
-		if linalg_ex.LinesIntersect3(op2.prev.pt, op2.pt, op2.next.pt, op2.next.next.pt) ==
-		   .intersect {
+		if SegmentsIntersectExclusive(op2.prev.pt, op2.pt, op2.next.pt, op2.next.next.pt) {
 			if op2 == outrec.pts || op2.next == outrec.pts do outrec.pts = outrec.pts.prev
 
 			DoSplitOp(ctx, outrec, op2) or_return
@@ -1486,6 +1514,39 @@ IsCollinear :: proc "contextless" (
 	// When checking for collinearity with very large coordinate values
 	// then ProductsAreEqual is more accurate than using CrossProduct.
 	return fixed_bcd.equal(fixed_bcd.mul(a, b), fixed_bcd.mul(c, d))
+}
+
+@(private = "file")
+SegmentsIntersectExclusive :: proc "contextless" (
+	seg1a: [2]fixed_bcd.BCD($FRAC_DIGITS),
+	seg1b: [2]fixed_bcd.BCD(FRAC_DIGITS),
+	seg2a: [2]fixed_bcd.BCD(FRAC_DIGITS),
+	seg2b: [2]fixed_bcd.BCD(FRAC_DIGITS),
+) -> bool {
+	zero :: fixed_bcd.BCD(FRAC_DIGITS){}
+	dy1 := fixed_bcd.sub(seg1b.y, seg1a.y)
+	dx1 := fixed_bcd.sub(seg1b.x, seg1a.x)
+	dy2 := fixed_bcd.sub(seg2b.y, seg2a.y)
+	dx2 := fixed_bcd.sub(seg2b.x, seg2a.x)
+	cp := fixed_bcd.sub(fixed_bcd.mul(dy1, dx2), fixed_bcd.mul(dy2, dx1))
+	if fixed_bcd.equal(cp, zero) do return false
+
+	t := fixed_bcd.sub(
+		fixed_bcd.mul(fixed_bcd.sub(seg1a.x, seg2a.x), dy2),
+		fixed_bcd.mul(fixed_bcd.sub(seg1a.y, seg2a.y), dx2),
+	)
+	if fixed_bcd.equal(t, zero) do return false
+	if fixed_bcd.greater(t, zero) {
+		if fixed_bcd.less(cp, zero) || !fixed_bcd.less(t, cp) do return false
+	} else if fixed_bcd.greater(cp, zero) || !fixed_bcd.greater(t, cp) do return false
+
+	t = fixed_bcd.sub(
+		fixed_bcd.mul(fixed_bcd.sub(seg1a.x, seg2a.x), dy1),
+		fixed_bcd.mul(fixed_bcd.sub(seg1a.y, seg2a.y), dx1),
+	)
+	if fixed_bcd.equal(t, zero) do return false
+	if fixed_bcd.greater(t, zero) do return fixed_bcd.greater(cp, zero) && fixed_bcd.less(t, cp)
+	return fixed_bcd.less(cp, zero) && fixed_bcd.greater(t, cp)
 }
 
 @(private = "file")
@@ -2354,8 +2415,8 @@ AddNewIntersectNode :: proc(
 ) -> (
 	err: Clipper_Error,
 ) {
-	kind, pt := linalg_ex.LinesIntersect2(e1.bot, e1.top, e2.bot, e2.top)
-	if kind == .collinear {
+	ok, pt := GetLineIntersectPt(e1.bot, e1.top, e2.bot, e2.top)
+	if !ok {
 		pt = [2]fixed_bcd.BCD(FRAC_DIGITS){e1.curr_x, top_y}
 	}
 	if fixed_bcd.greater(pt.y, ctx.bot_y_) || fixed_bcd.less(pt.y, top_y) {
@@ -2494,11 +2555,9 @@ ProcessIntersectList :: proc(ctx: ^Context($FRAC_DIGITS)) -> (err: Clipper_Error
 				j += 1
 			}
 
-			if j < len(ctx.intersect_nodes_) {
-				ctx.intersect_nodes_[i], ctx.intersect_nodes_[j] =
-					ctx.intersect_nodes_[j], ctx.intersect_nodes_[i]
-				node = &ctx.intersect_nodes_[i]
-			}
+			ctx.intersect_nodes_[i], ctx.intersect_nodes_[j] =
+				ctx.intersect_nodes_[j], ctx.intersect_nodes_[i]
+			node = &ctx.intersect_nodes_[i]
 		}
 
 		IntersectEdges(ctx, node.edge1, node.edge2, node.pt) or_return

@@ -991,7 +991,7 @@ LinesIntersect3 :: proc "contextless" (
 			equal :: fixed_bcd.equal
 		}
 
-		if equal(a1, b1) || equal(a2, b1) || equal(a1, b2) || equal(a2, b2) do return .none
+		//if equal(a1, b1) || equal(a2, b1) || equal(a1, b2) || equal(a2, b2) do return .none
 
 		den: T = sub(mul(sub(b2.y, b1.y), sub(a2.x, a1.x)), mul(sub(b2.x, b1.x), sub(a2.y, a1.y)))
 		if den.i == 0 do return .collinear

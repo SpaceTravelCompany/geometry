@@ -2375,7 +2375,7 @@ ExtractFromSEL :: proc "contextless" (e: ^Active($FRAC_DIGITS)) -> ^Active(FRAC_
 
 @(private = "file")
 Insert1Before2InSEL :: proc "contextless" (e1: ^Active($FRAC_DIGITS), e2: ^Active(FRAC_DIGITS)) {
-	e1.next_in_sel = e2
+	e1.prev_in_sel = e2.prev_in_sel
 	if e1.prev_in_sel != nil do e1.prev_in_sel.next_in_sel = e1
 	e1.next_in_sel = e2
 	e2.prev_in_sel = e1
@@ -2490,7 +2490,7 @@ ProcessIntersectList :: proc(ctx: ^Context($FRAC_DIGITS)) -> (err: Clipper_Error
 		node.edge1.curr_x = node.pt.x
 		node.edge2.curr_x = node.pt.x
 		CheckJoinLeft(ctx, node.edge2, node.pt, true) or_return
-		CheckJoinRight(ctx, node.edge1, node.pt) or_return
+		CheckJoinRight(ctx, node.edge1, node.pt, true) or_return
 	}
 	return
 }

@@ -4,3 +4,7 @@
 *.a
 *.so
 geometry
+*.exe
+*.pdb
+clipper
+triangulation

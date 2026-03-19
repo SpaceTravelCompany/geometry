@@ -922,7 +922,7 @@ LinesIntersect2 :: proc "contextless" (
 			return .collinear, {}
 		}
 
-		ua := ((b2.x - b1.x) * (a1.y - b1.y) - (b2.y - b1.y) * (a1.x - b1.x)) // 교차 판정엔 분모 생략 가능
+		ua := ((b2.x - b1.x) * (a1.y - b1.y) - (b2.y - b1.y) * (a1.x - b1.x)) //den으로 나눌 필요 없다.
 		ub := ((a2.x - a1.x) * (a1.y - b1.y) - (a2.y - a1.y) * (a1.x - b1.x))
 
 		res_den :=
@@ -942,14 +942,14 @@ LinesIntersect2 :: proc "contextless" (
 			equal :: fixed_bcd.equal
 		}
 
-		if equal(a1, b1) || equal(a2, b1) || equal(a1, b2) || equal(a2, b2) do return .none, {}
+		//if equal(a1, b1) || equal(a2, b1) || equal(a1, b2) || equal(a2, b2) do return .none, {}
 
 		den: T = sub(mul(sub(b2.y, b1.y), sub(a2.x, a1.x)), mul(sub(b2.x, b1.x), sub(a2.y, a1.y)))
 		if den.i == 0 {
 			return .collinear, {}
 		}
 
-		ua := sub(mul(sub(b2.x, b1.x), sub(a1.y, b1.y)), mul(sub(b2.y, b1.y), sub(a1.x, b1.x))) // 교차 판정엔 분모 생략 가능
+		ua := sub(mul(sub(b2.x, b1.x), sub(a1.y, b1.y)), mul(sub(b2.y, b1.y), sub(a1.x, b1.x))) //den으로 나눌 필요 없다.
 
 		ub := sub(mul(sub(a2.x, a1.x), sub(a1.y, b1.y)), mul(sub(a2.y, a1.y), sub(a1.x, b1.x)))
 

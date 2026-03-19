@@ -1938,7 +1938,7 @@ PopHorz :: proc "contextless" (ctx: ^Context($FRAC_DIGITS)) -> ^Active(FRAC_DIGI
 	if ctx.sel_ == nil do return nil
 	res := ctx.sel_
 	ctx.sel_ = ctx.sel_.next_in_sel
-	return ctx.sel_
+	return res
 }
 
 
@@ -2354,6 +2354,19 @@ AddNewIntersectNode :: proc(
 	kind, pt := linalg_ex.LinesIntersect2(e1.bot, e1.top, e2.bot, e2.top)
 	if kind == .collinear {
 		pt = [2]fixed_bcd.BCD(FRAC_DIGITS){e1.curr_x, top_y}
+	}
+	if fixed_bcd.greater(pt.y, ctx.bot_y_) || fixed_bcd.less(pt.y, top_y) {
+		abs_dx1 := e1.dx
+		if abs_dx1.i < 0 do abs_dx1.i = -abs_dx1.i
+		abs_dx2 := e2.dx
+		if abs_dx2.i < 0 do abs_dx2.i = -abs_dx2.i
+
+		if fixed_bcd.less(pt.y, top_y) do pt.y = top_y
+		else do pt.y = ctx.bot_y_
+
+		// Clamp intersection to the scanbeam and project with the less steep edge.
+		if fixed_bcd.less(abs_dx1, abs_dx2) do pt.x = TopX(e1, pt.y)
+		else do pt.x = TopX(e2, pt.y)
 	}
 
 	node := IntersectNode(FRAC_DIGITS) {
@@ -2774,22 +2787,27 @@ BooleanOpCustomData :: proc(
 	err: Clipper_Error,
 ) {
 	ctx := Context(FRAC_DIGITS) {
-		vertex_lists_  = make([dynamic]^Vertex(FRAC_DIGITS), context.temp_allocator) or_return,
-		minima_list_   = make(
+		vertex_lists_   = make([dynamic]^Vertex(FRAC_DIGITS), context.temp_allocator) or_return,
+		minima_list_    = make(
 			[dynamic]^LocalMinima(FRAC_DIGITS),
 			context.temp_allocator,
 		) or_return,
-		scanline_list_ = make(
+		scanline_list_  = make(
 			[dynamic]fixed_bcd.BCD(FRAC_DIGITS),
 			context.temp_allocator,
 		) or_return,
-		out            = make(
+		out             = make(
 			[dynamic][dynamic]fixed_bcd.BCD(FRAC_DIGITS),
 			context.temp_allocator,
 		) or_return,
-		outrec_list_   = make([dynamic]^OutRec(FRAC_DIGITS), context.temp_allocator) or_return,
-		fill_rule_     = fill_rule,
-		clip_type_     = clip_type,
+		outrec_list_    = make([dynamic]^OutRec(FRAC_DIGITS), context.temp_allocator) or_return,
+		horz_seg_list_  = make(
+			[dynamic]HorzSegment(FRAC_DIGITS),
+			context.temp_allocator,
+		) or_return,
+		horz_join_list_ = make([dynamic]HorzJoin(FRAC_DIGITS), context.temp_allocator) or_return,
+		fill_rule_      = fill_rule,
+		clip_type_      = clip_type,
 	}
 
 	AddSubject(&ctx, subjects) or_return

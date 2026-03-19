@@ -50,9 +50,15 @@ test_union_2square :: proc(t: ^testing.T) {
 	poly := [][][2]fixed_bcd.BCD(DEF_FRAC_DIGITS){square, square2}
 	res, res_open, err := BooleanOp(.Union, poly, nil, nil)
 	defer if res != nil {
+		for r in res {
+			delete(r)
+		}
 		delete(res)
 	}
 	defer if res_open != nil {
+		for r in res_open {
+			delete(r)
+		}
 		delete(res_open)
 	}
 

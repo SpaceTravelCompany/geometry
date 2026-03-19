@@ -479,7 +479,7 @@ IsContributingClosed :: proc "contextless" (
 		case .Positive:
 			return e.wind_cnt2 > 0
 		case .Negative:
-			return e.wind_cnt2 == -1
+			return e.wind_cnt2 < 0
 		case:
 			return e.wind_cnt2 != 0
 		}

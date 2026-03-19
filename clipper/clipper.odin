@@ -3,7 +3,6 @@ package clipper
 import "../linalg_ex"
 import "base:intrinsics"
 import "base:runtime"
-import "core:fmt"
 import "core:math"
 import "core:slice"
 import "shared:utils_private"
@@ -13,6 +12,7 @@ import "shared:utils_private/fixed_bcd"
 
 __Clipper_Error :: enum {
 	ADD_LOCAL_MAX_POLY_FAILED,
+	FAILED,
 }
 
 Clipper_Error :: union #shared_nil {
@@ -28,9 +28,8 @@ FillRule :: enum u8 {
 }
 
 ClipType :: enum u8 {
-	NoClip,
-	Intersection,
 	Union,
+	Intersection,
 	Difference,
 	Xor,
 }
@@ -85,7 +84,6 @@ Context :: struct($FRAC_DIGITS: int) {
 	preserve_collinear_: bool,
 	reverse_solution_:   bool,
 	has_open_paths_:     bool,
-	minima_list_sorted_: bool,
 	fill_rule_:          FillRule,
 	clip_type_:          ClipType,
 }
@@ -190,12 +188,11 @@ AddPaths :: proc(
 	ctx: ^Context($FRAC_DIGITS),
 	paths: [][][2]fixed_bcd.BCD(FRAC_DIGITS),
 	polytype: PathType,
-	is_open: bool,
+	$is_open: bool,
 ) -> (
 	err: Clipper_Error,
 ) {
 	if is_open do ctx.has_open_paths_ = true
-	else do ctx.minima_list_sorted_ = false
 	AddPaths_(ctx, paths, polytype, is_open) or_return
 	return
 }
@@ -205,7 +202,7 @@ AddPaths_ :: proc(
 	ctx: ^Context($FRAC_DIGITS),
 	paths: [][][2]fixed_bcd.BCD(FRAC_DIGITS),
 	polytype: PathType,
-	is_open: bool,
+	$is_open: bool,
 ) -> (
 	err: Clipper_Error,
 ) {
@@ -224,7 +221,6 @@ AddPaths_ :: proc(
 		),
 	)
 
-	non_zero_reserve(&ctx.vertex_lists_, len(ctx.vertex_lists_) + len(paths)) or_return
 	v := all_vertices
 	for path in paths {
 		//for each path create a circular double linked list of vertices
@@ -235,11 +231,13 @@ AddPaths_ :: proc(
 		if len(path) == 0 do continue
 
 		cnt := 0
+		v.prev = nil
 		for pt in path {
 			if prev_v != nil {
 				if prev_v.pt == pt do continue // skip duplicates
 				prev_v.next = curr_v
 			}
+
 			curr_v.prev = prev_v
 			curr_v.pt = pt
 			curr_v.flags = {.Empty}
@@ -248,28 +246,34 @@ AddPaths_ :: proc(
 			cnt += 1
 		}
 		if prev_v == nil || prev_v.prev == nil do continue
-		if !is_open && prev_v.pt == v0.pt do prev_v = prev_v.prev
+		when !is_open {
+			if prev_v.pt == v0.pt do prev_v = prev_v.prev
+		}
 
 		prev_v.next = v0
 		v0.prev = prev_v
 		v = curr_v // get ready for next path
-		if cnt < 2 || (cnt == 2 && !is_open) do continue
+		if cnt < 2 do continue
+		when !is_open {
+			if cnt == 2 do continue
+		}
 
 		// find and assign local minima
 		going_up, going_up0: bool
-		if is_open {
+		when is_open {
 			curr_v = v0.next
-			for curr_v != v0 && curr_v.pt[1] == v0.pt[1] {
+			for curr_v != v0 && curr_v.pt.y == v0.pt.y {
 				curr_v = curr_v.next
 			}
 
-			going_up = fixed_bcd.less_than(curr_v.pt[1], v0.pt[1])
+			going_up = fixed_bcd.less_than(curr_v.pt.y, v0.pt.y)
 			if going_up {
 				v0.flags = {.OpenStart}
 				AddLocMin(ctx, v0, polytype, true) or_return
 			} else {
 				v0.flags = {.OpenStart, .LocalMax}
 			}
+
 		} else { 	// closed path
 			prev_v = v0.prev
 			for prev_v != v0 && prev_v.pt.y == v0.pt.y {
@@ -294,17 +298,18 @@ AddPaths_ :: proc(
 			curr_v = curr_v.next
 		}
 
-		if is_open {
+		when is_open {
 			prev_v.flags += {.OpenEnd}
 			if going_up do prev_v.flags += {.LocalMax}
 			else do AddLocMin(ctx, prev_v, polytype, is_open) or_return
-		} else if going_up != going_up0 {
-			if going_up0 do AddLocMin(ctx, prev_v, polytype, false) or_return
-			else do prev_v.flags += {.LocalMax}
+		} else {
+			if going_up != going_up0 {
+				if going_up0 do AddLocMin(ctx, prev_v, polytype, false) or_return
+				else do prev_v.flags += {.LocalMax}
+			}
 		}
-
-		non_zero_append(&ctx.vertex_lists_, v0) or_return
 	}
+	non_zero_append(&ctx.vertex_lists_, all_vertices) or_return
 	return nil
 }
 
@@ -313,7 +318,7 @@ AddLocMin :: proc(
 	ctx: ^Context($FRAC_DIGITS),
 	vert: ^Vertex(FRAC_DIGITS),
 	polytype: PathType,
-	is_open: bool,
+	$is_open: bool,
 ) -> (
 	err: Clipper_Error,
 ) {
@@ -377,7 +382,7 @@ PopScanline :: proc(
 	non_zero_resize(&ctx.scanline_list_, len(ctx.scanline_list_) - 1) or_return
 
 	for len(ctx.scanline_list_) != 0 &&
-	    fixed_bcd.equal(inout_y^, ctx.scanline_list_[len(ctx.scanline_list_) - 1]) {
+	    (inout_y^ == ctx.scanline_list_[len(ctx.scanline_list_) - 1]) {
 		non_zero_resize(&ctx.scanline_list_, len(ctx.scanline_list_) - 1) or_return
 	}
 
@@ -431,10 +436,11 @@ GetDx :: proc "contextless" (
 	DxCheck,
 ) {
 	dy := fixed_bcd.sub(pt2.y, pt1.y)
+	context = runtime.default_context()
 	if dy.i != 0 {
 		return fixed_bcd.div(fixed_bcd.sub(pt2.x, pt1.x), dy), .None
 	}
-	if dy.i > 0 do return {}, .NegativeInf
+	if pt2.x.i > pt1.x.i do return {}, .NegativeInf
 	return {}, .Inf
 }
 
@@ -503,8 +509,6 @@ IsContributingClosed :: proc "contextless" (
 		else do return !result
 	case .Xor:
 		return true
-	case .NoClip:
-		return false
 	}
 	return false // we should never get here
 }
@@ -1339,11 +1343,10 @@ DoSplitOp :: proc(
 	// the split triangle is larger than the path containing prevOp or
 	// if there's more than one self-intersection.
 	if fixed_bcd.greater_than(abs_area2, fixed_bcd.init_const(1, 0, 0, FRAC_DIGITS)) &&
-	   (fixed_bcd.greater(
-				   fixed_bcd.mul(abs_area2, fixed_bcd.init_const(2, 0, 0, FRAC_DIGITS)),
-				   double_abs_area1,
-			   ) ||
-			   (area2.i > 0) == (double_abs_area1.i > 0)) {
+	   fixed_bcd.greater(
+		   fixed_bcd.mul(abs_area2, fixed_bcd.init_const(2, 0, 0, FRAC_DIGITS)),
+		   double_abs_area1,
+	   ) {
 		newOr := NewOutRec(ctx) or_return
 		newOr.owner = outrec.owner
 
@@ -2685,10 +2688,13 @@ ProcessHorzJoins :: proc(ctx: ^Context($FRAC_DIGITS)) -> Clipper_Error {
 BuildPath64 :: proc(
 	op: ^OutPt($FRAC_DIGITS),
 	reverse: bool,
-	is_open: bool,
+	$is_open: bool,
 	path: ^[dynamic][dynamic][2]fixed_bcd.BCD(FRAC_DIGITS),
 ) -> Clipper_Error {
-	if op == nil || op.next == op || (!is_open && op.next == op.prev) do return nil
+	if op == nil || op.next == op do return nil
+	when !is_open {
+		if op.next == op.prev do return nil
+	}
 	op := op
 
 	non_zero_append(
@@ -2768,52 +2774,68 @@ BooleanOpCustomData :: proc(
 	err: Clipper_Error,
 ) {
 	ctx := Context(FRAC_DIGITS) {
-		vertex_lists_ = make([dynamic]^Vertex(FRAC_DIGITS), context.temp_allocator) or_return,
-		minima_list_  = make([dynamic]^LocalMinima(FRAC_DIGITS), context.temp_allocator) or_return,
-		out           = make(
+		vertex_lists_  = make([dynamic]^Vertex(FRAC_DIGITS), context.temp_allocator) or_return,
+		minima_list_   = make(
+			[dynamic]^LocalMinima(FRAC_DIGITS),
+			context.temp_allocator,
+		) or_return,
+		scanline_list_ = make(
+			[dynamic]fixed_bcd.BCD(FRAC_DIGITS),
+			context.temp_allocator,
+		) or_return,
+		out            = make(
 			[dynamic][dynamic]fixed_bcd.BCD(FRAC_DIGITS),
 			context.temp_allocator,
 		) or_return,
-		fill_rule_    = fill_rule,
-		clip_type_    = clip_type,
+		outrec_list_   = make([dynamic]^OutRec(FRAC_DIGITS), context.temp_allocator) or_return,
+		fill_rule_     = fill_rule,
+		clip_type_     = clip_type,
 	}
 
 	AddSubject(&ctx, subjects) or_return
 	AddOpenSubject(&ctx, opens) or_return
 	AddClip(&ctx, clips) or_return
 
+	slice.stable_sort_by(ctx.minima_list_[:], proc(a, b: ^LocalMinima(FRAC_DIGITS)) -> bool {
+		if b.vertex.pt.y != a.vertex.pt.y do return fixed_bcd.less(b.vertex.pt.y, a.vertex.pt.y)
+		return fixed_bcd.greater(b.vertex.pt.x, a.vertex.pt.x)
+	})
+
+	#reverse for minima in ctx.minima_list_ {
+		InsertScanline(&ctx, minima.vertex.pt.y) or_return
+	}
+
 	y: fixed_bcd.BCD(FRAC_DIGITS)
 	pop_ok := PopScanline(&ctx, &y) or_return
 
-	if !(clip_type == .NoClip || !pop_ok) {
+	if (!pop_ok) do return nil, nil, nil, nil, .FAILED
+	for {
+		InsertLocalMinimaIntoAEL(&ctx, y) or_return
+		e: ^Active(FRAC_DIGITS)
 		for {
-			InsertLocalMinimaIntoAEL(&ctx, y) or_return
-			e: ^Active(FRAC_DIGITS)
-			for {
-				e = PopHorz(&ctx)
-				if e == nil do break
-				DoHorizontal(&ctx, e) or_return
-			}
-			if len(ctx.horz_seg_list_) > 0 {
-				ConvertHorzSegsToJoins(&ctx) or_return
-				clear(&ctx.horz_seg_list_)
-			}
-
-			ctx.bot_y_ = y
-			pop_ok = PopScanline(&ctx, &y) or_return
-			if !pop_ok do break
-
-			DoIntersections(&ctx, y) or_return
-			DoTopOfScanbeam(&ctx, y) or_return
-
-			for {
-				e = PopHorz(&ctx)
-				if e == nil do break
-				DoHorizontal(&ctx, e) or_return
-			}
+			e = PopHorz(&ctx)
+			if e == nil do break
+			DoHorizontal(&ctx, e) or_return
 		}
-		ProcessHorzJoins(&ctx) or_return
+		if len(ctx.horz_seg_list_) > 0 {
+			ConvertHorzSegsToJoins(&ctx) or_return
+			clear(&ctx.horz_seg_list_)
+		}
+
+		ctx.bot_y_ = y
+		pop_ok = PopScanline(&ctx, &y) or_return
+		if !pop_ok do break
+
+		DoIntersections(&ctx, y) or_return
+		DoTopOfScanbeam(&ctx, y) or_return
+
+		for {
+			e = PopHorz(&ctx)
+			if e == nil do break
+			DoHorizontal(&ctx, e) or_return
+		}
 	}
+	ProcessHorzJoins(&ctx) or_return
 
 	// Build result from outrec_list_: CleanCollinear for closed paths, then BuildPath64.
 	// nb: outrec_list_.len may change because CleanCollinear can add during FixSelfIntersects.

@@ -56,9 +56,11 @@ test_union_2square :: proc(t: ^testing.T) {
 		delete(res_open)
 	}
 
-	testing.expect_value(t, err, nil)
+
 	fmt.println("Result closed paths: ", len(res))
 	for r in res {
 		fmt.println(r)
 	}
+
+	testing.expect_value(t, err, nil)
 }

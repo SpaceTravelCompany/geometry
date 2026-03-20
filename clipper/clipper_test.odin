@@ -64,3 +64,38 @@ test_union_2square :: proc(t: ^testing.T) {
 
 	testing.expect_value(t, err, nil)
 }
+
+@(test)
+test_intersection_2square :: proc(t: ^testing.T) {
+	x0 := fixed_bcd.init_const(0, 0, 0, DEF_FRAC_DIGITS)
+	y0 := fixed_bcd.init_const(0, 0, 0, DEF_FRAC_DIGITS)
+	size := fixed_bcd.init_const(100, 0, 0, DEF_FRAC_DIGITS)
+
+	x1 := fixed_bcd.init_const(50, 0, 0, DEF_FRAC_DIGITS)
+	y1 := fixed_bcd.init_const(-50, 0, 0, DEF_FRAC_DIGITS)
+	size2 := fixed_bcd.init_const(100, 0, 0, DEF_FRAC_DIGITS)
+
+	square := _make_square_path_bcd(x0, y0, size)
+	defer delete(square)
+
+	square2 := _make_square_path_bcd(x1, y1, size2)
+	defer delete(square2)
+
+	poly := [][][2]fixed_bcd.BCD(DEF_FRAC_DIGITS){square}
+	clip_poly := [][][2]fixed_bcd.BCD(DEF_FRAC_DIGITS){square2}
+	res, res_open, err := BooleanOp(.Intersection, poly, clip_poly, nil)
+	defer if res != nil {
+		for r in res {
+			delete(r)
+		}
+		delete(res)
+	}
+	defer if res_open != nil {
+		for r in res_open {
+			delete(r)
+		}
+		delete(res_open)
+	}
+
+	testing.expect_value(t, err, nil)
+}

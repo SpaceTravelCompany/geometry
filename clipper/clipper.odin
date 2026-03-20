@@ -3,6 +3,7 @@ package clipper
 import "../linalg_ex"
 import "base:intrinsics"
 import "base:runtime"
+import pq "core:container/priority_queue"
 import "core:math"
 import "core:slice"
 import "shared:utils_private"
@@ -73,7 +74,7 @@ Context :: struct($FRAC_DIGITS: int) {
 	sel_:                ^Active(FRAC_DIGITS),
 	minima_list_:        [dynamic]^LocalMinima(FRAC_DIGITS),
 	vertex_lists_:       [dynamic]^Vertex(FRAC_DIGITS),
-	scanline_list_:      [dynamic]fixed_bcd.BCD(FRAC_DIGITS),
+	scanline_list_:      pq.Priority_Queue(fixed_bcd.BCD(FRAC_DIGITS)),
 	intersect_nodes_:    [dynamic]IntersectNode(FRAC_DIGITS),
 	horz_seg_list_:      [dynamic]HorzSegment(FRAC_DIGITS),
 	horz_join_list_:     [dynamic]HorzJoin(FRAC_DIGITS),
@@ -191,7 +192,7 @@ AddPaths :: proc(
 ) -> (
 	err: Clipper_Error,
 ) {
-	if is_open do ctx.has_open_paths_ = true
+	when is_open do ctx.has_open_paths_ = true
 	AddPaths_(ctx, paths, polytype, is_open) or_return
 	return
 }
@@ -338,6 +339,7 @@ AddSubject :: proc(
 	ctx: ^Context($FRAC_DIGITS),
 	subjects: [][][2]fixed_bcd.BCD(FRAC_DIGITS),
 ) -> Clipper_Error {
+	if subjects == nil do return nil
 	AddPaths(ctx, subjects, .Subject, false) or_return
 	return nil
 }
@@ -347,6 +349,7 @@ AddOpenSubject :: proc(
 	ctx: ^Context($FRAC_DIGITS),
 	opens: [][][2]fixed_bcd.BCD(FRAC_DIGITS),
 ) -> Clipper_Error {
+	if opens == nil do return nil
 	AddPaths(ctx, opens, .Subject, true) or_return
 	return nil
 }
@@ -373,16 +376,14 @@ PopScanline :: proc(
 	res: bool,
 	err: Clipper_Error,
 ) {
-	if len(ctx.scanline_list_) == 0 {
+	if pq.len(ctx.scanline_list_) == 0 {
 		return false, nil
 	}
 
-	inout_y^ = ctx.scanline_list_[len(ctx.scanline_list_) - 1]
-	non_zero_resize(&ctx.scanline_list_, len(ctx.scanline_list_) - 1) or_return
+	inout_y^ = pq.pop(&ctx.scanline_list_)
 
-	for len(ctx.scanline_list_) != 0 &&
-	    (inout_y^ == ctx.scanline_list_[len(ctx.scanline_list_) - 1]) {
-		non_zero_resize(&ctx.scanline_list_, len(ctx.scanline_list_) - 1) or_return
+	for pq.len(ctx.scanline_list_) != 0 && (inout_y^ == pq.peek(ctx.scanline_list_)) {
+		pq.pop(&ctx.scanline_list_)
 	}
 
 	return true, nil
@@ -1986,7 +1987,7 @@ InsertScanline :: proc(
 ) -> (
 	err: Clipper_Error,
 ) {
-	non_zero_append(&ctx.scanline_list_, y) or_return
+	pq.push(&ctx.scanline_list_, y) or_return
 	return
 }
 
@@ -2853,10 +2854,6 @@ BooleanOpCustomData :: proc(
 			[dynamic]^LocalMinima(FRAC_DIGITS),
 			context.temp_allocator,
 		) or_return,
-		scanline_list_  = make(
-			[dynamic]fixed_bcd.BCD(FRAC_DIGITS),
-			context.temp_allocator,
-		) or_return,
 		out             = make(
 			[dynamic][dynamic]fixed_bcd.BCD(FRAC_DIGITS),
 			context.temp_allocator,
@@ -2870,6 +2867,11 @@ BooleanOpCustomData :: proc(
 		fill_rule_      = fill_rule,
 		clip_type_      = clip_type,
 	}
+	pq.init(&ctx.scanline_list_, proc(a, b: fixed_bcd.BCD(FRAC_DIGITS)) -> bool {
+			return fixed_bcd.less(a, b)
+		}, pq.default_swap_proc(
+			fixed_bcd.BCD(FRAC_DIGITS),
+		), allocator = context.temp_allocator) or_return
 
 	AddSubject(&ctx, subjects) or_return
 	AddOpenSubject(&ctx, opens) or_return

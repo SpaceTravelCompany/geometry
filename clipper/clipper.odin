@@ -2868,7 +2868,7 @@ BooleanOpCustomData :: proc(
 		clip_type_      = clip_type,
 	}
 	pq.init(&ctx.scanline_list_, proc(a, b: fixed_bcd.BCD(FRAC_DIGITS)) -> bool {
-			return fixed_bcd.less(a, b)
+			return fixed_bcd.greater(a, b)
 		}, pq.default_swap_proc(
 			fixed_bcd.BCD(FRAC_DIGITS),
 		), allocator = context.temp_allocator) or_return

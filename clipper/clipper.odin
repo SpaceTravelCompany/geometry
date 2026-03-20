@@ -49,7 +49,6 @@ JoinWith :: enum u8 {
 
 @(private = "file")
 VertexFlags :: enum {
-	Empty,
 	OpenStart,
 	OpenEnd,
 	LocalMax,
@@ -240,7 +239,7 @@ AddPaths_ :: proc(
 
 			curr_v.prev = prev_v
 			curr_v.pt = pt
-			curr_v.flags = {.Empty}
+			curr_v.flags = {}
 			prev_v = curr_v
 			curr_v = intrinsics.ptr_offset(curr_v, 1)
 			cnt += 1

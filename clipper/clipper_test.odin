@@ -33,7 +33,7 @@ _make_square_path_bcd :: proc(
 
 @(test)
 test_union_2square :: proc(t: ^testing.T) {
-	x0 := fixed_bcd.init_const(2, 0, 0, DEF_FRAC_DIGITS)
+	x0 := fixed_bcd.init_const(0, 0, 0, DEF_FRAC_DIGITS)
 	y0 := fixed_bcd.init_const(0, 0, 0, DEF_FRAC_DIGITS)
 	size := fixed_bcd.init_const(100, 0, 0, DEF_FRAC_DIGITS)
 

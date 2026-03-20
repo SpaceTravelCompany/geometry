@@ -76,6 +76,14 @@ shapes :: struct {
 }
 
 @(private)
+curve_struct_fixed :: struct($FRAC_DIGITS: int) {
+	start: [2]fixed_bcd.BCD(FRAC_DIGITS),
+	ctl0:  [2]fixed_bcd.BCD(FRAC_DIGITS),
+	ctl1:  [2]fixed_bcd.BCD(FRAC_DIGITS),
+	end:   [2]fixed_bcd.BCD(FRAC_DIGITS),
+	type:  curve_type,
+}
+
 shape_node_fixed :: struct($FIXED_DIGITS: int) {
 	pts:           [][][2]fixed_bcd.BCD(FIXED_DIGITS),
 	curve_pts_ids: [][]u32,
@@ -965,15 +973,6 @@ __shapes_compute_polygon :: proc(
 	err: shape_error = nil,
 ) {
 	return __shapes_compute_polygon_explicit(poly, fixed_bcd.MAX_FRAC_DIGITS, allocator)
-}
-
-@(private)
-curve_struct_fixed :: struct($FRAC_DIGITS: int) {
-	start: [2]fixed_bcd.BCD(FRAC_DIGITS),
-	ctl0:  [2]fixed_bcd.BCD(FRAC_DIGITS),
-	ctl1:  [2]fixed_bcd.BCD(FRAC_DIGITS),
-	end:   [2]fixed_bcd.BCD(FRAC_DIGITS),
-	type:  curve_type,
 }
 
 shapes_compute_polygon_fixed :: proc(

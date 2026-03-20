@@ -129,7 +129,8 @@ FixupEdgeIntersects :: proc(ctx: ^Context($T)) -> (err: Trianguate_Error) {
 	return nil
 }
 
-TrianguatePolygons_Fixed :: proc(
+@(private = "file")
+TrianguatePolygons_Fixed_Impl :: proc(
 	poly: [][][2]$T,
 	allocator := context.allocator,
 ) -> (
@@ -285,6 +286,46 @@ TrianguatePolygons_Fixed :: proc(
 	indices = utils.make_non_zeroed_slice([]u32, len(idx_buf), allocator) or_return
 	mem.copy_non_overlapping(raw_data(indices), raw_data(idx_buf[:]), size_of(u32) * len(idx_buf))
 	return
+}
+
+@(private = "file")
+TrianguatePolygons_WithFrac_Impl :: proc(
+	$FRAC: int,
+	poly: [][][2]$T,
+	allocator := context.allocator,
+) -> (
+	indices: []u32,
+	err: Trianguate_Error,
+) where intrinsics.type_is_float(T) {
+	poly_fixed := make([dynamic][][2]fixed_bcd.BCD(FRAC), context.temp_allocator) or_return
+	non_zero_resize(&poly_fixed, len(poly)) or_return
+
+	for i in 0 ..< len(poly) {
+		path := poly[i]
+		path_fixed := make([dynamic][2]fixed_bcd.BCD(FRAC), context.temp_allocator) or_return
+		non_zero_resize(&path_fixed, len(path)) or_return
+
+		for j in 0 ..< len(path) {
+			path_fixed[j] = [2]fixed_bcd.BCD(FRAC) {
+				fixed_bcd.from_f64(FRAC, f64(path[j].x)),
+				fixed_bcd.from_f64(FRAC, f64(path[j].y)),
+			}
+		}
+		poly_fixed[i] = path_fixed[:]
+	}
+
+	return TrianguatePolygons_Fixed_Impl(poly_fixed[:], allocator)
+}
+
+@(private = "file")
+TrianguatePolygons_Impl :: proc(
+	poly: [][][2]$T,
+	allocator := context.allocator,
+) -> (
+	indices: []u32,
+	err: Trianguate_Error,
+) where intrinsics.type_is_float(T) {
+	return TrianguatePolygons_WithFrac_Impl(fixed_bcd.MAX_FRAC_DIGITS, poly, allocator)
 }
 
 @(private = "file")
@@ -1014,4 +1055,35 @@ MakeVertex :: proc(
 	res.e = make([dynamic]^Edge(T), context.temp_allocator) or_return
 	non_zero_reserve(&res.e, 2) or_return
 	return
+}
+
+TrianguatePolygons_Fixed :: proc(
+	poly: [][][2]$T,
+	allocator := context.allocator,
+) -> (
+	indices: []u32,
+	err: Trianguate_Error,
+) where intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
+	return TrianguatePolygons_Fixed_Impl(poly, allocator)
+}
+
+TrianguatePolygons_WithFrac :: proc(
+	poly: [][][2]$T,
+	$FRAC: int,
+	allocator := context.allocator,
+) -> (
+	indices: []u32,
+	err: Trianguate_Error,
+) where intrinsics.type_is_float(T) {
+	return TrianguatePolygons_WithFrac_Impl(FRAC, poly, allocator)
+}
+
+TrianguatePolygons :: proc(
+	poly: [][][2]$T,
+	allocator := context.allocator,
+) -> (
+	indices: []u32,
+	err: Trianguate_Error,
+) where intrinsics.type_is_float(T) {
+	return TrianguatePolygons_Impl(poly, allocator)
 }

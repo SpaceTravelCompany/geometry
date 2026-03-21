@@ -277,7 +277,7 @@ GetCubicCurveType :: proc "contextless" (
 		D := 3.0 * d1 * d1 - 4.0 * d2 * d0 //33 + 36 + 1 = 70
 		discr := d0 * d0 * D //27 + 27 + 70 = 124
 
-		EP :: epsilon(T) * 250.0 // about count float operations
+		EP :: linalg_ex.epsilon(T) * 10.0
 		if discr >= -EP && discr <= EP {
 			if d0 >= -EP && d0 <= EP && d1 >= -EP && d1 <= EP {
 				if d2 >= -EP && d2 <= EP {
@@ -456,7 +456,9 @@ _Shapes_ComputeLine :: proc(
 			},
 		}
 
-		reverse = (d0.i > 0 && F[1][0] < 0.0) || (d0.i < 0 && F[1][0] > 0.0) //? F[1][0]이 오차가생길수 있지만 일단 이렇게
+		reverse =
+			(d0.i > 0 && F[1][0] < math.F32_EPSILON * 5.0) ||
+			(d0.i < 0 && F[1][0] > -math.F32_EPSILON * 5.0) //? F[1][0]이 오차가생길수 있지만 일단 이렇게
 	case .Cusp:
 		d1f: f32 = f32(fixed_bcd.to_f64(d1))
 		d2f: f32 = f32(fixed_bcd.to_f64(d2))
@@ -519,9 +521,16 @@ _Shapes_ComputeLine :: proc(
 		vertList[start + 2].pos = pts.ctl1
 		vertList[start + 3].pos = pts.end
 		//triangulate
+		vts: [4]linalg.Vector2f32 = {
+			{f32(fixed_bcd.to_f64(pts.start.x)), f32(fixed_bcd.to_f64(pts.start.y))},
+			{f32(fixed_bcd.to_f64(pts.ctl0.x)), f32(fixed_bcd.to_f64(pts.ctl0.y))},
+			{f32(fixed_bcd.to_f64(pts.ctl1.x)), f32(fixed_bcd.to_f64(pts.ctl1.y))},
+			{f32(fixed_bcd.to_f64(pts.end.x)), f32(fixed_bcd.to_f64(pts.end.y))},
+		}
+
 		for i: u32 = 0; i < 4; i += 1 {
 			for j: u32 = i + 1; j < 4; j += 1 {
-				if vertList[start + i].pos == vertList[start + j].pos {
+				if vts[i] == vts[j] {
 					indices: [3]u32 = {start, start, start}
 					idx: u32 = 0
 					for k: u32 = 0; k < 4; k += 1 {
@@ -546,10 +555,10 @@ _Shapes_ComputeLine :: proc(
 				}
 			}
 			if linalg_ex.PointInTriangle(
-				vertList[start + i].pos,
-				vertList[indices[0]].pos,
-				vertList[indices[1]].pos,
-				vertList[indices[2]].pos,
+				vts[i],
+				vts[indices[0] - start],
+				vts[indices[1] - start],
+				vts[indices[2] - start],
 			) {
 				for k: u32 = 0; k < 3; k += 1 {
 					non_zero_append(indList, indices[k]) or_return
@@ -560,15 +569,9 @@ _Shapes_ComputeLine :: proc(
 			}
 		}
 
-		b := linalg_ex.LinesIntersect3(
-			vertList[start].pos,
-			vertList[start + 2].pos,
-			vertList[start + 1].pos,
-			vertList[start + 3].pos,
-		)
+		b := linalg_ex.LinesIntersect3(vts[0], vts[2], vts[1], vts[3])
 		if b == .intersect {
-			if fixed_bcd.length2(vertList[start + 2].pos, vertList[start].pos).i <
-			   fixed_bcd.length2(vertList[start + 3].pos, vertList[start + 1].pos).i {
+			if linalg.vector_length2(vts[2] - vts[0]) < linalg.vector_length2(vts[3] - vts[1]) {
 				non_zero_append(
 					indList,
 					start,
@@ -591,15 +594,9 @@ _Shapes_ComputeLine :: proc(
 			}
 			return nil
 		}
-		b = linalg_ex.LinesIntersect3(
-			vertList[start].pos,
-			vertList[start + 3].pos,
-			vertList[start + 1].pos,
-			vertList[start + 2].pos,
-		)
+		b = linalg_ex.LinesIntersect3(vts[0], vts[3], vts[1], vts[2])
 		if b == .intersect {
-			if fixed_bcd.length2(vertList[start + 3].pos, vertList[start].pos).i <
-			   fixed_bcd.length2(vertList[start + 2].pos, vertList[start + 1].pos).i {
+			if linalg.vector_length2(vts[3] - vts[0]) < linalg.vector_length2(vts[2] - vts[1]) {
 				non_zero_append(indList, start, start + 1, start + 3, start, start + 3, start + 2)
 			} else {
 				non_zero_append(
@@ -614,8 +611,7 @@ _Shapes_ComputeLine :: proc(
 			}
 			return nil
 		}
-		if fixed_bcd.length2(vertList[start + 1].pos, vertList[start].pos).i <
-		   fixed_bcd.length2(vertList[start + 3].pos, vertList[start + 2].pos).i {
+		if linalg.vector_length2(vts[1] - vts[0]) < linalg.vector_length2(vts[3] - vts[2]) {
 			non_zero_append(
 				indList,
 				start,

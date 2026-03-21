@@ -425,6 +425,16 @@ PointInTriangle :: proc "contextless" (
 	}
 }
 
+epsilon :: proc "contextless" ($T: typeid) -> T where intrinsics.type_is_float(T) {
+	when T == f32 {
+		return T(math.F32_EPSILON)
+	} else when T == f64 {
+		return T(math.F64_EPSILON)
+	} else {
+		return T(math.F16_EPSILON)
+	}
+}
+
 PointInLine :: proc "contextless" (
 	p: [2]$T,
 	l0: [2]T,
@@ -440,7 +450,7 @@ PointInLine :: proc "contextless" (
 		A := (l0.y - l1.y) / (l0.x - l1.x)
 		B := l0.y - A * l0.x
 		pY := A * p.x + B
-		EP :: epsilon(T) * 20
+		EP :: epsilon(T) * 10.0
 		res := p.y >= pY - EP && p.y <= pY + EP
 		t: T = 0.0
 		t_: T = 1.0

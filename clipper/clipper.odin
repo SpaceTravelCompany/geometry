@@ -57,13 +57,6 @@ VertexFlags :: enum {
 }
 
 @(private = "file")
-DxCheck :: enum u8 {
-	None,
-	NegativeInf,
-	Inf,
-}
-
-@(private = "file")
 VertexFlags_Set :: bit_set[VertexFlags]
 
 // Clipper context (clipper.engine)
@@ -157,7 +150,6 @@ Active :: struct($FRAC_DIGITS: int, $U: typeid) {
 	top_u:         U,
 	is_left_bound: bool,
 	join_with:     JoinWith,
-	dx_check:      DxCheck,
 }
 
 // IntersectNode: intersection point and two edges (clipper.engine.h)
@@ -436,17 +428,14 @@ IsHorizontal :: proc "contextless" (e: ^Active($FRAC_DIGITS, $U)) -> bool {
 @(private = "file")
 GetDx :: proc "contextless" (
 	pt1, pt2: [2]fixed_bcd.BCD($FRAC_DIGITS),
-) -> (
-	fixed_bcd.BCD(FRAC_DIGITS),
-	DxCheck,
-) {
+) -> fixed_bcd.BCD(FRAC_DIGITS) {
 	dy := fixed_bcd.sub(pt2.y, pt1.y)
 	context = runtime.default_context()
 	if dy.i != 0 {
-		return fixed_bcd.div(fixed_bcd.sub(pt2.x, pt1.x), dy), .None
+		return fixed_bcd.div(fixed_bcd.sub(pt2.x, pt1.x), dy)
 	}
-	if pt2.x.i > pt1.x.i do return {}, .NegativeInf
-	return {}, .Inf
+	if pt2.x.i > pt1.x.i do return fixed_bcd.inf_min(FRAC_DIGITS)
+	return fixed_bcd.inf_max(FRAC_DIGITS)
 }
 
 @(private = "file")
@@ -479,17 +468,17 @@ GetLineIntersectPt :: proc "contextless" (
 
 @(private = "file")
 SetDx :: proc "contextless" (e: ^Active($FRAC_DIGITS, $U)) {
-	e.dx, e.dx_check = GetDx(e.bot, e.top)
+	e.dx = GetDx(e.bot, e.top)
 }
 
 @(private = "file")
 IsHeadingLeftHorz :: proc "contextless" (e: ^Active($FRAC_DIGITS, $U)) -> bool {
-	return e.dx_check == .Inf
+	return e.dx == fixed_bcd.inf_max(FRAC_DIGITS)
 }
 
 @(private = "file")
 IsHeadingRightHorz :: proc "contextless" (e: ^Active($FRAC_DIGITS, $U)) -> bool {
-	return e.dx_check == .NegativeInf
+	return e.dx == fixed_bcd.inf_min(FRAC_DIGITS)
 }
 
 @(private = "file")
@@ -1564,8 +1553,8 @@ SegmentsIntersectExclusive :: proc "contextless" (
 	)
 	if fixed_bcd.equal(t, zero) do return false
 	if fixed_bcd.greater(t, zero) {
-		if fixed_bcd.less(cp, zero) || !fixed_bcd.less(t, cp) do return false
-	} else if fixed_bcd.greater(cp, zero) || !fixed_bcd.greater(t, cp) do return false
+		if fixed_bcd.less(cp, zero) || fixed_bcd.greater_than(t, cp) do return false
+	} else if fixed_bcd.greater(cp, zero) || fixed_bcd.less_than(t, cp) do return false
 
 	t = fixed_bcd.sub(
 		fixed_bcd.mul(fixed_bcd.sub(seg1a.x, seg2a.x), dy1),

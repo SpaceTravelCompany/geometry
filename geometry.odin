@@ -927,36 +927,11 @@ __shapes_compute_polygon_explicit :: proc(
 	res: raw_shape,
 	err: shape_error = nil,
 ) {
-	poly64 := cvt_shapes_to_shapes_fixed(poly, FRAC_DIGITS, allocator) or_return
+	poly64 := cvt_shapes_to_shapes_fixed(poly, FRAC_DIGITS, context.temp_allocator) or_return
 
 	res64 := shapes_compute_polygon_fixed(poly64, context.temp_allocator) or_return
 
-	res.vertices = utils_private.make_non_zeroed_slice(
-		[]shape_vertex2d,
-		len(res64.vertices),
-		allocator,
-	) or_return
-	defer if err != nil do delete(res.vertices, allocator)
-	res.indices = utils_private.make_non_zeroed_slice(
-		[]u32,
-		len(res64.indices),
-		allocator,
-	) or_return
-	defer if err != nil do delete(res.indices, allocator) // not working
-
-	for v, i in res64.vertices {
-		res.vertices[i].pos.x = f32(fixed_bcd.to_f64(v.pos.x))
-		res.vertices[i].pos.y = f32(fixed_bcd.to_f64(v.pos.y))
-
-		res.vertices[i].color = v.color
-		res.vertices[i].uvw = v.uvw
-	}
-
-	mem.copy_non_overlapping(
-		raw_data(res.indices),
-		raw_data(res64.indices),
-		len(res64.indices) * size_of(u32),
-	)
+	res = cvt_raw_shape_fixed_to_raw_shape(res64, allocator) or_return
 	return
 }
 

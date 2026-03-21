@@ -1419,8 +1419,8 @@ DoSplitOp :: proc(
 		split_op.prev = new_op
 		split_op.next.next = new_op
 	} else {
-		_ = DisposeOutPt(split_op.next)
-		_ = DisposeOutPt(split_op)
+		// _ = DisposeOutPt(split_op.next)
+		// _ = DisposeOutPt(split_op)
 	}
 	return
 }
@@ -2890,26 +2890,36 @@ BooleanOpCustomData_Impl :: proc(
 	err: Clipper_Error,
 ) {
 	ctx := Context(FRAC_DIGITS, U) {
-		vertex_lists_   = make([dynamic]^Vertex(FRAC_DIGITS, U), context.temp_allocator) or_return,
-		minima_list_    = make(
+		vertex_lists_    = make(
+			[dynamic]^Vertex(FRAC_DIGITS, U),
+			context.temp_allocator,
+		) or_return,
+		minima_list_     = make(
 			[dynamic]^LocalMinima(FRAC_DIGITS, U),
 			context.temp_allocator,
 		) or_return,
-		out             = make(
+		out              = make(
 			[dynamic][dynamic]fixed_bcd.BCD(FRAC_DIGITS),
 			context.temp_allocator,
 		) or_return,
-		outrec_list_    = make([dynamic]^OutRec(FRAC_DIGITS, U), context.temp_allocator) or_return,
-		horz_seg_list_  = make(
+		outrec_list_     = make(
+			[dynamic]^OutRec(FRAC_DIGITS, U),
+			context.temp_allocator,
+		) or_return,
+		horz_seg_list_   = make(
 			[dynamic]HorzSegment(FRAC_DIGITS, U),
 			context.temp_allocator,
 		) or_return,
-		horz_join_list_ = make(
+		horz_join_list_  = make(
 			[dynamic]HorzJoin(FRAC_DIGITS, U),
 			context.temp_allocator,
 		) or_return,
-		fill_rule_      = fill_rule,
-		clip_type_      = clip_type,
+		intersect_nodes_ = make(
+			[dynamic]IntersectNode(FRAC_DIGITS, U),
+			context.temp_allocator,
+		) or_return,
+		fill_rule_       = fill_rule,
+		clip_type_       = clip_type,
 	}
 
 	pq.init(&ctx.scanline_list_, proc(a, b: fixed_bcd.BCD(FRAC_DIGITS)) -> bool {

@@ -170,7 +170,7 @@ TrianguatePolygons_Fixed_Impl :: proc(
 	slice.sort_by(ctx.all_edges[:], proc(a, b: ^Edge(T)) -> bool {
 		return a.vL.p.x.i < b.vL.p.x.i
 	})
-	FixupEdgeIntersects(&ctx) or_return
+	//FixupEdgeIntersects(&ctx) or_return //! not execute now
 
 	slice.sort_by(ctx.all_verts[:], proc(a, b: ^Vertex(T)) -> bool {
 		if a.p.y.i == b.p.y.i do return a.p.x.i < b.p.x.i
@@ -975,25 +975,25 @@ RemoveIntersection :: proc(
 
 	d, d_ := linalg_ex.ShortestLength2Line(e1.vL.p, e2.vL.p, e2.vR.p)
 	d2, d2_ := linalg_ex.ShortestLength2Line(e1.vR.p, e2.vL.p, e2.vR.p)
-	if fixed_bcd.mul(d2, d_).i < fixed_bcd.mul(d, d2_).i {
+	if fixed_bcd.div(d2, d2_).i < fixed_bcd.div(d, d_).i {
 		d = d2; d_ = d2_
 		v = e1.vR
 	}
 
 	d2, d2_ = linalg_ex.ShortestLength2Line(e2.vL.p, e1.vL.p, e1.vR.p)
-	if fixed_bcd.mul(d2, d_).i < fixed_bcd.mul(d, d2_).i {
+	if fixed_bcd.div(d2, d2_).i < fixed_bcd.div(d, d_).i {
 		d = d2; d_ = d2_
 		tmpE = e1
 		v = e2.vL
 	}
 
 	d2, d2_ = linalg_ex.ShortestLength2Line(e2.vR.p, e1.vL.p, e1.vR.p)
-	if fixed_bcd.mul(d2, d_).i < fixed_bcd.mul(d, d2_).i {
+	if fixed_bcd.div(d2, d2_).i < fixed_bcd.div(d, d_).i {
 		d = d2; d_ = d2_
 		tmpE = e1
 		v = e2.vR
 	}
-	if d.i > d_.i do return .PATHS_INTERSECTS
+	if d.i == 0 do return .PATHS_INTERSECTS
 
 	v2 := tmpE.vT
 	RemoveEdgeFromVertex(v2, tmpE) or_return

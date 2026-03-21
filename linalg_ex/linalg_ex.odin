@@ -1202,9 +1202,12 @@ ShortestLength2Line :: proc "contextless" (
 			add :: fixed_bcd.add
 			sub :: fixed_bcd.sub
 			mul :: fixed_bcd.mul
-			one_T :: T {
-				i = 1 * fixed_bcd._SCALE_TABLE[intrinsics.type_polymorphic_record_parameter_value(T, 0) - 1],
-			}
+			one_T := fixed_bcd.init_const(
+				1,
+				0,
+				0,
+				intrinsics.type_polymorphic_record_parameter_value(T, 0),
+			)
 		}
 
 		dx := sub(l2.x, l1.x)

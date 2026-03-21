@@ -640,7 +640,7 @@ _Shapes_ComputeLine :: proc(
 }
 
 @(require_results)
-cvt_raw_shapei64_to_raw_shape :: proc(
+cvt_raw_shape_fixed_to_raw_shape :: proc(
 	raw64: raw_shape_fixed($FRAC_DIGITS),
 	allocator := context.allocator,
 ) -> (

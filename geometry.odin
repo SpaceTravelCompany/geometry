@@ -67,7 +67,7 @@ shape_node :: struct {
 	curve_pts_ids: [][]u32,
 	color:         linalg.Vector4f32,
 	stroke_color:  linalg.Vector4f32,
-	thickness:     f64,
+	thickness:     f32,
 	is_closed:     bool,
 }
 
@@ -89,7 +89,7 @@ shape_node_fixed :: struct($FIXED_DIGITS: int) {
 	curve_pts_ids: [][]u32,
 	color:         linalg.Vector4f32,
 	stroke_color:  linalg.Vector4f32,
-	thickness:     fixed_bcd.BCD(FIXED_DIGITS),
+	thickness:     f32,
 	is_closed:     bool,
 }
 
@@ -807,7 +807,7 @@ cvt_shapes_to_shapes_fixed :: proc(
 		}
 
 		poly64.nodes[i].is_closed = n.is_closed
-		poly64.nodes[i].thickness = fixed_bcd.from_f64(FRAC_DIGITS, n.thickness)
+		poly64.nodes[i].thickness = n.thickness
 		poly64.nodes[i].color = n.color
 		poly64.nodes[i].stroke_color = n.stroke_color
 	}
@@ -907,7 +907,7 @@ cvt_shapes_fixed_to_shapes :: proc(
 		}
 
 		poly32.nodes[i].is_closed = n.is_closed
-		poly32.nodes[i].thickness = fixed_bcd.to_f64(n.thickness)
+		poly32.nodes[i].thickness = n.thickness
 		poly32.nodes[i].color = n.color
 		poly32.nodes[i].stroke_color = n.stroke_color
 	}

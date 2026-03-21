@@ -70,24 +70,22 @@ VertexFlags_Set :: bit_set[VertexFlags]
 @(private = "file")
 Context :: struct($FRAC_DIGITS: int, $U: typeid) {
 	bot_y_:              fixed_bcd.BCD(FRAC_DIGITS),
-	actives_:            ^Active(FRAC_DIGITS),
-	sel_:                ^Active(FRAC_DIGITS),
-	minima_list_:        [dynamic]^LocalMinima(FRAC_DIGITS),
-	vertex_lists_:       [dynamic]^Vertex(FRAC_DIGITS),
+	actives_:            ^Active(FRAC_DIGITS, U),
+	sel_:                ^Active(FRAC_DIGITS, U),
+	minima_list_:        [dynamic]^LocalMinima(FRAC_DIGITS, U),
+	vertex_lists_:       [dynamic]^Vertex(FRAC_DIGITS, U),
 	scanline_list_:      pq.Priority_Queue(fixed_bcd.BCD(FRAC_DIGITS)),
-	intersect_nodes_:    [dynamic]IntersectNode(FRAC_DIGITS),
-	horz_seg_list_:      [dynamic]HorzSegment(FRAC_DIGITS),
-	horz_join_list_:     [dynamic]HorzJoin(FRAC_DIGITS),
+	intersect_nodes_:    [dynamic]IntersectNode(FRAC_DIGITS, U),
+	horz_seg_list_:      [dynamic]HorzSegment(FRAC_DIGITS, U),
+	horz_join_list_:     [dynamic]HorzJoin(FRAC_DIGITS, U),
 	out:                 [dynamic][dynamic]fixed_bcd.BCD(FRAC_DIGITS),
-	outrec_list_:        [dynamic]^OutRec(FRAC_DIGITS),
+	outrec_list_:        [dynamic]^OutRec(FRAC_DIGITS, U),
 	current_locmin_idx_: int,
 	preserve_collinear_: bool,
 	reverse_solution_:   bool,
 	has_open_paths_:     bool,
 	fill_rule_:          FillRule,
 	clip_type_:          ClipType,
-	extra_:              [dynamic][dynamic]U,
-	extra_open_:         [dynamic][dynamic]U,
 }
 
 // Scanline: y-coordinate for sweep, linked list (clipper.engine.cpp)
@@ -99,60 +97,64 @@ Scanline :: struct($FRAC_DIGITS: int) {
 
 // Vertex: polygon vertex, circular doubly linked (clipper.engine.h)
 @(private = "file")
-Vertex :: struct($FRAC_DIGITS: int) {
+Vertex :: struct($FRAC_DIGITS: int, $U: typeid) {
 	pt:    [2]fixed_bcd.BCD(FRAC_DIGITS),
-	next:  ^Vertex(FRAC_DIGITS),
-	prev:  ^Vertex(FRAC_DIGITS),
+	next:  ^Vertex(FRAC_DIGITS, U),
+	prev:  ^Vertex(FRAC_DIGITS, U),
 	flags: VertexFlags_Set,
+	pt_u:  U,
 }
 
 // LocalMinima: bottom of an edge bound (clipper.engine.h)
 @(private = "file")
-LocalMinima :: struct($FRAC_DIGITS: int) {
-	vertex:   ^Vertex(FRAC_DIGITS),
+LocalMinima :: struct($FRAC_DIGITS: int, $U: typeid) {
+	vertex:   ^Vertex(FRAC_DIGITS, U),
 	polytype: PathType,
 	is_open:  bool,
 }
 
 // OutRec: path in the clipping solution; AEL edges reference it (clipper.engine.h)
 @(private = "file")
-OutRec :: struct($FRAC_DIGITS: int) {
+OutRec :: struct($FRAC_DIGITS: int, $U: typeid) {
 	idx:        int,
-	owner:      ^OutRec(FRAC_DIGITS),
-	front_edge: ^Active(FRAC_DIGITS),
-	back_edge:  ^Active(FRAC_DIGITS),
-	pts:        ^OutPt(FRAC_DIGITS),
+	owner:      ^OutRec(FRAC_DIGITS, U),
+	front_edge: ^Active(FRAC_DIGITS, U),
+	back_edge:  ^Active(FRAC_DIGITS, U),
+	pts:        ^OutPt(FRAC_DIGITS, U),
 	is_open:    bool,
 }
 
 // OutPt: output polygon vertex, circular doubly linked (clipper.engine.h)
 @(private = "file")
-OutPt :: struct($FRAC_DIGITS: int) {
+OutPt :: struct($FRAC_DIGITS: int, $U: typeid) {
 	pt:     [2]fixed_bcd.BCD(FRAC_DIGITS),
-	next:   ^OutPt(FRAC_DIGITS),
-	prev:   ^OutPt(FRAC_DIGITS),
-	outrec: ^OutRec(FRAC_DIGITS),
-	horz:   ^HorzSegment(FRAC_DIGITS),
+	next:   ^OutPt(FRAC_DIGITS, U),
+	prev:   ^OutPt(FRAC_DIGITS, U),
+	outrec: ^OutRec(FRAC_DIGITS, U),
+	horz:   ^HorzSegment(FRAC_DIGITS, U),
+	pt_u:   U,
 }
 
 // Active: edge in AEL/SEL (clipper.engine.h)
 @(private = "file")
-Active :: struct($FRAC_DIGITS: int) {
+Active :: struct($FRAC_DIGITS: int, $U: typeid) {
 	bot:           [2]fixed_bcd.BCD(FRAC_DIGITS),
 	top:           [2]fixed_bcd.BCD(FRAC_DIGITS),
 	curr_x:        fixed_bcd.BCD(FRAC_DIGITS),
 	dx:            fixed_bcd.BCD(FRAC_DIGITS),
-	outrec:        ^OutRec(FRAC_DIGITS),
-	prev_in_ael:   ^Active(FRAC_DIGITS),
-	next_in_ael:   ^Active(FRAC_DIGITS),
-	prev_in_sel:   ^Active(FRAC_DIGITS),
-	next_in_sel:   ^Active(FRAC_DIGITS),
-	jump:          ^Active(FRAC_DIGITS),
-	vertex_top:    ^Vertex(FRAC_DIGITS),
-	local_min:     ^LocalMinima(FRAC_DIGITS),
+	outrec:        ^OutRec(FRAC_DIGITS, U),
+	prev_in_ael:   ^Active(FRAC_DIGITS, U),
+	next_in_ael:   ^Active(FRAC_DIGITS, U),
+	prev_in_sel:   ^Active(FRAC_DIGITS, U),
+	next_in_sel:   ^Active(FRAC_DIGITS, U),
+	jump:          ^Active(FRAC_DIGITS, U),
+	vertex_top:    ^Vertex(FRAC_DIGITS, U),
+	local_min:     ^LocalMinima(FRAC_DIGITS, U),
 	wind_dx:       i32, // handle negatives
 	wind_cnt:      i32,
 	wind_cnt2:     i32,
+	bot_u:         U,
+	top_u:         U,
 	is_left_bound: bool,
 	join_with:     JoinWith,
 	dx_check:      DxCheck,
@@ -160,25 +162,26 @@ Active :: struct($FRAC_DIGITS: int) {
 
 // IntersectNode: intersection point and two edges (clipper.engine.h)
 @(private = "file")
-IntersectNode :: struct($FRAC_DIGITS: int) {
+IntersectNode :: struct($FRAC_DIGITS: int, $U: typeid) {
 	pt:    [2]fixed_bcd.BCD(FRAC_DIGITS),
-	edge1: ^Active(FRAC_DIGITS),
-	edge2: ^Active(FRAC_DIGITS),
+	edge1: ^Active(FRAC_DIGITS, U),
+	edge2: ^Active(FRAC_DIGITS, U),
+	pt_u:  U,
 }
 
 // HorzSegment: horizontal segment for join processing (clipper.engine.h)
 @(private = "file")
-HorzSegment :: struct($FRAC_DIGITS: int) {
-	left_op:       ^OutPt(FRAC_DIGITS),
-	right_op:      ^OutPt(FRAC_DIGITS),
+HorzSegment :: struct($FRAC_DIGITS: int, $U: typeid) {
+	left_op:       ^OutPt(FRAC_DIGITS, U),
+	right_op:      ^OutPt(FRAC_DIGITS, U),
 	left_to_right: bool,
 }
 
 // HorzJoin: horizontal join pair (clipper.engine.h)
 @(private = "file")
-HorzJoin :: struct($FRAC_DIGITS: int) {
-	op1: ^OutPt(FRAC_DIGITS),
-	op2: ^OutPt(FRAC_DIGITS),
+HorzJoin :: struct($FRAC_DIGITS: int, $U: typeid) {
+	op1: ^OutPt(FRAC_DIGITS, U),
+	op2: ^OutPt(FRAC_DIGITS, U),
 }
 
 //
@@ -214,10 +217,10 @@ AddPaths_ :: proc(
 	}
 	if total_vertices == 0 do return nil
 
-	all_vertices := (^Vertex(FRAC_DIGITS))(
+	all_vertices := (^Vertex(FRAC_DIGITS, U))(
 		raw_data(
 			runtime.mem_alloc_non_zeroed(
-				size_of(Vertex(FRAC_DIGITS)) * total_vertices,
+				size_of(Vertex(FRAC_DIGITS, U)) * total_vertices,
 				allocator = context.temp_allocator,
 			) or_return,
 		),
@@ -228,7 +231,7 @@ AddPaths_ :: proc(
 		//for each path create a circular double linked list of vertices
 		v0 := v
 		curr_v := v
-		prev_v: ^Vertex(FRAC_DIGITS) = nil
+		prev_v: ^Vertex(FRAC_DIGITS, U) = nil
 
 		if len(path) == 0 do continue
 
@@ -318,7 +321,7 @@ AddPaths_ :: proc(
 @(private = "file")
 AddLocMin :: proc(
 	ctx: ^Context($FRAC_DIGITS, $U),
-	vert: ^Vertex(FRAC_DIGITS),
+	vert: ^Vertex(FRAC_DIGITS, U),
 	polytype: PathType,
 	$is_open: bool,
 ) -> (
@@ -327,7 +330,7 @@ AddLocMin :: proc(
 	if .LocalMin in vert.flags do return nil //make sure the vertex is added only once ...
 
 	vert.flags += {.LocalMin}
-	lm := new(LocalMinima(FRAC_DIGITS), context.temp_allocator) or_return
+	lm := new(LocalMinima(FRAC_DIGITS, U), context.temp_allocator) or_return
 	lm.vertex = vert
 	lm.polytype = polytype
 	lm.is_open = is_open
@@ -396,7 +399,7 @@ PopScanline :: proc(
 //
 
 @(private = "file")
-GetPolyType :: proc "contextless" (e: ^Active($FRAC_DIGITS)) -> PathType {
+GetPolyType :: proc "contextless" (e: ^Active($FRAC_DIGITS, $U)) -> PathType {
 	return e.local_min.polytype
 }
 
@@ -404,7 +407,7 @@ GetPolyType :: proc "contextless" (e: ^Active($FRAC_DIGITS)) -> PathType {
 PopLocalMinima :: proc "contextless" (
 	ctx: ^Context($FRAC_DIGITS, $U),
 	y: fixed_bcd.BCD(FRAC_DIGITS),
-) -> ^LocalMinima(FRAC_DIGITS) {
+) -> ^LocalMinima(FRAC_DIGITS, U) {
 	if ctx.current_locmin_idx_ >= len(ctx.minima_list_) ||
 	   !fixed_bcd.equal(y, ctx.minima_list_[ctx.current_locmin_idx_].vertex.pt.y) {
 		return nil
@@ -416,17 +419,17 @@ PopLocalMinima :: proc "contextless" (
 }
 
 @(private = "file")
-IsOpenActive :: proc "contextless" (e: ^Active($FRAC_DIGITS)) -> bool {
+IsOpenActive :: proc "contextless" (e: ^Active($FRAC_DIGITS, $U)) -> bool {
 	return e.local_min.is_open
 }
 
 @(private = "file")
-IsOpenEndVertex :: proc "contextless" (v: ^Vertex($FRAC_DIGITS)) -> bool {
+IsOpenEndVertex :: proc "contextless" (v: ^Vertex($FRAC_DIGITS, $U)) -> bool {
 	return .OpenEnd in v.flags || .OpenStart in v.flags
 }
 
 @(private = "file")
-IsHorizontal :: proc "contextless" (e: ^Active($FRAC_DIGITS)) -> bool {
+IsHorizontal :: proc "contextless" (e: ^Active($FRAC_DIGITS, $U)) -> bool {
 	return fixed_bcd.equal(e.top.y, e.bot.y)
 }
 
@@ -475,24 +478,24 @@ GetLineIntersectPt :: proc "contextless" (
 }
 
 @(private = "file")
-SetDx :: proc "contextless" (e: ^Active($FRAC_DIGITS)) {
+SetDx :: proc "contextless" (e: ^Active($FRAC_DIGITS, $U)) {
 	e.dx, e.dx_check = GetDx(e.bot, e.top)
 }
 
 @(private = "file")
-IsHeadingLeftHorz :: proc "contextless" (e: ^Active($FRAC_DIGITS)) -> bool {
+IsHeadingLeftHorz :: proc "contextless" (e: ^Active($FRAC_DIGITS, $U)) -> bool {
 	return e.dx_check == .Inf
 }
 
 @(private = "file")
-IsHeadingRightHorz :: proc "contextless" (e: ^Active($FRAC_DIGITS)) -> bool {
+IsHeadingRightHorz :: proc "contextless" (e: ^Active($FRAC_DIGITS, $U)) -> bool {
 	return e.dx_check == .NegativeInf
 }
 
 @(private = "file")
 IsContributingClosed :: proc "contextless" (
 	ctx: ^Context($FRAC_DIGITS, $U),
-	e: ^Active(FRAC_DIGITS),
+	e: ^Active(FRAC_DIGITS, U),
 ) -> bool {
 	#partial switch ctx.fill_rule_ {
 	case .NonZero:
@@ -546,7 +549,7 @@ IsContributingClosed :: proc "contextless" (
 @(private = "file")
 IsContributingOpen :: proc "contextless" (
 	ctx: ^Context($FRAC_DIGITS, $U),
-	e: ^Active(FRAC_DIGITS),
+	e: ^Active(FRAC_DIGITS, U),
 ) -> bool {
 	is_in_clip: bool
 	is_in_subj: bool
@@ -578,7 +581,7 @@ IsContributingOpen :: proc "contextless" (
 
 @(private = "file")
 TopX :: proc "contextless" (
-	ae: ^Active($FRAC_DIGITS),
+	ae: ^Active($FRAC_DIGITS, $U),
 	current_y: fixed_bcd.BCD(FRAC_DIGITS),
 ) -> fixed_bcd.BCD(FRAC_DIGITS) {
 	if fixed_bcd.equal(current_y, ae.top.y) || fixed_bcd.equal(ae.top.x, ae.bot.x) do return ae.top.x
@@ -588,7 +591,7 @@ TopX :: proc "contextless" (
 }
 
 @(private = "file")
-TrimHorz :: proc "contextless" (horz_edge: ^Active($FRAC_DIGITS), preserve_collinear: bool) {
+TrimHorz :: proc "contextless" (horz_edge: ^Active($FRAC_DIGITS, $U), preserve_collinear: bool) {
 	was_trimmed := false
 	pt := NextVertex(horz_edge).pt
 
@@ -615,7 +618,7 @@ TrimHorz :: proc "contextless" (horz_edge: ^Active($FRAC_DIGITS), preserve_colli
 @(private = "file")
 UpdateEdgeIntoAEL :: proc(
 	ctx: ^Context($FRAC_DIGITS, $U),
-	e: ^Active(FRAC_DIGITS),
+	e: ^Active(FRAC_DIGITS, U),
 ) -> Clipper_Error {
 	e.bot = e.top
 	e.vertex_top = NextVertex(e)
@@ -637,7 +640,7 @@ UpdateEdgeIntoAEL :: proc(
 }
 
 @(private = "file")
-DeleteFromAEL :: proc "contextless" (ctx: ^Context($FRAC_DIGITS, $U), e: ^Active(FRAC_DIGITS)) {
+DeleteFromAEL :: proc "contextless" (ctx: ^Context($FRAC_DIGITS, $U), e: ^Active(FRAC_DIGITS, U)) {
 	prev := e.prev_in_ael
 	next := e.next_in_ael
 
@@ -675,8 +678,8 @@ InsertLocalMinimaIntoAEL :: proc(
 	ctx: ^Context($FRAC_DIGITS, $U),
 	bot_y: fixed_bcd.BCD(FRAC_DIGITS),
 ) -> Clipper_Error {
-	left_bound: ^Active(FRAC_DIGITS)
-	right_bound: ^Active(FRAC_DIGITS)
+	left_bound: ^Active(FRAC_DIGITS, U)
+	right_bound: ^Active(FRAC_DIGITS, U)
 	//Add any local minima (if any) at BotY ...
 	//nb: horizontal local minima edges should contain locMin.vertex.prev
 
@@ -688,7 +691,7 @@ InsertLocalMinimaIntoAEL :: proc(
 			left_bound = nil
 		} else {
 			left_bound = new_clone(
-				Active(FRAC_DIGITS) {
+				Active(FRAC_DIGITS, U) {
 					bot        = local_minima.vertex.pt,
 					curr_x     = local_minima.vertex.pt.x,
 					wind_dx    = -1,
@@ -705,7 +708,7 @@ InsertLocalMinimaIntoAEL :: proc(
 			right_bound = nil
 		} else {
 			right_bound = new_clone(
-				Active(FRAC_DIGITS) {
+				Active(FRAC_DIGITS, U) {
 					bot        = local_minima.vertex.pt,
 					curr_x     = local_minima.vertex.pt.x,
 					wind_dx    = 1,
@@ -787,7 +790,10 @@ InsertLocalMinimaIntoAEL :: proc(
 }
 
 @(private = "file")
-InsertLeftEdge :: proc "contextless" (ctx: ^Context($FRAC_DIGITS, $U), e: ^Active(FRAC_DIGITS)) {
+InsertLeftEdge :: proc "contextless" (
+	ctx: ^Context($FRAC_DIGITS, $U),
+	e: ^Active(FRAC_DIGITS, U),
+) {
 	if ctx.actives_ == nil {
 		e.prev_in_ael = nil
 		e.next_in_ael = nil
@@ -818,7 +824,7 @@ InsertLeftEdge :: proc "contextless" (ctx: ^Context($FRAC_DIGITS, $U), e: ^Activ
 }
 
 @(private = "file")
-InsertRightEdge :: proc "contextless" (e: ^Active($FRAC_DIGITS), e2: ^Active(FRAC_DIGITS)) {
+InsertRightEdge :: proc "contextless" (e: ^Active($FRAC_DIGITS, $U), e2: ^Active(FRAC_DIGITS, U)) {
 	e2.next_in_ael = e.next_in_ael
 	if e.next_in_ael != nil do e.next_in_ael.prev_in_ael = e2
 	e2.prev_in_ael = e
@@ -828,7 +834,7 @@ InsertRightEdge :: proc "contextless" (e: ^Active($FRAC_DIGITS), e2: ^Active(FRA
 @(private = "file")
 SetWindCountForOpenPathEdge :: proc "contextless" (
 	ctx: ^Context($FRAC_DIGITS, $U),
-	e: ^Active(FRAC_DIGITS),
+	e: ^Active(FRAC_DIGITS, U),
 ) {
 	e2 := ctx.actives_
 	if ctx.fill_rule_ == .EvenOdd {
@@ -855,7 +861,7 @@ SetWindCountForOpenPathEdge :: proc "contextless" (
 @(private = "file")
 SetWindCountForClosedPathEdge :: proc "contextless" (
 	ctx: ^Context($FRAC_DIGITS, $U),
-	e: ^Active(FRAC_DIGITS),
+	e: ^Active(FRAC_DIGITS, U),
 ) {
 	//Wind counts refer to polygon regions not edges, so here an edge's WindCnt
 	//indicates the higher of the wind counts for the two regions touching the edge.
@@ -916,7 +922,7 @@ SetWindCountForClosedPathEdge :: proc "contextless" (
 @(private = "file")
 CheckJoinLeft :: proc(
 	ctx: ^Context($FRAC_DIGITS, $U),
-	e: ^Active(FRAC_DIGITS),
+	e: ^Active(FRAC_DIGITS, U),
 	pt: [2]fixed_bcd.BCD(FRAC_DIGITS),
 	check_curr_x: bool = false,
 ) -> Clipper_Error {
@@ -965,7 +971,7 @@ CheckJoinLeft :: proc(
 @(private = "file")
 CheckJoinRight :: proc(
 	ctx: ^Context($FRAC_DIGITS, $U),
-	e: ^Active(FRAC_DIGITS),
+	e: ^Active(FRAC_DIGITS, U),
 	pt: [2]fixed_bcd.BCD(FRAC_DIGITS),
 	check_curr_x: bool = false,
 ) -> Clipper_Error {
@@ -1018,20 +1024,20 @@ CheckJoinRight :: proc(
 //
 
 @(private = "file")
-OutrecIsAscending :: proc "contextless" (hot_edge: ^Active($FRAC_DIGITS)) -> bool {
+OutrecIsAscending :: proc "contextless" (hot_edge: ^Active($FRAC_DIGITS, $U)) -> bool {
 	return hot_edge == hot_edge.outrec.front_edge
 }
 
 @(private = "file")
-IsOpenEnd :: proc "contextless" (ae: ^Active($FRAC_DIGITS)) -> bool {
+IsOpenEnd :: proc "contextless" (ae: ^Active($FRAC_DIGITS, $U)) -> bool {
 	return IsOpenEndVertex(ae.vertex_top)
 }
 
 @(private = "file")
 GetPrevHotEdge :: proc "contextless" (
 	ctx: ^Context($FRAC_DIGITS, $U),
-	e: ^Active(FRAC_DIGITS),
-) -> ^Active(FRAC_DIGITS) {
+	e: ^Active(FRAC_DIGITS, U),
+) -> ^Active(FRAC_DIGITS, U) {
 	prev := e.prev_in_ael
 	for prev != nil && (IsOpenActive(prev) || !IsHotEdge(prev)) {
 		prev = prev.prev_in_ael
@@ -1040,7 +1046,10 @@ GetPrevHotEdge :: proc "contextless" (
 }
 
 @(private = "file")
-SetOwner :: proc "contextless" (outrec: ^OutRec($FRAC_DIGITS), new_owner: ^OutRec(FRAC_DIGITS)) {
+SetOwner :: proc "contextless" (
+	outrec: ^OutRec($FRAC_DIGITS, $U),
+	new_owner: ^OutRec(FRAC_DIGITS, U),
+) {
 	// precondition: new_owner is never null
 	new_owner.owner = GetRealOutRec(new_owner.owner)
 	tmp := new_owner
@@ -1052,7 +1061,7 @@ SetOwner :: proc "contextless" (outrec: ^OutRec($FRAC_DIGITS), new_owner: ^OutRe
 }
 
 @(private = "file")
-SwapFrontBackSides :: proc "contextless" (outrec: ^OutRec($FRAC_DIGITS)) {
+SwapFrontBackSides :: proc "contextless" (outrec: ^OutRec($FRAC_DIGITS, $U)) {
 	tmp := outrec.front_edge
 	outrec.front_edge = outrec.back_edge
 	outrec.back_edge = tmp
@@ -1060,7 +1069,7 @@ SwapFrontBackSides :: proc "contextless" (outrec: ^OutRec($FRAC_DIGITS)) {
 }
 
 @(private = "file")
-UncoupleOutRec :: proc "contextless" (e: ^Active($FRAC_DIGITS)) {
+UncoupleOutRec :: proc "contextless" (e: ^Active($FRAC_DIGITS, $U)) {
 	outrec := e.outrec
 	if outrec == nil do return
 	outrec.front_edge.outrec = nil
@@ -1076,12 +1085,12 @@ UncoupleOutRec :: proc "contextless" (e: ^Active($FRAC_DIGITS)) {
 @(private = "file")
 AddLocalMinPoly :: proc(
 	ctx: ^Context($FRAC_DIGITS, $U),
-	e1: ^Active(FRAC_DIGITS),
-	e2: ^Active(FRAC_DIGITS),
+	e1: ^Active(FRAC_DIGITS, U),
+	e2: ^Active(FRAC_DIGITS, U),
 	pt: [2]fixed_bcd.BCD(FRAC_DIGITS),
 	is_new: bool,
 ) -> (
-	res: ^OutPt(FRAC_DIGITS),
+	res: ^OutPt(FRAC_DIGITS, U),
 	err: Clipper_Error,
 ) {
 	outrec := NewOutRec(ctx) or_return
@@ -1117,7 +1126,10 @@ AddLocalMinPoly :: proc(
 		}
 	}
 
-	res = new_clone(OutPt(FRAC_DIGITS){pt = pt, outrec = outrec}, context.temp_allocator) or_return
+	res = new_clone(
+		OutPt(FRAC_DIGITS, U){pt = pt, outrec = outrec},
+		context.temp_allocator,
+	) or_return
 	res.next = res
 	res.prev = res
 	outrec.pts = res
@@ -1127,11 +1139,11 @@ AddLocalMinPoly :: proc(
 @(private = "file")
 AddLocalMaxPoly :: proc(
 	ctx: ^Context($FRAC_DIGITS, $U),
-	e1: ^Active(FRAC_DIGITS),
-	e2: ^Active(FRAC_DIGITS),
+	e1: ^Active(FRAC_DIGITS, U),
+	e2: ^Active(FRAC_DIGITS, U),
 	pt: [2]fixed_bcd.BCD(FRAC_DIGITS),
 ) -> (
-	res: ^OutPt(FRAC_DIGITS),
+	res: ^OutPt(FRAC_DIGITS, U),
 	err: Clipper_Error,
 ) {
 	if IsJoined(e1) do Split(ctx, e1, pt) or_return
@@ -1177,8 +1189,8 @@ AddLocalMaxPoly :: proc(
 @(private = "file")
 JoinOutrecPaths :: proc "contextless" (
 	ctx: ^Context($FRAC_DIGITS, $U),
-	e1: ^Active(FRAC_DIGITS),
-	e2: ^Active(FRAC_DIGITS),
+	e1: ^Active(FRAC_DIGITS, U),
+	e2: ^Active(FRAC_DIGITS, U),
 ) {
 	// Join e2 outrec path onto e1 outrec path, then clear e2 outrec path.
 	// (Joining ends rarely share the same coords.)
@@ -1233,11 +1245,11 @@ JoinOutrecPaths :: proc "contextless" (
 NewOutRec :: proc(
 	ctx: ^Context($FRAC_DIGITS, $U),
 ) -> (
-	res: ^OutRec(FRAC_DIGITS),
+	res: ^OutRec(FRAC_DIGITS, U),
 	err: Clipper_Error,
 ) {
 	res = new_clone(
-		OutRec(FRAC_DIGITS){idx = len(ctx.outrec_list_)},
+		OutRec(FRAC_DIGITS, U){idx = len(ctx.outrec_list_)},
 		context.temp_allocator,
 	) or_return
 
@@ -1248,10 +1260,10 @@ NewOutRec :: proc(
 @(private = "file")
 AddOutPt :: proc(
 	ctx: ^Context($FRAC_DIGITS, $U),
-	e: ^Active(FRAC_DIGITS),
+	e: ^Active(FRAC_DIGITS, U),
 	pt: [2]fixed_bcd.BCD(FRAC_DIGITS),
 ) -> (
-	res: ^OutPt(FRAC_DIGITS),
+	res: ^OutPt(FRAC_DIGITS, U),
 	err: Clipper_Error,
 ) {
 	// Outrec.OutPts: a circular doubly-linked-list of POutPt where ...
@@ -1268,7 +1280,7 @@ AddOutPt :: proc(
 	}
 
 	res = new_clone(
-		OutPt(FRAC_DIGITS){pt = pt, outrec = outrec, prev = op_front, next = op_back},
+		OutPt(FRAC_DIGITS, U){pt = pt, outrec = outrec, prev = op_front, next = op_back},
 		context.temp_allocator,
 	) or_return
 
@@ -1280,19 +1292,21 @@ AddOutPt :: proc(
 }
 
 @(private = "file")
-GetRealOutRec :: proc "contextless" (outrec: ^OutRec($FRAC_DIGITS)) -> ^OutRec(FRAC_DIGITS) {
+GetRealOutRec :: proc "contextless" (
+	outrec: ^OutRec($FRAC_DIGITS, $U),
+) -> ^OutRec(FRAC_DIGITS, U) {
 	outrec := outrec
 	for outrec != nil && outrec.pts == nil do outrec = outrec.owner
 	return outrec
 }
 
 @(private = "file")
-IsValidClosedPath :: proc "contextless" (op: ^OutPt($FRAC_DIGITS)) -> bool {
+IsValidClosedPath :: proc "contextless" (op: ^OutPt($FRAC_DIGITS, $U)) -> bool {
 	return op != nil && (op.next != op) && (op.next != op.prev)
 }
 
 @(private = "file")
-DisposeOutPt :: proc "contextless" (op: ^OutPt($FRAC_DIGITS)) -> ^OutPt(FRAC_DIGITS) {
+DisposeOutPt :: proc "contextless" (op: ^OutPt($FRAC_DIGITS, $U)) -> ^OutPt(FRAC_DIGITS, U) {
 	result := op.next
 	op.prev.next = op.next
 	op.next.prev = op.prev
@@ -1302,7 +1316,7 @@ DisposeOutPt :: proc "contextless" (op: ^OutPt($FRAC_DIGITS)) -> ^OutPt(FRAC_DIG
 @(private = "file")
 DisposeOutPts :: proc "contextless" (
 	ctx: ^Context($FRAC_DIGITS, $U),
-	outrec: ^OutRec(FRAC_DIGITS),
+	outrec: ^OutRec(FRAC_DIGITS, U),
 ) {
 	outrec.pts.prev.next = nil
 	outrec.pts = nil
@@ -1315,7 +1329,7 @@ DisposeOutPts :: proc "contextless" (
 @(private = "file")
 Split :: proc(
 	ctx: ^Context($FRAC_DIGITS, $U),
-	e: ^Active(FRAC_DIGITS),
+	e: ^Active(FRAC_DIGITS, U),
 	pt: [2]fixed_bcd.BCD(FRAC_DIGITS),
 ) -> (
 	err: Clipper_Error,
@@ -1335,8 +1349,8 @@ Split :: proc(
 @(private = "file")
 DoSplitOp :: proc(
 	ctx: ^Context($FRAC_DIGITS, $U),
-	outrec: ^OutRec(FRAC_DIGITS),
-	split_op: ^OutPt(FRAC_DIGITS),
+	outrec: ^OutRec(FRAC_DIGITS, U),
+	split_op: ^OutPt(FRAC_DIGITS, U),
 ) -> (
 	err: Clipper_Error,
 ) {
@@ -1368,7 +1382,7 @@ DoSplitOp :: proc(
 
 	} else {
 		new_op2 := new_clone(
-			OutPt(FRAC_DIGITS) {
+			OutPt(FRAC_DIGITS, U) {
 				pt = ip,
 				outrec = prev_op.outrec,
 				prev = prev_op,
@@ -1397,7 +1411,7 @@ DoSplitOp :: proc(
 		split_op.outrec = newOr
 		split_op.next.outrec = newOr
 		new_op := new_clone(
-			OutPt(FRAC_DIGITS){pt = ip, outrec = newOr, prev = split_op.next, next = split_op},
+			OutPt(FRAC_DIGITS, U){pt = ip, outrec = newOr, prev = split_op.next, next = split_op},
 			context.temp_allocator,
 		) or_return
 
@@ -1414,7 +1428,7 @@ DoSplitOp :: proc(
 @(private = "file")
 FixSelfIntersects :: proc(
 	ctx: ^Context($FRAC_DIGITS, $U),
-	outrec: ^OutRec(FRAC_DIGITS),
+	outrec: ^OutRec(FRAC_DIGITS, U),
 ) -> (
 	err: Clipper_Error,
 ) {
@@ -1442,7 +1456,7 @@ FixSelfIntersects :: proc(
 }
 
 @(private = "file")
-UpdateOutrecOwner :: proc "contextless" (outrec: ^OutRec($FRAC_DIGITS)) {
+UpdateOutrecOwner :: proc "contextless" (outrec: ^OutRec($FRAC_DIGITS, $U)) {
 	op_curr := outrec.pts
 	for {
 		op_curr.outrec = outrec
@@ -1456,26 +1470,26 @@ UpdateOutrecOwner :: proc "contextless" (outrec: ^OutRec($FRAC_DIGITS)) {
 //
 
 @(private = "file")
-NextVertex :: proc "contextless" (e: ^Active($FRAC_DIGITS)) -> ^Vertex(FRAC_DIGITS) {
+NextVertex :: proc "contextless" (e: ^Active($FRAC_DIGITS, $U)) -> ^Vertex(FRAC_DIGITS, U) {
 	if e.wind_dx > 0 do return e.vertex_top.next
 	return e.vertex_top.prev
 }
 
 @(private = "file")
-IsMaxima :: proc "contextless" (e: ^Vertex($FRAC_DIGITS)) -> bool {
+IsMaxima :: proc "contextless" (e: ^Vertex($FRAC_DIGITS, $U)) -> bool {
 	return .LocalMax in e.flags
 }
 
 //PrevPrevVertex: useful to get the (inverted Y-axis) top of the
 //alternate edge (ie left or right bound) during edge insertion.
 @(private = "file")
-PrevPrevVertex :: proc "contextless" (ae: ^Active($FRAC_DIGITS)) -> ^Vertex(FRAC_DIGITS) {
+PrevPrevVertex :: proc "contextless" (ae: ^Active($FRAC_DIGITS, $U)) -> ^Vertex(FRAC_DIGITS, U) {
 	if ae.wind_dx > 0 do return ae.vertex_top.prev.prev
 	return ae.vertex_top.next.next
 }
 
 @(private = "file")
-GetMaximaPair :: proc "contextless" (e: ^Active($FRAC_DIGITS)) -> ^Active(FRAC_DIGITS) {
+GetMaximaPair :: proc "contextless" (e: ^Active($FRAC_DIGITS, $U)) -> ^Active(FRAC_DIGITS, U) {
 	e2 := e.next_in_ael
 	for e2 != nil {
 		if e2.vertex_top == e.vertex_top do return e2
@@ -1485,30 +1499,30 @@ GetMaximaPair :: proc "contextless" (e: ^Active($FRAC_DIGITS)) -> ^Active(FRAC_D
 }
 
 @(private = "file")
-IsJoined :: proc "contextless" (e: ^Active($FRAC_DIGITS)) -> bool {
+IsJoined :: proc "contextless" (e: ^Active($FRAC_DIGITS, $U)) -> bool {
 	return e.join_with != .NoJoin
 }
 
 @(private = "file")
-IsHotEdge :: proc "contextless" (e: ^Active($FRAC_DIGITS)) -> bool {
+IsHotEdge :: proc "contextless" (e: ^Active($FRAC_DIGITS, $U)) -> bool {
 	return e.outrec != nil
 }
 
 @(private = "file")
-IsFront :: proc "contextless" (e: ^Active($FRAC_DIGITS)) -> bool {
+IsFront :: proc "contextless" (e: ^Active($FRAC_DIGITS, $U)) -> bool {
 	return e == e.outrec.front_edge
 }
 
 @(private = "file")
-IsInvalidPath :: proc "contextless" (op: ^OutPt($FRAC_DIGITS)) -> bool {
+IsInvalidPath :: proc "contextless" (op: ^OutPt($FRAC_DIGITS, $U)) -> bool {
 	return op == nil || op.next == op
 }
 
 @(private = "file")
 SetSides :: proc "contextless" (
-	outrec: ^OutRec($FRAC_DIGITS),
-	start_edge: ^Active(FRAC_DIGITS),
-	end_edge: ^Active(FRAC_DIGITS),
+	outrec: ^OutRec($FRAC_DIGITS, $U),
+	start_edge: ^Active(FRAC_DIGITS, U),
+	end_edge: ^Active(FRAC_DIGITS, U),
 ) {
 	outrec.front_edge = start_edge
 	outrec.back_edge = end_edge
@@ -1565,7 +1579,7 @@ SegmentsIntersectExclusive :: proc "contextless" (
 @(private = "file")
 CleanCollinear :: proc(
 	ctx: ^Context($FRAC_DIGITS, $U),
-	outrec: ^OutRec(FRAC_DIGITS),
+	outrec: ^OutRec(FRAC_DIGITS, U),
 ) -> Clipper_Error {
 	outrec_ := GetRealOutRec(outrec)
 	if outrec_ == nil || outrec_.is_open do return nil
@@ -1604,7 +1618,7 @@ CleanCollinear :: proc(
 }
 
 @(private = "file")
-Area_Double :: proc "contextless" (op: ^OutPt($FRAC_DIGITS)) -> fixed_bcd.BCD(FRAC_DIGITS) {
+Area_Double :: proc "contextless" (op: ^OutPt($FRAC_DIGITS, $U)) -> fixed_bcd.BCD(FRAC_DIGITS) {
 	// Shoelace formula: https://en.wikipedia.org/wiki/Shoelace_formula
 	result := fixed_bcd.BCD(FRAC_DIGITS){}
 	op2 := op
@@ -1639,10 +1653,10 @@ AreaTriangle :: proc "contextless" (
 @(private = "file")
 StartOpenPath :: proc(
 	ctx: ^Context($FRAC_DIGITS, $U),
-	e: ^Active(FRAC_DIGITS),
+	e: ^Active(FRAC_DIGITS, U),
 	pt: [2]fixed_bcd.BCD(FRAC_DIGITS),
 ) -> (
-	out: ^OutPt(FRAC_DIGITS),
+	out: ^OutPt(FRAC_DIGITS, U),
 	err: Clipper_Error,
 ) {
 	outrec := NewOutRec(ctx) or_return
@@ -1658,7 +1672,10 @@ StartOpenPath :: proc(
 
 	e.outrec = outrec
 
-	op := new_clone(OutPt(FRAC_DIGITS){pt = pt, outrec = outrec}, context.temp_allocator) or_return
+	op := new_clone(
+		OutPt(FRAC_DIGITS, U){pt = pt, outrec = outrec},
+		context.temp_allocator,
+	) or_return
 	op.next = op
 	op.prev = op
 	outrec.pts = op
@@ -1667,8 +1684,8 @@ StartOpenPath :: proc(
 
 @(private = "file")
 FindEdgeWithMatchingLocMin :: proc "contextless" (
-	e: ^Active($FRAC_DIGITS),
-) -> ^Active(FRAC_DIGITS) {
+	e: ^Active($FRAC_DIGITS, $U),
+) -> ^Active(FRAC_DIGITS, U) {
 	result := e.next_in_ael
 	for result != nil {
 		if result.local_min == e.local_min do return result
@@ -1688,8 +1705,8 @@ FindEdgeWithMatchingLocMin :: proc "contextless" (
 @(private = "file")
 SwapOutrecs :: proc "contextless" (
 	ctx: ^Context($FRAC_DIGITS, $U),
-	e1: ^Active(FRAC_DIGITS),
-	e2: ^Active(FRAC_DIGITS),
+	e1: ^Active(FRAC_DIGITS, U),
+	e2: ^Active(FRAC_DIGITS, U),
 ) {
 	or1 := e1.outrec
 	or2 := e2.outrec
@@ -1719,14 +1736,14 @@ SwapOutrecs :: proc "contextless" (
 @(private = "file")
 IntersectEdges :: proc(
 	ctx: ^Context($FRAC_DIGITS, $U),
-	e1: ^Active(FRAC_DIGITS),
-	e2: ^Active(FRAC_DIGITS),
+	e1: ^Active(FRAC_DIGITS, U),
+	e2: ^Active(FRAC_DIGITS, U),
 	pt: [2]fixed_bcd.BCD(FRAC_DIGITS),
 ) -> Clipper_Error {
 	// MANAGE OPEN PATH INTERSECTIONS SEPARATELY ...
 	if ctx.has_open_paths_ && (IsOpenActive(e1) || IsOpenActive(e2)) {
 		if IsOpenActive(e1) && IsOpenActive(e2) do return nil
-		edge_o, edge_c: ^Active(FRAC_DIGITS)
+		edge_o, edge_c: ^Active(FRAC_DIGITS, U)
 
 		if IsOpenActive(e1) {
 			edge_o = e1
@@ -1901,8 +1918,8 @@ IntersectEdges :: proc(
 
 @(private = "file")
 IsSamePolyType :: proc "contextless" (
-	e1: ^Active($FRAC_DIGITS),
-	e2: ^Active(FRAC_DIGITS),
+	e1: ^Active($FRAC_DIGITS, $U),
+	e2: ^Active(FRAC_DIGITS, U),
 ) -> bool {
 	return e1.local_min.polytype == e2.local_min.polytype
 }
@@ -1934,8 +1951,8 @@ PerpendicDistFromLineSqrd :: proc(
 
 @(private = "file")
 IsValidAelOrder :: proc "contextless" (
-	resident: ^Active($FRAC_DIGITS),
-	newcomer: ^Active(FRAC_DIGITS),
+	resident: ^Active($FRAC_DIGITS, $U),
+	newcomer: ^Active(FRAC_DIGITS, U),
 ) -> bool {
 	if !fixed_bcd.equal(newcomer.curr_x, resident.curr_x) {
 		return fixed_bcd.greater(newcomer.curr_x, resident.curr_x)
@@ -1978,8 +1995,8 @@ IsValidAelOrder :: proc "contextless" (
 @(private = "file")
 SwapPositionsInAEL :: proc "contextless" (
 	ctx: ^Context($FRAC_DIGITS, $U),
-	e1: ^Active(FRAC_DIGITS),
-	e2: ^Active(FRAC_DIGITS),
+	e1: ^Active(FRAC_DIGITS, U),
+	e2: ^Active(FRAC_DIGITS, U),
 ) {
 	// Precondition: e1 is immediately to the left of e2.
 	next := e2.next_in_ael
@@ -2005,13 +2022,13 @@ InsertScanline :: proc(
 }
 
 @(private = "file")
-PushHorz :: proc "contextless" (ctx: ^Context($FRAC_DIGITS, $U), e: ^Active(FRAC_DIGITS)) {
+PushHorz :: proc "contextless" (ctx: ^Context($FRAC_DIGITS, $U), e: ^Active(FRAC_DIGITS, U)) {
 	e.next_in_sel = ctx.sel_
 	ctx.sel_ = e
 }
 
 @(private = "file")
-PopHorz :: proc "contextless" (ctx: ^Context($FRAC_DIGITS, $U)) -> ^Active(FRAC_DIGITS) {
+PopHorz :: proc "contextless" (ctx: ^Context($FRAC_DIGITS, $U)) -> ^Active(FRAC_DIGITS, U) {
 	if ctx.sel_ == nil do return nil
 	res := ctx.sel_
 	ctx.sel_ = ctx.sel_.next_in_sel
@@ -2020,7 +2037,7 @@ PopHorz :: proc "contextless" (ctx: ^Context($FRAC_DIGITS, $U)) -> ^Active(FRAC_
 
 
 @(private = "file")
-GetCurrYMaximaVertex_Open :: proc(horz: ^Active($FRAC_DIGITS)) -> ^Vertex(FRAC_DIGITS) {
+GetCurrYMaximaVertex_Open :: proc(horz: ^Active($FRAC_DIGITS, $U)) -> ^Vertex(FRAC_DIGITS, U) {
 	result := horz.vertex_top
 
 	if horz.wind_dx > 0 {
@@ -2039,7 +2056,7 @@ GetCurrYMaximaVertex_Open :: proc(horz: ^Active($FRAC_DIGITS)) -> ^Vertex(FRAC_D
 }
 
 @(private = "file")
-GetCurrYMaximaVertex :: proc(horz: ^Active($FRAC_DIGITS)) -> ^Vertex(FRAC_DIGITS) {
+GetCurrYMaximaVertex :: proc(horz: ^Active($FRAC_DIGITS, $U)) -> ^Vertex(FRAC_DIGITS, U) {
 	result := horz.vertex_top
 	if horz.wind_dx > 0 {
 		for fixed_bcd.equal(result.next.pt.y, result.pt.y) do result = result.next
@@ -2052,8 +2069,8 @@ GetCurrYMaximaVertex :: proc(horz: ^Active($FRAC_DIGITS)) -> ^Vertex(FRAC_DIGITS
 
 @(private = "file")
 ResetHorzDirection :: proc(
-	horz: ^Active($FRAC_DIGITS),
-	vertex_max: ^Vertex(FRAC_DIGITS),
+	horz: ^Active($FRAC_DIGITS, $U),
+	vertex_max: ^Vertex(FRAC_DIGITS, U),
 ) -> (
 	bool,
 	fixed_bcd.BCD(FRAC_DIGITS),
@@ -2075,15 +2092,15 @@ ResetHorzDirection :: proc(
 @(private = "file")
 AddTrialHorzJoin :: proc(
 	ctx: ^Context($FRAC_DIGITS, $U),
-	op: ^OutPt(FRAC_DIGITS),
+	op: ^OutPt(FRAC_DIGITS, U),
 ) -> Clipper_Error {
 	if op.outrec.is_open do return nil
-	non_zero_append(&ctx.horz_seg_list_, HorzSegment(FRAC_DIGITS){left_op = op}) or_return
+	non_zero_append(&ctx.horz_seg_list_, HorzSegment(FRAC_DIGITS, U){left_op = op}) or_return
 	return nil
 }
 
 @(private = "file")
-GetLastOp :: proc(hot_edge: ^Active($FRAC_DIGITS)) -> ^OutPt(FRAC_DIGITS) {
+GetLastOp :: proc(hot_edge: ^Active($FRAC_DIGITS, $U)) -> ^OutPt(FRAC_DIGITS, U) {
 	res := hot_edge.outrec.pts
 	if hot_edge != hot_edge.outrec.front_edge do res = res.next
 	return res
@@ -2106,7 +2123,7 @@ GetLastOp :: proc(hot_edge: ^Active($FRAC_DIGITS)) -> ^OutPt(FRAC_DIGITS) {
 @(private = "file")
 DoHorizontal :: proc(
 	ctx: ^Context($FRAC_DIGITS, $U),
-	horz: ^Active(FRAC_DIGITS),
+	horz: ^Active(FRAC_DIGITS, U),
 ) -> Clipper_Error {
 	horz_is_open := IsOpenActive(horz)
 	y := horz.bot.y
@@ -2120,7 +2137,7 @@ DoHorizontal :: proc(
 	}
 
 	for { 	// loop through consec. horizontal edges
-		e: ^Active(FRAC_DIGITS)
+		e: ^Active(FRAC_DIGITS, U)
 		if is_left_to_right do e = horz.next_in_ael
 		else do e = horz.prev_in_ael
 
@@ -2212,14 +2229,14 @@ DoHorizontal :: proc(
 @(private = "file")
 DuplicateOp :: proc(
 	ctx: ^Context($FRAC_DIGITS, $U),
-	op: ^OutPt(FRAC_DIGITS),
+	op: ^OutPt(FRAC_DIGITS, U),
 	insert_after: bool,
 ) -> (
-	result: ^OutPt(FRAC_DIGITS),
+	result: ^OutPt(FRAC_DIGITS, U),
 	err: Clipper_Error,
 ) {
 	result = new_clone(
-		OutPt(FRAC_DIGITS){pt = op.pt, outrec = op.outrec},
+		OutPt(FRAC_DIGITS, U){pt = op.pt, outrec = op.outrec},
 		context.temp_allocator,
 	) or_return
 
@@ -2238,7 +2255,7 @@ DuplicateOp :: proc(
 }
 
 @(private = "file")
-FixOutRecPts :: proc(outrec: ^OutRec($FRAC_DIGITS)) {
+FixOutRecPts :: proc(outrec: ^OutRec($FRAC_DIGITS, $U)) {
 	op := outrec.pts
 	for {
 		op.outrec = outrec
@@ -2250,7 +2267,7 @@ FixOutRecPts :: proc(outrec: ^OutRec($FRAC_DIGITS)) {
 @(private = "file")
 PointInOpPolygon :: proc "contextless" (
 	pt: [2]fixed_bcd.BCD($FRAC_DIGITS),
-	op: ^OutPt(FRAC_DIGITS),
+	op: ^OutPt(FRAC_DIGITS, $U),
 ) -> linalg_ex.PointInPolygonResult {
 	if op == op.next || op.prev == op.next do return .Outside
 
@@ -2377,9 +2394,9 @@ PointInOpPolygon :: proc "contextless" (
 
 @(private = "file")
 SetHorzSegHeadingForward :: proc "contextless" (
-	hs: ^HorzSegment($FRAC_DIGITS),
-	op_p: ^OutPt(FRAC_DIGITS),
-	op_n: ^OutPt(FRAC_DIGITS),
+	hs: ^HorzSegment($FRAC_DIGITS, $U),
+	op_p: ^OutPt(FRAC_DIGITS, U),
+	op_n: ^OutPt(FRAC_DIGITS, U),
 ) -> bool {
 	if fixed_bcd.equal(op_p.pt.x, op_n.pt.x) do return false
 	if fixed_bcd.less(op_p.pt.x, op_n.pt.x) {
@@ -2397,7 +2414,7 @@ SetHorzSegHeadingForward :: proc "contextless" (
 @(private = "file")
 UpdateHorzSegment :: proc "contextless" (
 	ctx: ^Context($FRAC_DIGITS, $U),
-	hs: ^HorzSegment(FRAC_DIGITS),
+	hs: ^HorzSegment(FRAC_DIGITS, U),
 ) -> bool {
 	op := hs.left_op
 	outrec := GetRealOutRec(op.outrec)
@@ -2428,8 +2445,8 @@ UpdateHorzSegment :: proc "contextless" (
 @(private = "file")
 AddNewIntersectNode :: proc(
 	ctx: ^Context($FRAC_DIGITS, $U),
-	e1: ^Active(FRAC_DIGITS),
-	e2: ^Active(FRAC_DIGITS),
+	e1: ^Active(FRAC_DIGITS, U),
+	e2: ^Active(FRAC_DIGITS, U),
 	top_y: fixed_bcd.BCD(FRAC_DIGITS),
 ) -> (
 	err: Clipper_Error,
@@ -2452,7 +2469,7 @@ AddNewIntersectNode :: proc(
 		else do pt.x = TopX(e2, pt.y)
 	}
 
-	node := IntersectNode(FRAC_DIGITS) {
+	node := IntersectNode(FRAC_DIGITS, U) {
 		pt    = pt,
 		edge1 = e1,
 		edge2 = e2,
@@ -2462,7 +2479,7 @@ AddNewIntersectNode :: proc(
 }
 
 @(private = "file")
-ExtractFromSEL :: proc "contextless" (e: ^Active($FRAC_DIGITS)) -> ^Active(FRAC_DIGITS) {
+ExtractFromSEL :: proc "contextless" (e: ^Active($FRAC_DIGITS, $U)) -> ^Active(FRAC_DIGITS, U) {
 	res := e.next_in_sel
 	if res != nil do res.prev_in_sel = e.prev_in_sel
 	e.prev_in_sel.next_in_sel = res
@@ -2470,7 +2487,10 @@ ExtractFromSEL :: proc "contextless" (e: ^Active($FRAC_DIGITS)) -> ^Active(FRAC_
 }
 
 @(private = "file")
-Insert1Before2InSEL :: proc "contextless" (e1: ^Active($FRAC_DIGITS), e2: ^Active(FRAC_DIGITS)) {
+Insert1Before2InSEL :: proc "contextless" (
+	e1: ^Active($FRAC_DIGITS, $U),
+	e2: ^Active(FRAC_DIGITS, U),
+) {
 	e1.prev_in_sel = e2.prev_in_sel
 	if e1.prev_in_sel != nil do e1.prev_in_sel.next_in_sel = e1
 	e1.next_in_sel = e2
@@ -2497,7 +2517,7 @@ BuildIntersectList :: proc(
 
 	left := ctx.sel_
 	for left != nil && left.jump != nil {
-		prev_base: ^Active(FRAC_DIGITS) = nil
+		prev_base: ^Active(FRAC_DIGITS, U) = nil
 
 		for left != nil && left.jump != nil {
 			curr_base := left
@@ -2542,7 +2562,7 @@ BuildIntersectList :: proc(
 
 
 @(private = "file")
-EdgesAdjacentInAEL :: proc "contextless" (node: IntersectNode($FRAC_DIGITS)) -> bool {
+EdgesAdjacentInAEL :: proc "contextless" (node: IntersectNode($FRAC_DIGITS, $U)) -> bool {
 	return node.edge1.next_in_ael == node.edge2 || node.edge1.prev_in_ael == node.edge2
 }
 
@@ -2556,7 +2576,7 @@ ProcessIntersectList :: proc(ctx: ^Context($FRAC_DIGITS, $U)) -> (err: Clipper_E
 	//First we do a quicksort so intersections proceed in a bottom up order ...
 	slice.sort_by(
 		ctx.intersect_nodes_[:],
-		proc(a, b: IntersectNode(FRAC_DIGITS)) -> bool {
+		proc(a, b: IntersectNode(FRAC_DIGITS, U)) -> bool {
 			//note different inequality tests ...
 			return(
 				a.pt.y == b.pt.y ? fixed_bcd.less(a.pt.x, b.pt.x) : fixed_bcd.greater(a.pt.y, b.pt.y) \
@@ -2592,9 +2612,9 @@ ProcessIntersectList :: proc(ctx: ^Context($FRAC_DIGITS, $U)) -> (err: Clipper_E
 @(private = "file")
 DoMaxima :: proc(
 	ctx: ^Context($FRAC_DIGITS, $U),
-	e: ^Active(FRAC_DIGITS),
+	e: ^Active(FRAC_DIGITS, U),
 ) -> (
-	out: ^Active(FRAC_DIGITS),
+	out: ^Active(FRAC_DIGITS, U),
 	err: Clipper_Error,
 ) {
 	prev_e := e.prev_in_ael
@@ -2651,7 +2671,7 @@ ConvertHorzSegsToJoins :: proc(ctx: ^Context($FRAC_DIGITS, $U)) -> Clipper_Error
 	}
 	if j < 2 do return nil
 
-	slice.stable_sort_by(ctx.horz_seg_list_[:], proc(a, b: HorzSegment(FRAC_DIGITS)) -> bool {
+	slice.stable_sort_by(ctx.horz_seg_list_[:], proc(a, b: HorzSegment(FRAC_DIGITS, U)) -> bool {
 		return(
 			a.right_op != nil || b.right_op != nil ? a.right_op != nil : fixed_bcd.less(b.left_op.pt.x, a.left_op.pt.x) \
 		)
@@ -2681,7 +2701,7 @@ ConvertHorzSegsToJoins :: proc(ctx: ^Context($FRAC_DIGITS, $U)) -> Clipper_Error
 
 				non_zero_append(
 					&ctx.horz_join_list_,
-					HorzJoin(FRAC_DIGITS) {
+					HorzJoin(FRAC_DIGITS, U) {
 						op1 = DuplicateOp(ctx, hs1.left_op, true) or_return,
 						op2 = DuplicateOp(ctx, hs2.left_op, false) or_return,
 					},
@@ -2698,7 +2718,7 @@ ConvertHorzSegsToJoins :: proc(ctx: ^Context($FRAC_DIGITS, $U)) -> Clipper_Error
 
 				non_zero_append(
 					&ctx.horz_join_list_,
-					HorzJoin(FRAC_DIGITS) {
+					HorzJoin(FRAC_DIGITS, U) {
 						op1 = DuplicateOp(ctx, hs2.left_op, true) or_return,
 						op2 = DuplicateOp(ctx, hs1.left_op, false) or_return,
 					},
@@ -2780,7 +2800,7 @@ ProcessHorzJoins :: proc(ctx: ^Context($FRAC_DIGITS, $U)) -> Clipper_Error {
 
 @(private = "file")
 BuildPath64 :: proc(
-	op: ^OutPt($FRAC_DIGITS),
+	op: ^OutPt($FRAC_DIGITS, $U),
 	reverse: bool,
 	$is_open: bool,
 	path: ^[dynamic][dynamic][2]fixed_bcd.BCD(FRAC_DIGITS),
@@ -2796,7 +2816,7 @@ BuildPath64 :: proc(
 		make([dynamic][2]fixed_bcd.BCD(FRAC_DIGITS), context.temp_allocator) or_return,
 	) or_return
 
-	op2: ^OutPt(FRAC_DIGITS)
+	op2: ^OutPt(FRAC_DIGITS, U)
 	if (reverse) {
 		op2 = op.prev
 	} else {
@@ -2870,25 +2890,26 @@ BooleanOpCustomData_Impl :: proc(
 	err: Clipper_Error,
 ) {
 	ctx := Context(FRAC_DIGITS, U) {
-		vertex_lists_   = make([dynamic]^Vertex(FRAC_DIGITS), context.temp_allocator) or_return,
+		vertex_lists_   = make([dynamic]^Vertex(FRAC_DIGITS, U), context.temp_allocator) or_return,
 		minima_list_    = make(
-			[dynamic]^LocalMinima(FRAC_DIGITS),
+			[dynamic]^LocalMinima(FRAC_DIGITS, U),
 			context.temp_allocator,
 		) or_return,
 		out             = make(
 			[dynamic][dynamic]fixed_bcd.BCD(FRAC_DIGITS),
 			context.temp_allocator,
 		) or_return,
-		outrec_list_    = make([dynamic]^OutRec(FRAC_DIGITS), context.temp_allocator) or_return,
+		outrec_list_    = make([dynamic]^OutRec(FRAC_DIGITS, U), context.temp_allocator) or_return,
 		horz_seg_list_  = make(
-			[dynamic]HorzSegment(FRAC_DIGITS),
+			[dynamic]HorzSegment(FRAC_DIGITS, U),
 			context.temp_allocator,
 		) or_return,
-		horz_join_list_ = make([dynamic]HorzJoin(FRAC_DIGITS), context.temp_allocator) or_return,
+		horz_join_list_ = make(
+			[dynamic]HorzJoin(FRAC_DIGITS, U),
+			context.temp_allocator,
+		) or_return,
 		fill_rule_      = fill_rule,
 		clip_type_      = clip_type,
-		extra_          = make([dynamic][dynamic]U, context.temp_allocator) or_return,
-		extra_open_     = make([dynamic][dynamic]U, context.temp_allocator) or_return,
 	}
 
 	pq.init(&ctx.scanline_list_, proc(a, b: fixed_bcd.BCD(FRAC_DIGITS)) -> bool {
@@ -2901,7 +2922,7 @@ BooleanOpCustomData_Impl :: proc(
 	AddOpenSubject(&ctx, opens) or_return
 	AddClip(&ctx, clips) or_return
 
-	slice.stable_sort_by(ctx.minima_list_[:], proc(a, b: ^LocalMinima(FRAC_DIGITS)) -> bool {
+	slice.stable_sort_by(ctx.minima_list_[:], proc(a, b: ^LocalMinima(FRAC_DIGITS, U)) -> bool {
 		if b.vertex.pt.y != a.vertex.pt.y do return fixed_bcd.less(b.vertex.pt.y, a.vertex.pt.y)
 		return fixed_bcd.greater(b.vertex.pt.x, a.vertex.pt.x)
 	})
@@ -2916,7 +2937,7 @@ BooleanOpCustomData_Impl :: proc(
 	if (!pop_ok) do return nil, nil, nil, nil, .FAILED
 	for {
 		InsertLocalMinimaIntoAEL(&ctx, y) or_return
-		e: ^Active(FRAC_DIGITS)
+		e: ^Active(FRAC_DIGITS, U)
 		for {
 			e = PopHorz(&ctx)
 			if e == nil do break
@@ -2985,25 +3006,6 @@ BooleanOpCustomData_Impl :: proc(
 				len(solution_close[i]) * size_of([2]fixed_bcd.BCD(FRAC_DIGITS)),
 			)
 		}
-
-		res_extra = utils_private.make_non_zeroed_slice(
-			[][]U,
-			len(ctx.extra_),
-			allocator,
-		) or_return
-		for i in 0 ..< len(ctx.extra_) {
-			res_extra[i] = utils_private.make_non_zeroed_slice(
-				[]U,
-				len(ctx.extra_[i]),
-				allocator,
-			) or_return
-
-			intrinsics.mem_copy_non_overlapping(
-				raw_data(res_extra[i]),
-				raw_data(ctx.extra_[i]),
-				len(ctx.extra_[i]) * size_of(U),
-			)
-		}
 	}
 	if len(solution_open) > 0 {
 		res_open = utils_private.make_non_zeroed_slice(
@@ -3023,25 +3025,6 @@ BooleanOpCustomData_Impl :: proc(
 				raw_data(res_open[i]),
 				raw_data(solution_open[i]),
 				len(solution_open[i]) * size_of([2]fixed_bcd.BCD(FRAC_DIGITS)),
-			)
-		}
-
-		res_open_extra = utils_private.make_non_zeroed_slice(
-			[][]U,
-			len(ctx.extra_open_),
-			allocator,
-		) or_return
-		for i in 0 ..< len(ctx.extra_open_) {
-			res_open_extra[i] = utils_private.make_non_zeroed_slice(
-				[]U,
-				len(ctx.extra_open_[i]),
-				allocator,
-			) or_return
-
-			intrinsics.mem_copy_non_overlapping(
-				raw_data(res_open_extra[i]),
-				raw_data(ctx.extra_open_[i]),
-				len(ctx.extra_open_[i]) * size_of(U),
 			)
 		}
 	}

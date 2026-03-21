@@ -1013,6 +1013,51 @@ LinesIntersect3 :: proc "contextless" (
 	}
 }
 
+LinesIntersect4 :: proc "contextless" (
+	a1: [2]$T,
+	a2: [2]T,
+	b1: [2]T,
+	b2: [2]T,
+) -> IntersectKind where intrinsics.type_is_float(T) ||
+	intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
+	intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
+	when intrinsics.type_is_float(T) {
+		if a1 == b1 || a2 == b1 || a1 == b2 || a2 == b2 do return .none
+
+		den: T = (b2.y - b1.y) * (a2.x - a1.x) - (b2.x - b1.x) * (a2.y - a1.y)
+		if den == 0.0 {
+			return .collinear
+		}
+		ua := ((b2.x - b1.x) * (a1.y - b1.y) - (b2.y - b1.y) * (a1.x - b1.x))
+		ub := ((a2.x - a1.x) * (a1.y - b1.y) - (a2.y - a1.y) * (a1.x - b1.x))
+		res_den :=
+			den > 0.0 ? (ua >= 0.0 && ub >= 0.0 && ua <= den && ub <= den) : (ua >= den && ub >= den && ua <= 0.0 && ub <= 0.0)
+		return res_den ? .intersect : .none
+	} else {
+		when intrinsics.type_is_specialization_of(T, fixed.Fixed) {
+			add :: fixed.add
+			sub :: fixed.sub
+			mul :: fixed.mul
+			equal :: fixed_ex.equal
+		} else {
+			add :: fixed_bcd.add
+			sub :: fixed_bcd.sub
+			mul :: fixed_bcd.mul
+			equal :: fixed_bcd.equal
+		}
+
+		if equal(a1, b1) || equal(a2, b1) || equal(a1, b2) || equal(a2, b2) do return .none
+
+		den: T = sub(mul(sub(b2.y, b1.y), sub(a2.x, a1.x)), mul(sub(b2.x, b1.x), sub(a2.y, a1.y)))
+		if den.i == 0 do return .collinear
+		ua := sub(mul(sub(b2.x, b1.x), sub(a1.y, b1.y)), mul(sub(b2.y, b1.y), sub(a1.x, b1.x)))
+		ub := sub(mul(sub(a2.x, a1.x), sub(a1.y, b1.y)), mul(sub(a2.y, a1.y), sub(a1.x, b1.x)))
+		res_den :=
+			den.i > 0 ? (ua.i >= 0 && ub.i >= 0 && ua.i <= den.i && ub.i <= den.i) : (ua.i >= den.i && ub.i >= den.i && ua.i <= 0 && ub.i <= 0)
+		return res_den ? .intersect : .none
+	}
+}
+
 NearestPointBetweenPointAndLine :: proc "contextless" (
 	p: [2]$T,
 	l0: [2]T,
@@ -1575,12 +1620,12 @@ InCircleTest :: proc "contextless" (
 		m20 := sub(ptC.x, ptD.x)
 		m21 := sub(ptC.y, ptD.y)
 		m22 := add(mul(m20, m20), mul(m21, m21))
-		return sub(
-			add(
+		return add(
+			sub(
 				mul(m00, sub(mul(m11, m22), mul(m21, m12))),
-				mul(m20, sub(mul(m01, m12), mul(m11, m02))),
+				mul(m10, sub(mul(m01, m22), mul(m21, m02))),
 			),
-			mul(m10, sub(mul(m01, m22), mul(m21, m02))),
+			mul(m20, sub(mul(m01, m12), mul(m11, m02))),
 		)
 	}
 }

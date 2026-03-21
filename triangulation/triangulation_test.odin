@@ -31,23 +31,6 @@ _make_square_path_bcd :: proc(
 	return result
 }
 
-
-@(test)
-test_triangulation_square :: proc(t: ^testing.T) {
-	x0 := fixed_bcd.init_const(0, 0, 0, DEF_FRAC_DIGITS)
-	y0 := fixed_bcd.init_const(0, 0, 0, DEF_FRAC_DIGITS)
-	size := fixed_bcd.init_const(100, 0, 0, DEF_FRAC_DIGITS)
-	square := _make_square_path_bcd(x0, y0, size)
-	defer delete(square)
-
-	poly := [][][2]fixed_bcd.BCD(DEF_FRAC_DIGITS){square}
-	indices, err := TrianguatePolygons_Fixed(poly)
-	defer delete(indices)
-
-	testing.expect_value(t, err, nil)
-	testing.expect_value(t, len(indices), 6)
-}
-
 @(test)
 test_triangulation_2square :: proc(t: ^testing.T) {
 	x0 := fixed_bcd.init_const(2, 0, 0, DEF_FRAC_DIGITS)

@@ -72,7 +72,7 @@ test_union_2square :: proc(t: ^testing.T) {
 	defer delete(square2)
 
 	poly := [][][2]fixed_bcd.BCD(DEF_FRAC_DIGITS){square, square2}
-	res, res_open, err := BooleanOp_Fixed(.Union, poly, nil, nil)
+	res, res_open, err := BooleanOp_Fixed(.Union, DEF_FRAC_DIGITS, poly, nil, nil)
 	defer if res != nil {
 		for r in res {
 			delete(r)
@@ -106,7 +106,7 @@ test_union_2square_float :: proc(t: ^testing.T) {
 	defer delete(square2)
 
 	poly := [][][2]f32{square, square2}
-	res, res_open, err := BooleanOp(.Union, poly, nil, nil)
+	res, res_open, err := BooleanOp(.Union, f32, poly, nil, nil)
 	defer if res != nil {
 		for r in res {
 			delete(r)
@@ -141,7 +141,7 @@ test_intersection_2square :: proc(t: ^testing.T) {
 
 	poly := [][][2]fixed_bcd.BCD(DEF_FRAC_DIGITS){square}
 	clip_poly := [][][2]fixed_bcd.BCD(DEF_FRAC_DIGITS){square2}
-	res, res_open, err := BooleanOp_Fixed(.Intersection, poly, clip_poly, nil)
+	res, res_open, err := BooleanOp_Fixed(.Intersection, DEF_FRAC_DIGITS, poly, clip_poly, nil)
 	defer if res != nil {
 		for r in res {
 			delete(r)

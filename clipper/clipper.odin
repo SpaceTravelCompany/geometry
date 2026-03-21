@@ -927,19 +927,15 @@ CheckJoinLeft :: proc(
 		return nil
 	}
 
-	if (fixed_bcd.less(pt.y, fixed_bcd.add(e.top.y, fixed_bcd.init_const(2, 0, 0, FRAC_DIGITS))) ||
-		   fixed_bcd.less(
-			   pt.y,
-			   fixed_bcd.add(prev.top.y, fixed_bcd.init_const(2, 0, 0, FRAC_DIGITS)),
-		   )) &&
+	if ((pt.y == e.top.y) || (pt.y == prev.top.y)) &&
 	   (fixed_bcd.greater(e.bot.y, pt.y) || fixed_bcd.greater(prev.bot.y, pt.y)) {
 		return nil // avoid trivial joins
 	}
 
 	if check_curr_x {
 		a, b := PerpendicDistFromLineSqrd(pt, prev.bot, prev.top)
-		if fixed_bcd.greater(fixed_bcd.mul(a, fixed_bcd.init_const(4, 0, 0, FRAC_DIGITS)), b) do return nil // a/b > 0.25, b > 0 always
-	} else if !fixed_bcd.equal(e.curr_x, prev.curr_x) {
+		if fixed_bcd.greater(a, fixed_bcd.BCD(FRAC_DIGITS){}) do return nil // b > 0 always
+	} else if e.curr_x != prev.curr_x {
 		return nil
 	}
 	if !IsCollinear(e.top, pt, prev.top) do return nil
@@ -975,23 +971,15 @@ CheckJoinRight :: proc(
 		return nil
 	}
 
-	trivial_y :=
-		(fixed_bcd.less(
-				pt.y,
-				fixed_bcd.add(e.top.y, fixed_bcd.init_const(2, 0, 0, FRAC_DIGITS)),
-			) ||
-			fixed_bcd.less(
-				pt.y,
-				fixed_bcd.add(next.top.y, fixed_bcd.init_const(2, 0, 0, FRAC_DIGITS)),
-			))
+	trivial_y := pt.y == e.top.y || pt.y == next.top.y
 	trivial_bot := fixed_bcd.greater(e.bot.y, pt.y) || fixed_bcd.greater(next.bot.y, pt.y)
 	if trivial_y && trivial_bot do return nil // avoid trivial joins
 
 	if check_curr_x {
 		a, b := PerpendicDistFromLineSqrd(pt, next.bot, next.top)
 
-		if b.i > 0 && fixed_bcd.greater(a, fixed_bcd.mul(fixed_bcd.init_const(0, 35, 2, FRAC_DIGITS), b)) do return nil
-	} else if !fixed_bcd.equal(e.curr_x, next.curr_x) {
+		if a.i > 0 do return nil
+	} else if e.curr_x != next.curr_x {
 		return nil
 	}
 	if !IsCollinear(e.top, pt, next.top) do return nil
@@ -1077,7 +1065,7 @@ AddLocalMinPoly :: proc(
 	e1: ^Active(FRAC_DIGITS, U),
 	e2: ^Active(FRAC_DIGITS, U),
 	pt: [2]fixed_bcd.BCD(FRAC_DIGITS),
-	is_new: bool,
+	is_new: bool = false,
 ) -> (
 	res: ^OutPt(FRAC_DIGITS, U),
 	err: Clipper_Error,
@@ -1850,7 +1838,7 @@ IntersectEdges :: proc(
 			//it's sensible to split polygons that only touch at
 			//a common vertex (not at common edges).
 			AddLocalMaxPoly(ctx, e1, e2, pt) or_return
-			AddLocalMinPoly(ctx, e1, e2, pt, true) or_return
+			AddLocalMinPoly(ctx, e1, e2, pt) or_return
 		} else {
 			AddOutPt(ctx, e1, pt) or_return
 			AddOutPt(ctx, e2, pt) or_return
@@ -1962,8 +1950,8 @@ IsValidAelOrder :: proc "contextless" (
 	y := newcomer.bot.y
 	newcomer_is_left := newcomer.is_left_bound
 
-	if !fixed_bcd.equal(resident.bot.y, y) || !fixed_bcd.equal(resident.local_min.vertex.pt.y, y) {
-		return newcomer.is_left_bound
+	if resident.bot.y != y || resident.local_min.vertex.pt.y != y {
+		return newcomer_is_left
 	} else if resident.is_left_bound != newcomer_is_left { 	//resident must also have just been inserted
 		return newcomer_is_left
 	} else if IsCollinear(PrevPrevVertex(resident).pt, resident.bot, resident.top) {
@@ -2744,6 +2732,7 @@ DoTopOfScanbeam :: proc(
 				e = DoMaxima(ctx, e) or_return // TOP OF BOUND (MAXIMA)
 				continue
 			}
+
 			if IsHotEdge(e) do AddOutPt(ctx, e, e.top) or_return
 			UpdateEdgeIntoAEL(ctx, e) or_return
 			if IsHorizontal(e) do PushHorz(ctx, e)
@@ -2833,7 +2822,8 @@ BuildPath64 :: proc(
 @(private = "file")
 BooleanOp_Impl :: proc(
 	clip_type: ClipType,
-	subjects: [][][2]fixed_bcd.BCD($FRAC_DIGITS),
+	$FRAC_DIGITS: int,
+	subjects: [][][2]fixed_bcd.BCD(FRAC_DIGITS),
 	clips: [][][2]fixed_bcd.BCD(FRAC_DIGITS),
 	opens: [][][2]fixed_bcd.BCD(FRAC_DIGITS),
 	fill_rule: FillRule = .Positive,
@@ -2846,11 +2836,12 @@ BooleanOp_Impl :: proc(
 	E :: struct {}
 	res, res_open, _, _ = BooleanOpCustomData_Impl(
 		clip_type,
+		FRAC_DIGITS,
 		subjects,
 		clips,
 		opens,
 		E,
-		[][]E{},
+		subjects == nil ? nil : [][]E{},
 		clips == nil ? nil : [][]E{},
 		opens == nil ? nil : [][]E{},
 		fill_rule,
@@ -2862,7 +2853,8 @@ BooleanOp_Impl :: proc(
 @(private = "file")
 BooleanOpCustomData_Impl :: proc(
 	clip_type: ClipType,
-	subjects: [][][2]fixed_bcd.BCD($FRAC_DIGITS),
+	$FRAC_DIGITS: int,
+	subjects: [][][2]fixed_bcd.BCD(FRAC_DIGITS),
 	clips: [][][2]fixed_bcd.BCD(FRAC_DIGITS),
 	opens: [][][2]fixed_bcd.BCD(FRAC_DIGITS),
 	$U: typeid,
@@ -2879,36 +2871,37 @@ BooleanOpCustomData_Impl :: proc(
 	err: Clipper_Error,
 ) {
 	ctx := Context(FRAC_DIGITS, U) {
-		vertex_lists_    = make(
+		vertex_lists_       = make(
 			[dynamic]^Vertex(FRAC_DIGITS, U),
 			context.temp_allocator,
 		) or_return,
-		minima_list_     = make(
+		minima_list_        = make(
 			[dynamic]^LocalMinima(FRAC_DIGITS, U),
 			context.temp_allocator,
 		) or_return,
-		out              = make(
+		out                 = make(
 			[dynamic][dynamic]fixed_bcd.BCD(FRAC_DIGITS),
 			context.temp_allocator,
 		) or_return,
-		outrec_list_     = make(
+		outrec_list_        = make(
 			[dynamic]^OutRec(FRAC_DIGITS, U),
 			context.temp_allocator,
 		) or_return,
-		horz_seg_list_   = make(
+		horz_seg_list_      = make(
 			[dynamic]HorzSegment(FRAC_DIGITS, U),
 			context.temp_allocator,
 		) or_return,
-		horz_join_list_  = make(
+		horz_join_list_     = make(
 			[dynamic]HorzJoin(FRAC_DIGITS, U),
 			context.temp_allocator,
 		) or_return,
-		intersect_nodes_ = make(
+		intersect_nodes_    = make(
 			[dynamic]IntersectNode(FRAC_DIGITS, U),
 			context.temp_allocator,
 		) or_return,
-		fill_rule_       = fill_rule,
-		clip_type_       = clip_type,
+		fill_rule_          = fill_rule,
+		clip_type_          = clip_type,
+		preserve_collinear_ = false,
 	}
 
 	pq.init(&ctx.scanline_list_, proc(a, b: fixed_bcd.BCD(FRAC_DIGITS)) -> bool {
@@ -3080,7 +3073,8 @@ FromBcdPaths :: proc(
 
 BooleanOp_Fixed :: proc(
 	clip_type: ClipType,
-	subjects: [][][2]fixed_bcd.BCD($FRAC_DIGITS),
+	$FRAC_DIGITS: int,
+	subjects: [][][2]fixed_bcd.BCD(FRAC_DIGITS),
 	clips: [][][2]fixed_bcd.BCD(FRAC_DIGITS),
 	opens: [][][2]fixed_bcd.BCD(FRAC_DIGITS),
 	fill_rule: FillRule = .Positive,
@@ -3090,12 +3084,13 @@ BooleanOp_Fixed :: proc(
 	res_open: [][][2]fixed_bcd.BCD(FRAC_DIGITS),
 	err: Clipper_Error,
 ) {
-	return BooleanOp_Impl(clip_type, subjects, clips, opens, fill_rule, allocator)
+	return BooleanOp_Impl(clip_type, FRAC_DIGITS, subjects, clips, opens, fill_rule, allocator)
 }
 
 BooleanOp :: proc(
 	clip_type: ClipType,
-	subjects: [][][2]$T,
+	$T: typeid,
+	subjects: [][][2]T,
 	clips: [][][2]T,
 	opens: [][][2]T,
 	fill_rule: FillRule = .Positive,
@@ -3111,6 +3106,7 @@ BooleanOp :: proc(
 	open_bcd := ToBcdPaths(FRAC, opens) or_return
 	res_bcd, res_open_bcd := BooleanOp_Impl(
 		clip_type,
+		FRAC,
 		sub_bcd,
 		clip_bcd,
 		open_bcd,
@@ -3124,7 +3120,8 @@ BooleanOp :: proc(
 
 BooleanOpCustomData :: proc(
 	clip_type: ClipType,
-	subjects: [][][2]$T,
+	$T: typeid,
+	subjects: [][][2]T,
 	clips: [][][2]T,
 	opens: [][][2]T,
 	$U: typeid,
@@ -3146,6 +3143,7 @@ BooleanOpCustomData :: proc(
 	open_bcd := ToBcdPaths(FRAC, opens) or_return
 	res_bcd, res_open_bcd, res_extra, res_open_extra = BooleanOpCustomData_Impl(
 		clip_type,
+		T,
 		sub_bcd,
 		clip_bcd,
 		open_bcd,
@@ -3163,7 +3161,8 @@ BooleanOpCustomData :: proc(
 
 BooleanOpCustomData_Fixed :: proc(
 	clip_type: ClipType,
-	subjects: [][][2]fixed_bcd.BCD($FRAC_DIGITS),
+	$FRAC_DIGITS: int,
+	subjects: [][][2]fixed_bcd.BCD(FRAC_DIGITS),
 	clips: [][][2]fixed_bcd.BCD(FRAC_DIGITS),
 	opens: [][][2]fixed_bcd.BCD(FRAC_DIGITS),
 	$U: typeid,
@@ -3181,6 +3180,7 @@ BooleanOpCustomData_Fixed :: proc(
 ) {
 	return BooleanOpCustomData_Impl(
 		clip_type,
+		FRAC_DIGITS,
 		subjects,
 		clips,
 		opens,

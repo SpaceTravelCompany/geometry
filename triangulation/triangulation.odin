@@ -993,7 +993,7 @@ RemoveIntersection :: proc(
 		tmpE = e1
 		v = e2.vR
 	}
-	if d.i > fixed_bcd.init_const(1, 0, 0, T.FRAC_DIGITS).i do return .PATHS_INTERSECTS
+	if d.i > fixed_bcd.init_const(1, 0, 0, intrinsics.type_polymorphic_record_parameter_value(T, 0)).i do return .PATHS_INTERSECTS
 
 	v2 := tmpE.vT
 	RemoveEdgeFromVertex(v2, tmpE) or_return

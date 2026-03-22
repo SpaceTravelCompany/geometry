@@ -1003,6 +1003,7 @@ shapes_compute_polygon_fixed :: proc(
 						if node.curve_pts_ids != nil &&
 						   curve_idx < len(node.curve_pts_ids[npi]) &&
 						   node.curve_pts_ids[npi][curve_idx] == u32(i) {
+
 							if curve_idx + 1 < len(node.curve_pts_ids[npi]) &&
 							   node.curve_pts_ids[npi][curve_idx + 1] == u32(i) {
 								non_zero_append(
@@ -1016,6 +1017,7 @@ shapes_compute_polygon_fixed :: proc(
 									},
 								) or_return
 								curve_idx += 2
+
 							} else {
 								non_zero_append(
 									&curves2[npi],

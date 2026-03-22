@@ -8,3 +8,5 @@ geometry
 *.pdb
 clipper
 triangulation
+.vscode
+.zed

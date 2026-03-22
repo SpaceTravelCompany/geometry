@@ -927,14 +927,14 @@ CheckJoinLeft :: proc(
 		return nil
 	}
 
-	if ((pt.y == e.top.y) || (pt.y == prev.top.y)) &&
+	if ((pt.y.i <= e.top.y.i + 1) || (pt.y.i <= prev.top.y.i + 1)) &&
 	   (fixed_bcd.greater(e.bot.y, pt.y) || fixed_bcd.greater(prev.bot.y, pt.y)) {
 		return nil // avoid trivial joins
 	}
 
 	if check_curr_x {
 		a, b := PerpendicDistFromLineSqrd(pt, prev.bot, prev.top)
-		if fixed_bcd.greater(a, fixed_bcd.BCD(FRAC_DIGITS){}) do return nil // b > 0 always
+		if a.i > 1 do return nil // b > 0 always
 	} else if e.curr_x != prev.curr_x {
 		return nil
 	}
@@ -971,14 +971,14 @@ CheckJoinRight :: proc(
 		return nil
 	}
 
-	trivial_y := pt.y == e.top.y || pt.y == next.top.y
+	trivial_y := pt.y.i <= e.top.y.i + 1 || pt.y.i <= next.top.y.i + 1
 	trivial_bot := fixed_bcd.greater(e.bot.y, pt.y) || fixed_bcd.greater(next.bot.y, pt.y)
 	if trivial_y && trivial_bot do return nil // avoid trivial joins
 
 	if check_curr_x {
 		a, b := PerpendicDistFromLineSqrd(pt, next.bot, next.top)
 
-		if a.i > 0 do return nil
+		if a.i > 1 do return nil
 	} else if e.curr_x != next.curr_x {
 		return nil
 	}

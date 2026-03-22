@@ -1,6 +1,5 @@
 package triangulation
 
-import "../clipper"
 import "core:math"
 import "core:testing"
 import "shared:utils_private"

@@ -170,7 +170,7 @@ TrianguatePolygons_Fixed_Impl :: proc(
 	slice.sort_by(ctx.all_edges[:], proc(a, b: ^Edge(T)) -> bool {
 		return a.vL.p.x.i < b.vL.p.x.i
 	})
-	//FixupEdgeIntersects(&ctx) or_return //! not execute now
+	FixupEdgeIntersects(&ctx) or_return
 
 	slice.sort_by(ctx.all_verts[:], proc(a, b: ^Vertex(T)) -> bool {
 		if a.p.y.i == b.p.y.i do return a.p.x.i < b.p.x.i
@@ -993,7 +993,7 @@ RemoveIntersection :: proc(
 		tmpE = e1
 		v = e2.vR
 	}
-	if d.i == 0 do return .PATHS_INTERSECTS
+	if d.i > fixed_bcd.init_const(1, 0, 0, T.FRAC_DIGITS).i do return .PATHS_INTERSECTS
 
 	v2 := tmpE.vT
 	RemoveEdgeFromVertex(v2, tmpE) or_return

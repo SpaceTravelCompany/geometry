@@ -912,7 +912,7 @@ LinesIntersect2 :: proc "contextless" (
 	intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
 	intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
 	when intrinsics.type_is_float(T) {
-		if check_is_touching && a1 == b1 || a2 == b1 || a1 == b2 || a2 == b2 do return .none
+		if check_is_touching && a1 == b1 || a2 == b1 || a1 == b2 || a2 == b2 do return .none, {}
 
 		den: T = (b2.y - b1.y) * (a2.x - a1.x) - (b2.x - b1.x) * (a2.y - a1.y)
 		if den == 0.0 {
@@ -939,7 +939,7 @@ LinesIntersect2 :: proc "contextless" (
 			equal :: fixed_bcd.equal
 		}
 
-		if check_is_touching && equal(a1, b1) || equal(a2, b1) || equal(a1, b2) || equal(a2, b2) do return .none
+		if check_is_touching && equal(a1, b1) || equal(a2, b1) || equal(a1, b2) || equal(a2, b2) do return .none, {}
 
 		den: T = sub(mul(sub(b2.y, b1.y), sub(a2.x, a1.x)), mul(sub(b2.x, b1.x), sub(a2.y, a1.y)))
 		if den.i == 0 {

@@ -161,19 +161,27 @@ test_intersection_2square :: proc(t: ^testing.T) {
 
 @(test)
 test_custom :: proc(t: ^testing.T) {
-	poly1 := [?][2]f64 {
-		{340, 60}, // 0: 꼭대기
-		{460, 380}, // 1: 오른쪽 아래 (→ 자가교차)
-		{180, 200}, // 2: 왼쪽
-		{500, 200}, // 3: 오른쪽
-		{220, 380}, // 4: 왼쪽 아래 (→ 자가교차)
-	}
-
-	poly2: [len(poly1)][2]fixed_bcd.BCD(DEF_FRAC_DIGITS)
-
-	for i in 0 ..< len(poly1) {
-		poly2[i][0] = fixed_bcd.from_f64(DEF_FRAC_DIGITS, poly1[i][0])
-		poly2[i][1] = fixed_bcd.from_f64(DEF_FRAC_DIGITS, poly1[i][1])
+	poly2 := [5][2]fixed_bcd.BCD(DEF_FRAC_DIGITS) {
+		{
+			fixed_bcd.init_const(340, 0, 0, DEF_FRAC_DIGITS),
+			fixed_bcd.init_const(60, 0, 0, DEF_FRAC_DIGITS),
+		}, // 0: 꼭대기
+		{
+			fixed_bcd.init_const(460, 0, 0, DEF_FRAC_DIGITS),
+			fixed_bcd.init_const(380, 0, 0, DEF_FRAC_DIGITS),
+		}, // 1: 오른쪽 아래 (→ 자가교차)
+		{
+			fixed_bcd.init_const(180, 0, 0, DEF_FRAC_DIGITS),
+			fixed_bcd.init_const(200, 0, 0, DEF_FRAC_DIGITS),
+		}, // 2: 왼쪽
+		{
+			fixed_bcd.init_const(500, 0, 0, DEF_FRAC_DIGITS),
+			fixed_bcd.init_const(200, 0, 0, DEF_FRAC_DIGITS),
+		}, // 3: 오른쪽
+		{
+			fixed_bcd.init_const(220, 0, 0, DEF_FRAC_DIGITS),
+			fixed_bcd.init_const(380, 0, 0, DEF_FRAC_DIGITS),
+		}, // 4: 왼쪽 아래 (→ 자가교차)
 	}
 
 	res, res_open, err := BooleanOp_Fixed(

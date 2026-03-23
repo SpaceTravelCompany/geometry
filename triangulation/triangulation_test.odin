@@ -56,31 +56,3 @@ test_triangulation_2square :: proc(t: ^testing.T) {
 	testing.expect_value(t, len(indices), 12)
 }
 
-// @(test)
-// test_cross_product_sign_convention :: proc(t: ^testing.T) {
-// 	p0 := [2]fixed_bcd.BCD(DEF_FRAC_DIGITS) {
-// 		fixed_bcd.init_const(0, 0, 0, DEF_FRAC_DIGITS),
-// 		fixed_bcd.init_const(0, 0, 0, DEF_FRAC_DIGITS),
-// 	}
-// 	p1 := [2]fixed_bcd.BCD(DEF_FRAC_DIGITS) {
-// 		fixed_bcd.init_const(1, 0, 0, DEF_FRAC_DIGITS),
-// 		fixed_bcd.init_const(0, 0, 0, DEF_FRAC_DIGITS),
-// 	}
-// 	p2 := [2]fixed_bcd.BCD(DEF_FRAC_DIGITS) {
-// 		fixed_bcd.init_const(1, 0, 0, DEF_FRAC_DIGITS),
-// 		fixed_bcd.init_const(1, 0, 0, DEF_FRAC_DIGITS),
-// 	}
-
-// 	testing.expect_value(t, CrossProductSign(p0, p1, p2), 1)
-// 	testing.expect_value(
-// 		t,
-// 		GetPolygonOrientation([][2]fixed_bcd.BCD(DEF_FRAC_DIGITS){p0, p1, p2}),
-// 		PolyOrientation.CounterClockwise,
-// 	)
-// 	testing.expect_value(t, CrossProductSign(p0, p2, p1), -1)
-// 	testing.expect_value(
-// 		t,
-// 		GetPolygonOrientation([][2]fixed_bcd.BCD(DEF_FRAC_DIGITS){p0, p2, p1}),
-// 		PolyOrientation.Clockwise,
-// 	)
-// }

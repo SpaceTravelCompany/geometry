@@ -121,7 +121,8 @@ FixupEdgeIntersects :: proc(ctx: ^Context($T)) -> (err: Trianguate_Error) {
 				break
 			}
 			if e2.vT.p.y.i < e1.vB.p.y.i && e2.vB.p.y.i > e1.vT.p.y.i {
-				if linalg_ex.LinesIntersect4(e2.vL.p, e2.vR.p, e1.vL.p, e1.vR.p) == .intersect {
+				if linalg_ex.LinesIntersect3(e2.vL.p, e2.vR.p, e1.vL.p, e1.vR.p, true) ==
+				   .intersect {
 					RemoveIntersection(ctx, e2, e1) or_return
 				}
 			}
@@ -588,7 +589,7 @@ CreateInnerLocMinLooseEdge :: proc(
 			   e.vL.p.x.i < xAbove &&
 			   e.vB.p.y.i > yAbove &&
 			   e.vT.p.y.i < yBest &&
-			   .intersect == linalg_ex.LinesIntersect4(e.vB.p, e.vT.p, vBest.p, vAbove.p) {
+			   .intersect == linalg_ex.LinesIntersect3(e.vB.p, e.vT.p, vBest.p, vAbove.p, true) {
 				vBest = e.vT.p.y.i > yAbove ? e.vT : e.vB
 				xBest = vBest.p.x.i
 				yBest = vBest.p.y.i
@@ -601,7 +602,7 @@ CreateInnerLocMinLooseEdge :: proc(
 			   e.vL.p.x.i > xAbove &&
 			   e.vB.p.y.i > yAbove &&
 			   e.vT.p.y.i < yBest &&
-			   .intersect == linalg_ex.LinesIntersect4(e.vB.p, e.vT.p, vBest.p, vAbove.p) {
+			   .intersect == linalg_ex.LinesIntersect3(e.vB.p, e.vT.p, vBest.p, vAbove.p, true) {
 				vBest = e.vT.p.y.i > yAbove ? e.vT : e.vB
 				xBest = vBest.p.x.i
 				yBest = vBest.p.y.i
@@ -1121,3 +1122,4 @@ TrianguatePolygons :: proc(
 ) where intrinsics.type_is_float(T) {
 	return TrianguatePolygons_Impl(poly, allocator)
 }
+

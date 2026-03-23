@@ -1,13 +1,12 @@
 package clipper
 
 import "base:intrinsics"
-import "core:fmt"
 import "core:testing"
 import "shared:utils_private"
 import "shared:utils_private/fixed_bcd"
 
 @(private = "file")
-DEF_FRAC_DIGITS :: 14
+DEF_FRAC_DIGITS :: fixed_bcd.MAX_FRAC_DIGITS
 
 @(private)
 _make_square_path_bcd :: proc(
@@ -158,7 +157,6 @@ test_intersection_2square :: proc(t: ^testing.T) {
 	testing.expect_value(t, err, nil)
 }
 
-
 @(test)
 test_custom :: proc(t: ^testing.T) {
 	poly2 := [5][2]fixed_bcd.BCD(DEF_FRAC_DIGITS) {
@@ -203,3 +201,4 @@ test_custom :: proc(t: ^testing.T) {
 	testing.expect_value(t, len(res), 1)
 	testing.expect_value(t, len(res[0]), 10)
 }
+

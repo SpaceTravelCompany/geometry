@@ -443,8 +443,6 @@ GetLineIntersectPt :: proc "contextless" (
 	ok: bool,
 	ip: [2]fixed_bcd.BCD(FRAC_DIGITS),
 ) {
-	// Matches Clipper2 clipper.core.h GetLineIntersectPt (non-CLIPPER2_HI_PRECISION):
-	// intersection is constrained to segment a1–a2 (ln1a–ln1b in C++).
 	den := fixed_bcd.sub(
 		fixed_bcd.mul(fixed_bcd.sub(b2.y, b1.y), fixed_bcd.sub(a2.x, a1.x)),
 		fixed_bcd.mul(fixed_bcd.sub(b2.x, b1.x), fixed_bcd.sub(a2.y, a1.y)),
@@ -455,13 +453,15 @@ GetLineIntersectPt :: proc "contextless" (
 		fixed_bcd.mul(fixed_bcd.sub(b2.x, b1.x), fixed_bcd.sub(a1.y, b1.y)),
 		fixed_bcd.mul(fixed_bcd.sub(b2.y, b1.y), fixed_bcd.sub(a1.x, b1.x)),
 	)
+
+	// t <= 0
+	if ua.i == 0 || (ua.i < 0) != (den.i < 0) do return true, a1
+
+	// t >= 1
+	if ua.i < 0 ? ua.i <= den.i : ua.i >= den.i do return true, a2
+
+	// 실제 교점이 필요할 때만 나눗셈
 	t := fixed_bcd.div(ua, den)
-	if fixed_bcd.less_than(t, fixed_bcd.BCD(FRAC_DIGITS){}) {
-		return true, a1
-	}
-	if fixed_bcd.greater_than(t, fixed_bcd.init_const(1, 0, 0, FRAC_DIGITS)) {
-		return true, a2
-	}
 	ip = [2]fixed_bcd.BCD(FRAC_DIGITS) {
 		fixed_bcd.add(a1.x, fixed_bcd.mul(t, fixed_bcd.sub(a2.x, a1.x))),
 		fixed_bcd.add(a1.y, fixed_bcd.mul(t, fixed_bcd.sub(a2.y, a1.y))),
@@ -3158,3 +3158,4 @@ BooleanOpCustomData_Fixed :: proc(
 		allocator,
 	)
 }
+

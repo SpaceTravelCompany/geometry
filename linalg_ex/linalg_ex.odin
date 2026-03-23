@@ -688,12 +688,9 @@ PointInPolygon :: proc "contextless" (
 	intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
 	intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
 	when intrinsics.type_is_float(T) {
-		crossProduct :: proc "contextless" (p1: [2]$T, p2: [2]T, p3: [2]T) -> T {
-			return (p2.x - p1.x) * (p3.y - p1.y) - (p2.y - p1.y) * (p3.x - p1.x)
-		}
 		isPointOnSegment :: proc "contextless" (p: [2]$T, p1: [2]T, p2: [2]T) -> bool {
 			return(
-				crossProduct(p1, p2, p) == 0 &&
+				CrossProductSign(p1, p2, p) == 0 &&
 				p.x >= min(p1.x, p2.x) &&
 				p.x <= max(p1.x, p2.x) &&
 				p.y >= min(p1.y, p2.y) &&
@@ -705,24 +702,18 @@ PointInPolygon :: proc "contextless" (
 			p1 := polygon[i]
 			p2 := polygon[(i + 1) % len(polygon)]
 			if isPointOnSegment(p, p1, p2) do return .On
+
 			if p1.y <= p.y {
-				if p2.y > p.y && crossProduct(p1, p2, p) > 0 do windingNumber += 1
+				if p2.y > p.y && CrossProductSign(p1, p2, p) > 0 do windingNumber += 1
 			} else {
-				if p2.y <= p.y && crossProduct(p1, p2, p) < 0 do windingNumber -= 1
+				if p2.y <= p.y && CrossProductSign(p1, p2, p) < 0 do windingNumber -= 1
 			}
 		}
 		return windingNumber != 0 ? .Inside : .Outside
 	} else when intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
-		crossProduct :: proc "contextless" (p1: [2]$T, p2: [2]T, p3: [2]T) -> T {
-			return fixed_bcd.sub(
-				fixed_bcd.mul(fixed_bcd.sub(p2.x, p1.x), fixed_bcd.sub(p3.y, p1.y)),
-				fixed_bcd.mul(fixed_bcd.sub(p2.y, p1.y), fixed_bcd.sub(p3.x, p1.x)),
-			)
-		}
 		isPointOnSegment :: proc "contextless" (p: [2]$T, p1: [2]T, p2: [2]T) -> bool {
-			cp := crossProduct(p1, p2, p)
 			return(
-				cp.i == 0 &&
+				CrossProductSign(p1, p2, p) == 0 &&
 				p.x.i >= min_fixed(p1.x, p2.x).i &&
 				p.x.i <= max_fixed(p1.x, p2.x).i &&
 				p.y.i >= min_fixed(p1.y, p2.y).i &&
@@ -734,24 +725,18 @@ PointInPolygon :: proc "contextless" (
 			p1 := polygon[i]
 			p2 := polygon[(i + 1) % len(polygon)]
 			if isPointOnSegment(p, p1, p2) do return .On
+
 			if p1.y.i <= p.y.i {
-				if p2.y.i > p.y.i && crossProduct(p1, p2, p).i > 0 do windingNumber += 1
+				if p2.y.i > p.y.i && CrossProductSign(p1, p2, p) > 0 do windingNumber += 1
 			} else {
-				if p2.y.i <= p.y.i && crossProduct(p1, p2, p).i < 0 do windingNumber -= 1
+				if p2.y.i <= p.y.i && CrossProductSign(p1, p2, p) < 0 do windingNumber -= 1
 			}
 		}
 		return windingNumber != 0 ? .Inside : .Outside
 	} else {
-		crossProduct :: proc "contextless" (p1: [2]$T, p2: [2]T, p3: [2]T) -> T {
-			return fixed.sub(
-				fixed.mul(fixed.sub(p2.x, p1.x), fixed.sub(p3.y, p1.y)),
-				fixed.mul(fixed.sub(p2.y, p1.y), fixed.sub(p3.x, p1.x)),
-			)
-		}
 		isPointOnSegment :: proc "contextless" (p: [2]$T, p1: [2]T, p2: [2]T) -> bool {
-			cp := crossProduct(p1, p2, p)
 			return(
-				cp.i == 0 &&
+				CrossProductSign(p1, p2, p) == 0 &&
 				p.x.i >= min_fixed(p1.x, p2.x).i &&
 				p.x.i <= max_fixed(p1.x, p2.x).i &&
 				p.y.i >= min_fixed(p1.y, p2.y).i &&
@@ -763,10 +748,11 @@ PointInPolygon :: proc "contextless" (
 			p1 := polygon[i]
 			p2 := polygon[(i + 1) % len(polygon)]
 			if isPointOnSegment(p, p1, p2) do return .On
+
 			if p1.y.i <= p.y.i {
-				if p2.y.i > p.y.i && crossProduct(p1, p2, p).i > 0 do windingNumber += 1
+				if p2.y.i > p.y.i && CrossProductSign(p1, p2, p) > 0 do windingNumber += 1
 			} else {
-				if p2.y.i <= p.y.i && crossProduct(p1, p2, p).i < 0 do windingNumber -= 1
+				if p2.y.i <= p.y.i && CrossProductSign(p1, p2, p) < 0 do windingNumber -= 1
 			}
 		}
 		return windingNumber != 0 ? .Inside : .Outside
@@ -975,54 +961,12 @@ LinesIntersect3 :: proc "contextless" (
 	a2: [2]T,
 	b1: [2]T,
 	b2: [2]T,
+	check_is_touching: bool = false,
 ) -> IntersectKind where intrinsics.type_is_float(T) ||
 	intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
 	intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
 	when intrinsics.type_is_float(T) {
-		den: T = (b2.y - b1.y) * (a2.x - a1.x) - (b2.x - b1.x) * (a2.y - a1.y)
-		if den == 0.0 {
-			return .collinear
-		}
-		ua := ((b2.x - b1.x) * (a1.y - b1.y) - (b2.y - b1.y) * (a1.x - b1.x))
-		ub := ((a2.x - a1.x) * (a1.y - b1.y) - (a2.y - a1.y) * (a1.x - b1.x))
-		res_den :=
-			den > 0.0 ? (ua >= 0.0 && ub >= 0.0 && ua <= den && ub <= den) : (ua >= den && ub >= den && ua <= 0.0 && ub <= 0.0)
-		return res_den ? .intersect : .none
-	} else {
-		when intrinsics.type_is_specialization_of(T, fixed.Fixed) {
-			add :: fixed.add
-			sub :: fixed.sub
-			mul :: fixed.mul
-			equal :: fixed_ex.equal
-		} else {
-			add :: fixed_bcd.add
-			sub :: fixed_bcd.sub
-			mul :: fixed_bcd.mul
-			equal :: fixed_bcd.equal
-		}
-
-		//if equal(a1, b1) || equal(a2, b1) || equal(a1, b2) || equal(a2, b2) do return .none
-
-		den: T = sub(mul(sub(b2.y, b1.y), sub(a2.x, a1.x)), mul(sub(b2.x, b1.x), sub(a2.y, a1.y)))
-		if den.i == 0 do return .collinear
-		ua := sub(mul(sub(b2.x, b1.x), sub(a1.y, b1.y)), mul(sub(b2.y, b1.y), sub(a1.x, b1.x)))
-		ub := sub(mul(sub(a2.x, a1.x), sub(a1.y, b1.y)), mul(sub(a2.y, a1.y), sub(a1.x, b1.x)))
-		res_den :=
-			den.i > 0 ? (ua.i >= 0 && ub.i >= 0 && ua.i <= den.i && ub.i <= den.i) : (ua.i >= den.i && ub.i >= den.i && ua.i <= 0 && ub.i <= 0)
-		return res_den ? .intersect : .none
-	}
-}
-
-LinesIntersect4 :: proc "contextless" (
-	a1: [2]$T,
-	a2: [2]T,
-	b1: [2]T,
-	b2: [2]T,
-) -> IntersectKind where intrinsics.type_is_float(T) ||
-	intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
-	intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
-	when intrinsics.type_is_float(T) {
-		if a1 == b1 || a2 == b1 || a1 == b2 || a2 == b2 do return .none
+		if check_is_touching && a1 == b1 || a2 == b1 || a1 == b2 || a2 == b2 do return .none
 
 		den: T = (b2.y - b1.y) * (a2.x - a1.x) - (b2.x - b1.x) * (a2.y - a1.y)
 		if den == 0.0 {
@@ -1046,7 +990,7 @@ LinesIntersect4 :: proc "contextless" (
 			equal :: fixed_bcd.equal
 		}
 
-		if equal(a1, b1) || equal(a2, b1) || equal(a1, b2) || equal(a2, b2) do return .none
+		if check_is_touching && equal(a1, b1) || equal(a2, b1) || equal(a1, b2) || equal(a2, b2) do return .none
 
 		den: T = sub(mul(sub(b2.y, b1.y), sub(a2.x, a1.x)), mul(sub(b2.x, b1.x), sub(a2.y, a1.y)))
 		if den.i == 0 do return .collinear
@@ -1514,6 +1458,7 @@ ellipse_cubic_init :: proc "contextless" (
 	}, [8]u32{1, 2, 4, 5, 7, 8, 10, 11}
 }
 
+//(p2.x - p1.x) * (p3.y - p1.y) - (p2.y - p1.y) * (p3.x - p1.x) == (p2.x - p1.x) * (p3.y - p2.y) - (p2.y - p1.y) * (p3.x - p2.x)
 @(require_results)
 CrossProductSign :: proc "contextless" (
 	p1, p2, p3: [2]$T,
@@ -1544,10 +1489,15 @@ CrossProductSign :: proc "contextless" (
 		b := sub(p3.y, p2.y)
 		c := sub(p2.y, p1.y)
 		d := sub(p3.x, p2.x)
-		ab := mul(a, b)
-		cd := mul(c, d)
-		if ab.i > cd.i do return 1
-		if ab.i < cd.i do return -1
+
+		when intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
+			return fixed_bcd.compare_product(a, b, c, d)
+		} else {
+			ab := mul(a, b)
+			cd := mul(c, d)
+			if ab.i > cd.i do return 1
+			else if ab.i < cd.i do return -1
+		}
 	}
 	return 0
 }
@@ -1643,3 +1593,4 @@ GetAngle :: proc(a, b, c: [2]$T) -> T where intrinsics.type_is_float(T) {
 	cp := abx * bcy - aby * bcx
 	return math.atan2(cp, dp) //range between -Pi and Pi
 }
+

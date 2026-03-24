@@ -74,6 +74,13 @@ Context :: struct($FRAC_DIGITS: int) {
 	out:                 [dynamic][dynamic]fixed_bcd.BCD(FRAC_DIGITS),
 	outrec_list_:        [dynamic]^OutRec(FRAC_DIGITS),
 	current_locmin_idx_: int,
+	/*
+	Whenever adjacent edges are collinear in closed path solutions,
+	the common vertex can be removed from the path without altering its shape.
+	However, because some users prefer to retain these vertices, this feature is optional.
+	Nevertheless, when adjacent edges in solutions are 180 degree collinear (creating overlapping edge 'spikes'),
+	these vertices will be removed irrespective of the PreserveCollinear setting. 
+	*/
 	preserve_collinear_: bool,
 	reverse_solution_:   bool,
 	has_open_paths_:     bool,
@@ -2837,7 +2844,7 @@ BooleanOpCurve_Fixed :: proc(
 		) or_return,
 		fill_rule_          = fill_rule,
 		clip_type_          = clip_type,
-		preserve_collinear_ = false,
+		preserve_collinear_ = true,
 	}
 
 	pq.init(&ctx.scanline_list_, proc(a, b: fixed_bcd.BCD(FRAC_DIGITS)) -> bool {

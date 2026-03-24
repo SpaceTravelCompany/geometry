@@ -2788,37 +2788,7 @@ BuildPath64 :: proc(
 //public
 //
 
-@(private = "file")
-BooleanOp_Impl :: proc(
-	clip_type: ClipType,
-	$FRAC_DIGITS: int,
-	subjects: [][][2]fixed_bcd.BCD(FRAC_DIGITS),
-	clips: [][][2]fixed_bcd.BCD(FRAC_DIGITS),
-	opens: [][][2]fixed_bcd.BCD(FRAC_DIGITS),
-	fill_rule: FillRule = .Positive,
-	allocator := context.allocator,
-) -> (
-	res: [][][2]fixed_bcd.BCD(FRAC_DIGITS),
-	res_open: [][][2]fixed_bcd.BCD(FRAC_DIGITS),
-	err: Clipper_Error,
-) {
-	res, res_open, _, _ = BooleanOpCurve_Impl(
-		clip_type,
-		FRAC_DIGITS,
-		subjects,
-		clips,
-		opens,
-		nil,
-		nil,
-		nil,
-		fill_rule,
-		allocator,
-	) or_return
-	return
-}
-
-@(private = "file")
-BooleanOpCurve_Impl :: proc(
+BooleanOpCurve_Fixed :: proc(
 	clip_type: ClipType,
 	$FRAC_DIGITS: int,
 	subjects: [][][2]fixed_bcd.BCD(FRAC_DIGITS),
@@ -3050,7 +3020,19 @@ BooleanOp_Fixed :: proc(
 	res_open: [][][2]fixed_bcd.BCD(FRAC_DIGITS),
 	err: Clipper_Error,
 ) {
-	return BooleanOp_Impl(clip_type, FRAC_DIGITS, subjects, clips, opens, fill_rule, allocator)
+	res, res_open, _, _ = BooleanOpCurve_Fixed(
+		clip_type,
+		FRAC_DIGITS,
+		subjects,
+		clips,
+		opens,
+		nil,
+		nil,
+		nil,
+		fill_rule,
+		allocator,
+	) or_return
+	return
 }
 
 BooleanOp :: proc(
@@ -3070,92 +3052,65 @@ BooleanOp :: proc(
 	sub_bcd := ToBcdPaths(FRAC, subjects) or_return
 	clip_bcd := ToBcdPaths(FRAC, clips) or_return
 	open_bcd := ToBcdPaths(FRAC, opens) or_return
-	res_bcd, res_open_bcd := BooleanOp_Impl(
+
+	res_bcd, res_open_bcd, _, _ := BooleanOpCurve_Fixed(
 		clip_type,
 		FRAC,
 		sub_bcd,
 		clip_bcd,
 		open_bcd,
+		nil,
+		nil,
+		nil,
 		fill_rule,
-		allocator = context.temp_allocator,
+		context.temp_allocator,
 	) or_return
+
 	res = FromBcdPaths(T, res_bcd, allocator) or_return
 	res_open = FromBcdPaths(T, res_open_bcd, allocator) or_return
 	return
 }
 
-BooleanOpCustomData :: proc(
+BooleanOpCurve :: proc(
 	clip_type: ClipType,
 	$T: typeid,
 	subjects: [][][2]T,
 	clips: [][][2]T,
 	opens: [][][2]T,
-	$U: typeid,
-	extra_subjects: [][]U,
-	extra_clips: [][]U,
-	extra_opens: [][]U,
+	subjects_curve_ids: [][]u32,
+	clips_curve_ids: [][]u32,
+	opens_curve_ids: [][]u32,
 	fill_rule: FillRule = .Positive,
 	allocator := context.allocator,
 ) -> (
 	res: [][][2]T,
 	res_open: [][][2]T,
-	res_extra: [][]U,
-	res_open_extra: [][]U,
+	res_curve_ids: [][]u32,
+	res_open_curve_ids: [][]u32,
 	err: Clipper_Error,
 ) where intrinsics.type_is_float(T) {
 	FRAC :: fixed_bcd.MAX_FRAC_DIGITS
 	sub_bcd := ToBcdPaths(FRAC, subjects) or_return
 	clip_bcd := ToBcdPaths(FRAC, clips) or_return
 	open_bcd := ToBcdPaths(FRAC, opens) or_return
-	res_bcd, res_open_bcd, res_extra, res_open_extra = BooleanOpCustomData_Impl(
+
+	res_bcd: [][][2]fixed_bcd.BCD(FRAC_DIGITS)
+	res_open_bcd: [][][2]fixed_bcd.BCD(FRAC_DIGITS)
+	res_bcd, res_open_bcd, res_curve_ids, res_open_curve_ids = BooleanOpCurve_Fixed(
 		clip_type,
 		T,
 		sub_bcd,
 		clip_bcd,
 		open_bcd,
-		U,
-		extra_subjects,
-		extra_clips,
-		extra_opens,
+		subjects_curve_ids,
+		clips_curve_ids,
+		opens_curve_ids,
 		fill_rule,
-		allocator,
+		context.temp_allocator,
 	) or_return
+
 	res = FromBcdPaths(T, res_bcd, allocator) or_return
 	res_open = FromBcdPaths(T, res_open_bcd, allocator) or_return
 	return
-}
-
-BooleanOpCustomData_Fixed :: proc(
-	clip_type: ClipType,
-	$FRAC_DIGITS: int,
-	subjects: [][][2]fixed_bcd.BCD(FRAC_DIGITS),
-	clips: [][][2]fixed_bcd.BCD(FRAC_DIGITS),
-	opens: [][][2]fixed_bcd.BCD(FRAC_DIGITS),
-	$U: typeid,
-	extra_subjects: [][]U,
-	extra_clips: [][]U,
-	extra_opens: [][]U,
-	fill_rule: FillRule = .Positive,
-	allocator := context.allocator,
-) -> (
-	res: [][][2]fixed_bcd.BCD(FRAC_DIGITS),
-	res_open: [][][2]fixed_bcd.BCD(FRAC_DIGITS),
-	res_extra: [][]U,
-	res_open_extra: [][]U,
-	err: Clipper_Error,
-) {
-	return BooleanOpCustomData_Impl(
-		clip_type,
-		FRAC_DIGITS,
-		subjects,
-		clips,
-		opens,
-		U,
-		extra_subjects,
-		extra_clips,
-		extra_opens,
-		fill_rule,
-		allocator,
-	)
 }
 

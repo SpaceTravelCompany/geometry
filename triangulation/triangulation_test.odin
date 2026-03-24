@@ -1,6 +1,5 @@
 package triangulation
 
-import "core:math"
 import "core:testing"
 import "shared:utils_private"
 import "shared:utils_private/fixed_bcd"

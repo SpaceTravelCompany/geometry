@@ -14,12 +14,6 @@ import "shared:utils_private/fixed_bcd"
 import "shared:utils_private"
 
 
-shape_vertex2d_fixed :: struct($FRAC_DIGITS: int) {
-	pos:   [2]fixed_bcd.BCD(FRAC_DIGITS),
-	uvw:   linalg.Vector3f32,
-	color: linalg.Vector4f32,
-}
-
 //use gpu shader std140 layout
 shape_vertex2d :: struct {
 	pos:   linalg.Vector2f32,
@@ -29,11 +23,6 @@ shape_vertex2d :: struct {
 
 raw_shape :: struct {
 	vertices: []shape_vertex2d,
-	indices:  []u32,
-}
-
-raw_shape_fixed :: struct($FIXED_DIGITS: int) {
-	vertices: []shape_vertex2d_fixed(FIXED_DIGITS),
 	indices:  []u32,
 }
 
@@ -54,7 +43,6 @@ __shape_error :: enum {
 	EmptyColor,
 }
 
-
 shape_error :: union #shared_nil {
 	__shape_error,
 	triangulation.__Trianguate_Error,
@@ -63,84 +51,31 @@ shape_error :: union #shared_nil {
 }
 
 shape_node :: struct {
-	pts:           [][]linalg.Vector2f32,
-	curve_pts_ids: [][]u32,
-	color:         linalg.Vector4f32,
-	stroke_color:  linalg.Vector4f32,
-	thickness:     f32,
-	is_closed:     bool,
+	pts:          [][]linalg.Vector2f32,
+	is_curves:    [][]bool,
+	color:        linalg.Vector4f32,
+	stroke_color: linalg.Vector4f32,
+	thickness:    f32,
+	is_closed:    bool,
 }
 
 shapes :: struct {
 	nodes: []shape_node,
 }
 
+// Same layout as curve_struct_fixed for floating-point coordinates (f16 / f32 / f64).
 @(private)
-curve_struct_fixed :: struct($FRAC_DIGITS: int) {
-	start: [2]fixed_bcd.BCD(FRAC_DIGITS),
-	ctl0:  [2]fixed_bcd.BCD(FRAC_DIGITS),
-	ctl1:  [2]fixed_bcd.BCD(FRAC_DIGITS),
-	end:   [2]fixed_bcd.BCD(FRAC_DIGITS),
+curve_struct_float :: struct($F: typeid) where intrinsics.type_is_float(F) {
+	start: [2]F,
+	ctl0:  [2]F,
+	ctl1:  [2]F,
+	end:   [2]F,
 	type:  curve_type,
-}
-
-shape_node_fixed :: struct($FIXED_DIGITS: int) {
-	pts:           [][][2]fixed_bcd.BCD(FIXED_DIGITS),
-	curve_pts_ids: [][]u32,
-	color:         linalg.Vector4f32,
-	stroke_color:  linalg.Vector4f32,
-	thickness:     f32,
-	is_closed:     bool,
-}
-
-shapes_fixed :: struct($FIXED_DIGITS: int) {
-	nodes: []shape_node_fixed(FIXED_DIGITS),
 }
 
 raw_shape_free :: proc(self: raw_shape, allocator := context.allocator) {
 	delete(self.vertices, allocator)
 	delete(self.indices, allocator)
-}
-
-raw_shape_fixed_free :: proc(
-	self: raw_shape_fixed($FIXED_DIGITS),
-	allocator := context.allocator,
-) {
-	delete(self.vertices, allocator)
-	delete(self.indices, allocator)
-}
-
-raw_shapei64_clone :: proc(
-	self: raw_shape_fixed($FIXED_DIGITS),
-	allocator := context.allocator,
-) -> (
-	res: raw_shape_fixed(FIXED_DIGITS),
-	err: runtime.Allocator_Error,
-) #optional_allocator_error {
-	res.vertices = utils_private.make_non_zeroed_slice(
-		[]shape_vertex2d_fixed(FIXED_DIGITS),
-		len(self.vertices),
-		allocator,
-	) or_return
-	defer if err != nil do delete(res.vertices, allocator)
-
-	res.indices = utils_private.make_non_zeroed_slice(
-		[]u32,
-		len(self.indices),
-		allocator,
-	) or_return
-
-	intrinsics.mem_copy_non_overlapping(
-		&res.vertices[0],
-		&self.vertices[0],
-		len(self.vertices) * size_of(shape_vertex2d_fixed(FIXED_DIGITS)),
-	)
-	intrinsics.mem_copy_non_overlapping(
-		&res.indices[0],
-		&self.indices[0],
-		len(self.indices) * size_of(u32),
-	)
-	return
 }
 
 raw_shape_clone :: proc(
@@ -277,7 +212,7 @@ GetCubicCurveType :: proc "contextless" (
 		D := 3.0 * d1 * d1 - 4.0 * d2 * d0 //33 + 36 + 1 = 70
 		discr := d0 * d0 * D //27 + 27 + 70 = 124
 
-		EP :: linalg_ex.epsilon(T) * 10.0
+		EP: T = linalg_ex.epsilon(T) * T(10.0)
 		if discr >= -EP && discr <= EP {
 			if d0 >= -EP && d0 <= EP && d1 >= -EP && d1 <= EP {
 				if d2 >= -EP && d2 <= EP {
@@ -302,10 +237,10 @@ GetCubicCurveType :: proc "contextless" (
 
 @(private = "file")
 _Shapes_ComputeLine :: proc(
-	vertList: ^[dynamic]shape_vertex2d_fixed($FRAC_DIGITS),
+	vertList: ^[dynamic]shape_vertex2d,
 	indList: ^[dynamic]u32,
 	color: linalg.Vector4f32,
-	pts: curve_struct_fixed(FRAC_DIGITS),
+	pts: curve_struct_float(f32),
 ) -> shape_error {
 	curveType := pts.type
 	err: shape_error = nil
@@ -313,61 +248,59 @@ _Shapes_ComputeLine :: proc(
 	//if curveType == .LoopReverse do loop_reverse = true
 
 	reverse := false
-	d0, d1, d2: fixed_bcd.BCD(FRAC_DIGITS)
+	d0, d1, d2: f32
 	if curveType != .Line && curveType != .Quadratic {
 		curveType, d0, d1, d2 = GetCubicCurveType(pts.start, pts.ctl0, pts.ctl1, pts.end) or_return
 	} else if curveType == .Quadratic {
 		vlen: u32 = u32(len(vertList))
-		if linalg_ex.GetPolygonOrientation(
-			   [][2]fixed_bcd.BCD(FRAC_DIGITS){pts.start, pts.ctl0, pts.end},
-		   ) ==
+		if linalg_ex.GetPolygonOrientation([][2]f32{pts.start, pts.ctl0, pts.end}) ==
 		   .CounterClockwise {
 			non_zero_append(
 				vertList,
-				shape_vertex2d_fixed(FRAC_DIGITS) {
+				shape_vertex2d {
 					uvw = {0.0, 0.0, -5.0},
-					pos = pts.start,
+					pos = linalg.Vector2f32{pts.start.x, pts.start.y},
 					color = color,
 				}, //-5 check this is not cubic curve
 			)
 			non_zero_append(
 				vertList,
-				shape_vertex2d_fixed(FRAC_DIGITS) {
+				shape_vertex2d {
 					uvw = {-0.5, 0.0, -5.0},
-					pos = pts.ctl0,
+					pos = linalg.Vector2f32{pts.ctl0.x, pts.ctl0.y},
 					color = color,
 				},
 			)
 			non_zero_append(
 				vertList,
-				shape_vertex2d_fixed(FRAC_DIGITS) {
+				shape_vertex2d {
 					uvw = {-1.0, -1.0, -5.0},
-					pos = pts.end,
+					pos = linalg.Vector2f32{pts.end.x, pts.end.y},
 					color = color,
 				},
 			)
 		} else {
 			non_zero_append(
 				vertList,
-				shape_vertex2d_fixed(FRAC_DIGITS) {
+				shape_vertex2d {
 					uvw = {0.0, 0.0, -5.0},
-					pos = pts.start,
+					pos = linalg.Vector2f32{pts.start.x, pts.start.y},
 					color = color,
 				},
 			)
 			non_zero_append(
 				vertList,
-				shape_vertex2d_fixed(FRAC_DIGITS) {
+				shape_vertex2d {
 					uvw = {0.5, 0.0, -5.0},
-					pos = pts.ctl0,
+					pos = linalg.Vector2f32{pts.ctl0.x, pts.ctl0.y},
 					color = color,
 				},
 			)
 			non_zero_append(
 				vertList,
-				shape_vertex2d_fixed(FRAC_DIGITS) {
+				shape_vertex2d {
 					uvw = {1.0, 1.0, -5.0},
-					pos = pts.end,
+					pos = linalg.Vector2f32{pts.end.x, pts.end.y},
 					color = color,
 				},
 			)
@@ -388,14 +321,11 @@ _Shapes_ComputeLine :: proc(
 
 	#partial switch curveType {
 	case .Serpentine:
-		d0f: f32 = f32(fixed_bcd.to_f64(d0))
-		d1f: f32 = f32(fixed_bcd.to_f64(d1))
-		d2f: f32 = f32(fixed_bcd.to_f64(d2))
-		t1 := math.sqrt(9 * d1f * d1f - 12 * d0f * d2f)
-		ls := 3 * d1f - t1
-		lt := 6 * d0f
+		t1 := math.sqrt_f32(9 * d1 * d1 - 12 * d0 * d2)
+		ls := 3 * d1 - t1
+		lt := 6 * d0
 
-		ms := 3 * d1f + t1
+		ms := 3 * d1 + t1
 		mt := lt
 		ltMinusLs := lt - ls
 		mtMinusMs := mt - ms
@@ -419,16 +349,12 @@ _Shapes_ComputeLine :: proc(
 			},
 		}
 
-		if d0.i < 0 do reverse = true
+		if d0 < 0 do reverse = true
 	case .Loop:
-		d0f: f32 = f32(fixed_bcd.to_f64(d0))
-		d1f: f32 = f32(fixed_bcd.to_f64(d1))
-		d2f: f32 = f32(fixed_bcd.to_f64(d2))
-
-		t1 := math.sqrt_f32(4 * d0f * d2f - 3 * d1f * d1f)
-		ls := d1f - t1
-		lt := 2 * d0f
-		ms := d1f + t1
+		t1 := math.sqrt_f32(4 * d0 * d2 - 3 * d1 * d1)
+		ls := d1 - t1
+		lt := 2 * d0
+		ms := d1 + t1
 		mt := lt
 
 		ql := ls / lt
@@ -457,13 +383,11 @@ _Shapes_ComputeLine :: proc(
 		}
 
 		reverse =
-			(d0.i > 0 && F[1][0] < math.F32_EPSILON * 5.0) ||
-			(d0.i < 0 && F[1][0] > -math.F32_EPSILON * 5.0) //? F[1][0]이 오차가생길수 있지만 일단 이렇게
+			(d0 > 0 && F[1][0] < math.F32_EPSILON * 5.0) ||
+			(d0 < 0 && F[1][0] > -math.F32_EPSILON * 5.0)
 	case .Cusp:
-		d1f: f32 = f32(fixed_bcd.to_f64(d1))
-		d2f: f32 = f32(fixed_bcd.to_f64(d2))
-		ls := d2f
-		lt := 3.0 * d1f
+		ls := d2
+		lt := 3.0 * d1
 		lsMinusLt := ls - lt
 		F = {
 			{ls, ls * ls * ls, 1.0},
@@ -478,7 +402,7 @@ _Shapes_ComputeLine :: proc(
 			{2.0 / 3.0, 1.0 / 3.0, 2.0 / 3.0},
 			{1.0, 1.0, 1.0},
 		}
-		if d2.i < 0 do reverse = true
+		if d2 < 0 do reverse = true
 	case .Line:
 		return nil
 	//reverse = true
@@ -492,40 +416,40 @@ _Shapes_ComputeLine :: proc(
 	}
 
 	appendLine :: proc(
-		vertList: ^[dynamic]shape_vertex2d_fixed($FRAC_DIGITS),
+		vertList: ^[dynamic]shape_vertex2d,
 		indList: ^[dynamic]u32,
 		color: linalg.Vector4f32,
-		pts: curve_struct_fixed(FRAC_DIGITS),
+		pts: curve_struct_float(f32),
 		F: [4][3]f32,
 	) -> shape_error {
 		start: u32 = u32(len(vertList))
 		non_zero_append(
 			vertList,
-			shape_vertex2d_fixed(FRAC_DIGITS){uvw = {F[0][0], F[0][1], F[0][2]}, color = color},
+			shape_vertex2d{uvw = {F[0][0], F[0][1], F[0][2]}, color = color},
 		) or_return
 		non_zero_append(
 			vertList,
-			shape_vertex2d_fixed(FRAC_DIGITS){uvw = {F[1][0], F[1][1], F[1][2]}, color = color},
+			shape_vertex2d{uvw = {F[1][0], F[1][1], F[1][2]}, color = color},
 		) or_return
 		non_zero_append(
 			vertList,
-			shape_vertex2d_fixed(FRAC_DIGITS){uvw = {F[2][0], F[2][1], F[2][2]}, color = color},
+			shape_vertex2d{uvw = {F[2][0], F[2][1], F[2][2]}, color = color},
 		) or_return
 		non_zero_append(
 			vertList,
-			shape_vertex2d_fixed(FRAC_DIGITS){uvw = {F[3][0], F[3][1], F[3][2]}, color = color},
+			shape_vertex2d{uvw = {F[3][0], F[3][1], F[3][2]}, color = color},
 		) or_return
 
-		vertList[start].pos = pts.start
-		vertList[start + 1].pos = pts.ctl0
-		vertList[start + 2].pos = pts.ctl1
-		vertList[start + 3].pos = pts.end
+		vertList[start].pos = linalg.Vector2f32{pts.start.x, pts.start.y}
+		vertList[start + 1].pos = linalg.Vector2f32{pts.ctl0.x, pts.ctl0.y}
+		vertList[start + 2].pos = linalg.Vector2f32{pts.ctl1.x, pts.ctl1.y}
+		vertList[start + 3].pos = linalg.Vector2f32{pts.end.x, pts.end.y}
 		//triangulate
 		vts: [4]linalg.Vector2f32 = {
-			{f32(fixed_bcd.to_f64(pts.start.x)), f32(fixed_bcd.to_f64(pts.start.y))},
-			{f32(fixed_bcd.to_f64(pts.ctl0.x)), f32(fixed_bcd.to_f64(pts.ctl0.y))},
-			{f32(fixed_bcd.to_f64(pts.ctl1.x)), f32(fixed_bcd.to_f64(pts.ctl1.y))},
-			{f32(fixed_bcd.to_f64(pts.end.x)), f32(fixed_bcd.to_f64(pts.end.y))},
+			vertList[start].pos,
+			vertList[start + 1].pos,
+			vertList[start + 2].pos,
+			vertList[start + 3].pos,
 		}
 
 		for i: u32 = 0; i < 4; i += 1 {
@@ -639,357 +563,100 @@ _Shapes_ComputeLine :: proc(
 	return nil
 }
 
-@(require_results)
-cvt_raw_shape_fixed_to_raw_shape :: proc(
-	raw64: raw_shape_fixed($FRAC_DIGITS),
-	allocator := context.allocator,
-) -> (
-	res: raw_shape,
-	err: runtime.Allocator_Error,
-) #optional_allocator_error {
-	res.vertices = utils_private.make_non_zeroed_slice(
-		[]shape_vertex2d,
-		len(raw64.vertices),
-		allocator,
-	) or_return
-	defer if err != nil do delete(res.vertices, allocator)
-
-	res.indices = utils_private.make_non_zeroed_slice(
-		[]u32,
-		len(raw64.indices),
-		allocator,
-	) or_return
-	defer if err != nil do delete(res.indices, allocator)
-
-	for v, i in raw64.vertices {
-		res.vertices[i].pos.x = f32(fixed_bcd.to_f64(v.pos.x))
-		res.vertices[i].pos.y = f32(fixed_bcd.to_f64(v.pos.y))
-
-		res.vertices[i].color = v.color
-		res.vertices[i].uvw = v.uvw
-	}
-
-	mem.copy_non_overlapping(
-		raw_data(res.indices),
-		raw_data(raw64.indices),
-		len(raw64.indices) * size_of(u32),
-	)
-	return
-}
-
-@(require_results)
-cvt_raw_shape_to_raw_shape_fixed :: proc(
-	raw: raw_shape,
-	$FRAC_DIGITS: int,
-	allocator := context.allocator,
-) -> (
-	res: raw_shape_fixed(FRAC_DIGITS),
-	err: runtime.Allocator_Error,
-) #optional_allocator_error {
-	res.vertices = utils_private.make_non_zeroed_slice(
-		[]shape_vertex2di64,
-		len(raw.vertices),
-		allocator,
-	) or_return
-
-	defer if err != nil do delete(res.vertices, allocator)
-	res.indices = utils_private.make_non_zeroed_slice([]u32, len(raw.indices), allocator) or_return
-	defer if err != nil do delete(res.indices, allocator)
-
-	for v, i in raw.vertices {
-		res.vertices[i].pos.x = fixed_bcd.from_f64(FRAC_DIGITS, f64(v.pos.x))
-		res.vertices[i].pos.y = fixed_bcd.from_f64(FRAC_DIGITS, f64(v.pos.y))
-
-		res.vertices[i].color = v.color
-		res.vertices[i].uvw = v.uvw
-	}
-
-	mem.copy_non_overlapping(
-		raw_data(res.indices),
-		raw_data(raw.indices),
-		len(res.indices) * size_of(u32),
-	)
-	return
-}
-
-@(require_results)
-cvt_shapes_to_shapes_fixed :: proc(
-	poly: shapes,
-	$FRAC_DIGITS: int,
-	allocator := context.allocator,
-) -> (
-	poly64: shapes_fixed(FRAC_DIGITS),
-	err: runtime.Allocator_Error,
-) #optional_allocator_error {
-	poly64 = shapes_fixed(FRAC_DIGITS) {
-		nodes = utils_private.make_non_zeroed_slice(
-			[]shape_node_fixed(FRAC_DIGITS),
-			len(poly.nodes),
-			allocator,
-		) or_return,
-	}
-	defer if err != nil {
-		delete(poly64.nodes, allocator)
-	}
-
-	for n, i in poly.nodes {
-		defer if err != nil { 	//(1)
-			for j in 0 ..< i {
-				for p in poly64.nodes[j].pts do delete(p, allocator)
-				delete(poly64.nodes[j].pts, allocator)
-				if poly64.nodes[j].curve_pts_ids != nil {
-					for p in poly64.nodes[j].curve_pts_ids do delete(p, allocator)
-					delete(poly64.nodes[j].curve_pts_ids, allocator)
-				}
-			}
-		}
-
-		poly64.nodes[i].pts = utils_private.make_non_zeroed_slice(
-			[][][2]fixed_bcd.BCD(FRAC_DIGITS),
-			len(n.pts),
-			allocator,
-		) or_return
-		defer if err != nil {
-			delete(poly64.nodes[i].pts, allocator)
-		}
-
-		for p, j in n.pts {
-			defer if err != nil {
-				for e in 0 ..< j {
-					delete(poly64.nodes[i].pts[e], allocator)
-				}
-			}
-			poly64.nodes[i].pts[j] = utils_private.make_non_zeroed_slice(
-				[][2]fixed_bcd.BCD(FRAC_DIGITS),
-				len(p),
-				allocator,
-			) or_return
-
-			for pp, e in p {
-				poly64.nodes[i].pts[j][e].x = fixed_bcd.from_f64(FRAC_DIGITS, f64(pp.x))
-				poly64.nodes[i].pts[j][e].y = fixed_bcd.from_f64(FRAC_DIGITS, f64(pp.y))
-			}
-		}
-
-		defer if err != nil { 	//(1)에서 현재 i pts는 지우지 않는다.
-			for p in poly64.nodes[i].pts do delete(p, allocator)
-		}
-
-		if n.curve_pts_ids != nil {
-			poly64.nodes[i].curve_pts_ids = utils_private.make_non_zeroed_slice(
-				[][]u32,
-				len(n.curve_pts_ids),
-				allocator,
-			) or_return
-			defer if err != nil {
-				delete(poly64.nodes[i].curve_pts_ids, allocator)
-			}
-
-			for p, j in n.curve_pts_ids {
-				defer if err != nil {
-					for e in 0 ..< j {
-						delete(poly64.nodes[i].curve_pts_ids[e], allocator)
-					}
-				}
-				poly64.nodes[i].curve_pts_ids[j] = utils_private.make_non_zeroed_slice(
-					[]u32,
-					len(p),
-					allocator,
-				) or_return
-				mem.copy_non_overlapping(
-					raw_data(poly64.nodes[i].curve_pts_ids[j]),
-					raw_data(p),
-					len(p) * size_of(u32),
-				)
-			}
-		} else {
-			poly64.nodes[i].curve_pts_ids = nil
-		}
-
-		poly64.nodes[i].is_closed = n.is_closed
-		poly64.nodes[i].thickness = n.thickness
-		poly64.nodes[i].color = n.color
-		poly64.nodes[i].stroke_color = n.stroke_color
-	}
-	return
-}
-
-@(require_results)
-cvt_shapes_fixed_to_shapes :: proc(
-	poly: shapes_fixed($FRAC_DIGITS),
-	allocator := context.allocator,
-) -> (
-	poly32: shapes,
-	err: runtime.Allocator_Error,
-) #optional_allocator_error {
-	poly32 = shapes {
-		nodes = utils_private.make_non_zeroed_slice(
-			[]shape_node,
-			len(poly.nodes),
-			allocator,
-		) or_return,
-	}
-	defer if err != nil {
-		delete(poly32.nodes, allocator)
-	}
-
-	for n, i in poly.nodes {
-		defer if err != nil {
-			for j in 0 ..< i {
-				for p in poly32.nodes[j].pts do delete(p, allocator)
-				delete(poly32.nodes[j].pts, allocator)
-				if poly32.nodes[j].curve_pts_ids != nil {
-					for p in poly32.nodes[j].curve_pts_ids do delete(p, allocator)
-					delete(poly32.nodes[j].curve_pts_ids, allocator)
-				}
-			}
-		}
-		poly32.nodes[i].pts = utils_private.make_non_zeroed_slice(
-			[][]linalg.Vector2f32,
-			len(n.pts),
-			allocator,
-		) or_return
-		defer if err != nil {
-			delete(poly32.nodes[i].pts, allocator)
-		}
-
-		for p, j in n.pts {
-			defer if err != nil {
-				for e in 0 ..< j {
-					delete(poly32.nodes[i].pts[e], allocator)
-				}
-			}
-			poly32.nodes[i].pts[j] = utils_private.make_non_zeroed_slice(
-				[]linalg.Vector2f32,
-				len(p),
-				allocator,
-			) or_return
-
-			for pp, e in p {
-				poly32.nodes[i].pts[j][e].x = f32(fixed_bcd.to_f64(pp.x))
-				poly32.nodes[i].pts[j][e].y = f32(fixed_bcd.to_f64(pp.y))
-			}
-		}
-
-		defer if err != nil {
-			for p in poly32.nodes[i].pts do delete(p, allocator)
-		}
-
-		if n.curve_pts_ids != nil {
-			poly32.nodes[i].curve_pts_ids = utils_private.make_non_zeroed_slice(
-				[][]u32,
-				len(n.curve_pts_ids),
-				allocator,
-			) or_return
-			defer if err != nil {
-				delete(poly32.nodes[i].curve_pts_ids, allocator)
-			}
-
-			for p, j in n.curve_pts_ids {
-				defer if err != nil {
-					for e in 0 ..< j {
-						delete(poly32.nodes[i].curve_pts_ids[e], allocator)
-					}
-				}
-				poly32.nodes[i].curve_pts_ids[j] = utils_private.make_non_zeroed_slice(
-					[]u32,
-					len(p),
-					allocator,
-				) or_return
-				mem.copy_non_overlapping(
-					raw_data(poly32.nodes[i].curve_pts_ids[j]),
-					raw_data(p),
-					len(p) * size_of(u32),
-				)
-			}
-		} else {
-			poly32.nodes[i].curve_pts_ids = nil
-		}
-
-		poly32.nodes[i].is_closed = n.is_closed
-		poly32.nodes[i].thickness = n.thickness
-		poly32.nodes[i].color = n.color
-		poly32.nodes[i].stroke_color = n.stroke_color
-	}
-	return
-}
-
-shapes_compute_polygon :: proc {
-	__shapes_compute_polygon,
-	__shapes_compute_polygon_explicit,
-}
-
-__shapes_compute_polygon_explicit :: proc(
-	poly: shapes,
-	$FRAC_DIGITS: int,
-	allocator := context.allocator,
-) -> (
-	res: raw_shape,
-	err: shape_error = nil,
-) {
-	poly64 := cvt_shapes_to_shapes_fixed(poly, FRAC_DIGITS, context.temp_allocator) or_return
-
-	res64 := shapes_compute_polygon_fixed(poly64, context.temp_allocator) or_return
-
-	res = cvt_raw_shape_fixed_to_raw_shape(res64, allocator) or_return
-	return
-}
-
-
-__shapes_compute_polygon :: proc(
+shapes_compute_polygon :: proc(
 	poly: shapes,
 	allocator := context.allocator,
 ) -> (
 	res: raw_shape,
 	err: shape_error = nil,
 ) {
-	return __shapes_compute_polygon_explicit(poly, fixed_bcd.MAX_FRAC_DIGITS, allocator)
-}
-
-shapes_compute_polygon_fixed :: proc(
-	poly: shapes_fixed($FRAC_DIGITS),
-	allocator := context.allocator,
-) -> (
-	res: raw_shape_fixed(FRAC_DIGITS),
-	err: shape_error = nil,
-) {
-	vertList: [dynamic]shape_vertex2d_fixed(FRAC_DIGITS) = make(
-		[dynamic]shape_vertex2d_fixed(FRAC_DIGITS),
-		context.temp_allocator,
-	)
+	vertList: [dynamic]shape_vertex2d = make([dynamic]shape_vertex2d, context.temp_allocator)
 	indList: [dynamic]u32 = make([dynamic]u32, context.temp_allocator)
 
 	shapes_compute_polygon_in :: proc(
-		vertList: ^[dynamic]shape_vertex2d_fixed($FRAC_DIGITS),
+		vertList: ^[dynamic]shape_vertex2d,
 		indList: ^[dynamic]u32,
-		poly: shapes_fixed(FRAC_DIGITS),
+		poly: shapes,
 	) -> (
 		err: shape_error = nil,
 	) {
-		non_curves := make([dynamic][][2]fixed_bcd.BCD(FRAC_DIGITS), context.temp_allocator)
-		non_curves2: [dynamic][dynamic][2]fixed_bcd.BCD(FRAC_DIGITS) = make(
-			[dynamic][dynamic][2]fixed_bcd.BCD(FRAC_DIGITS),
+		non_curves := make([dynamic][][2]f32, context.temp_allocator)
+		non_curves2: [dynamic][dynamic][2]f32 = make(
+			[dynamic][dynamic][2]f32,
 			context.temp_allocator,
 		)
-		curves2: [dynamic][dynamic]curve_struct_fixed(FRAC_DIGITS) = make(
-			[dynamic][dynamic]curve_struct_fixed(FRAC_DIGITS),
+		curves2: [dynamic][dynamic]curve_struct_float(f32) = make(
+			[dynamic][dynamic]curve_struct_float(f32),
 			context.temp_allocator,
 		)
-		insert_ar := make([dynamic][2]fixed_bcd.BCD(FRAC_DIGITS), context.temp_allocator)
+		insert_ar := make([dynamic][2]f32, context.temp_allocator)
+
+		SubdivCurveAndInjectAt :: proc(
+			curves_n: ^[dynamic]curve_struct_float(f32),
+			insert_idx: int,
+			cur: ^curve_struct_float(f32),
+			src: curve_struct_float(f32),
+			t: f32,
+		) -> (
+			mid: [2]f32,
+			c0: [2]f32,
+			c1: [2]f32,
+			err: shape_error = nil,
+		) {
+			if src.type == .Quadratic {
+				p0, p1_, p2_ := linalg_ex.SubdivQuadraticBezier(
+					[3][2]f32{src.start, src.ctl0, src.end},
+					t,
+				)
+				cur.ctl0, cur.end = p0, p1_
+				mid, c0 = p1_, p2_
+				utils_private.non_zero_inject_at_elem(
+					curves_n,
+					insert_idx,
+					curve_struct_float(f32) {
+						start = p1_,
+						ctl0 = p2_,
+						end = cur.end,
+						type = .Quadratic,
+					},
+				) or_return
+			} else {
+				p0, p1_, p2_, p3_, p4_ := linalg_ex.SubdivCubicBezier(
+					[4][2]f32{src.start, src.ctl0, src.ctl1, src.end},
+					t,
+				)
+				cur.ctl0, cur.ctl1, cur.end = p0, p1_, p2_
+				mid, c0, c1 = p2_, p3_, p4_
+				utils_private.non_zero_inject_at_elem(
+					curves_n,
+					insert_idx,
+					curve_struct_float(f32) {
+						start = p2_,
+						ctl0 = p3_,
+						ctl1 = p4_,
+						end = cur.end,
+						type = .Unknown,
+					},
+				) or_return
+			}
+			return
+		}
+
+		to_pt :: #force_inline proc "contextless" (p: linalg.Vector2f32) -> [2]f32 {return[2]f32 {
+				p.x,
+				p.y,
+			}}
 
 		for node, nidx in poly.nodes {
-			if node.color.a > 0 { 	//TODO Handle If is_close == false
+			if node.color.a > 0 {
 				non_zero_resize_dynamic_array(&non_curves2, len(node.pts)) or_return
 				non_zero_resize_dynamic_array(&curves2, len(node.pts)) or_return
 
 				for i in 0 ..< len(node.pts) {
 					if non_curves2[i] == nil {
-						non_curves2[i] = make(
-							[dynamic][2]fixed_bcd.BCD(FRAC_DIGITS),
-							context.temp_allocator,
-						) or_return
+						non_curves2[i] = make([dynamic][2]f32, context.temp_allocator) or_return
 						curves2[i] = make(
-							[dynamic]curve_struct_fixed(FRAC_DIGITS),
+							[dynamic]curve_struct_float(f32),
 							context.temp_allocator,
 						) or_return
 					} else {
@@ -997,45 +664,43 @@ shapes_compute_polygon_fixed :: proc(
 						non_zero_resize_dynamic_array(&curves2[i], 0) or_return
 					}
 				}
-				for np, npi in node.pts {
-					curve_idx := 0
-					for pt, i in np {
-						if node.curve_pts_ids != nil &&
-						   curve_idx < len(node.curve_pts_ids[npi]) &&
-						   node.curve_pts_ids[npi][curve_idx] == u32(i) {
 
-							if curve_idx + 1 < len(node.curve_pts_ids[npi]) &&
-							   node.curve_pts_ids[npi][curve_idx + 1] == u32(i) {
+				for np, npi in node.pts {
+					for pt_v, i in np {
+						pt := to_pt(pt_v)
+						if node.is_curves != nil &&
+						   npi < len(node.is_curves) &&
+						   i < len(node.is_curves[npi]) &&
+						   node.is_curves[npi][i] {
+							if i + 1 < len(node.is_curves[npi]) && node.is_curves[npi][i + 1] {
 								non_zero_append(
 									&curves2[npi],
-									curve_struct_fixed(FRAC_DIGITS) {
-										start = np[i - 1],
-										ctl0 = np[i],
-										ctl1 = np[i + 1],
-										end = np[(i + 2) % len(np)],
+									curve_struct_float(f32) {
+										start = to_pt(np[i - 1]),
+										ctl0 = pt,
+										ctl1 = to_pt(np[i + 1]),
+										end = to_pt(np[(i + 2) % len(np)]),
 										type = .Unknown,
 									},
 								) or_return
-								curve_idx += 2
-
 							} else {
 								non_zero_append(
 									&curves2[npi],
-									curve_struct_fixed(FRAC_DIGITS) {
-										start = np[i - 1],
-										ctl0 = np[i],
-										end = np[(i + 1) % len(np)],
+									curve_struct_float(f32) {
+										start = to_pt(np[i - 1]),
+										ctl0 = pt,
+										end = to_pt(np[(i + 1) % len(np)]),
 										type = .Quadratic,
 									},
 								) or_return
-								curve_idx += 1
 							}
 						} else {
 							non_zero_append(&non_curves2[npi], pt) or_return
 						}
 					}
 				}
-				// Loop subdivision: subdivide cubic Loop curves per polygon
+
+				// Loop subdivision (float)
 				for npi in 0 ..< len(curves2) {
 					curves_npi := &curves2[npi]
 					for i := 0; i < len(curves_npi); i += 1 {
@@ -1048,161 +713,143 @@ shapes_compute_polygon_fixed :: proc(
 								c.end,
 							) or_return
 							if curveType == .Loop {
-								disc := 4 * d0.i * d2.i - 3 * d1.i * d1.i
-								t1 := fixed_bcd.BCD(FRAC_DIGITS) {
-									i = utils_private.sqrt_i128(
-										disc * fixed_bcd._SCALE_TABLE[FRAC_DIGITS - 1],
-									),
+								disc := 4 * d0 * d2 - 3 * d1 * d1
+								// Due to float error, disc can be a tiny negative even for Loop.
+								if disc < 0 {
+									if disc > -math.F32_EPSILON * 10.0 do disc = 0
+									else do continue
 								}
-
-								ls := fixed_bcd.sub(d1, t1)
-								two := fixed_bcd.init_const(2, 0, 0, FRAC_DIGITS)
-								lt := fixed_bcd.mul(two, d0)
-								ms := fixed_bcd.add(d1, t1)
+								t1 := math.sqrt_f32(disc)
+								ls := d1 - t1
+								lt := 2 * d0
+								ms := d1 + t1
 								mt := lt
 
-								subdiv_at: fixed_bcd.BCD(FRAC_DIGITS)
-								if lt.i > 0 ? (0 < ls.i && ls.i < lt.i) : (0 > ls.i && ls.i > lt.i) {
-									subdiv_at = fixed_bcd.div(ls, lt)
-								} else if mt.i > 0 ? (0 < ms.i && ms.i < mt.i) : (0 > ms.i && ms.i > mt.i) {
-									subdiv_at = fixed_bcd.div(ms, mt)
+								subdiv_at: f32
+								if lt > 0 ? (0 < ls && ls < lt) : (0 > ls && ls > lt) {
+									subdiv_at = ls / lt
+								} else if mt > 0 ? (0 < ms && ms < mt) : (0 > ms && ms > mt) {
+									subdiv_at = ms / mt
 								} else {
 									continue
 								}
 
-								pt01, pt12, pt23, pt012, pt123, pt0123 :=
-									linalg_ex.SubdivCubicBezier(
-										[4][2]fixed_bcd.BCD(FRAC_DIGITS) {
-											c.start,
-											c.ctl0,
-											c.ctl1,
-											c.end,
-										},
-										subdiv_at,
-									)
-								curves_npi[i] = curve_struct_fixed(FRAC_DIGITS) {
-										start = c.start,
-										ctl0  = pt01,
-										ctl1  = pt012,
-										end   = pt0123,
-										type  = .Unknown,
-									}
-								utils_private.non_zero_inject_at_elem(
+								SubdivCurveAndInjectAt(
 									curves_npi,
 									i + 1,
-									curve_struct_fixed(FRAC_DIGITS) {
-										start = pt0123,
-										ctl0 = pt123,
-										ctl1 = pt23,
-										end = c.end,
-										type = .Unknown,
-									},
+									&curves_npi[i],
+									c,
+									subdiv_at,
 								) or_return
-								i += 1 //add extra 1
+								i += 1
 							}
 						}
 					}
-				}
-				// Overlap check: subdivide overlapping curves across all polygons
-				for {
-					has_overlap := false
-					for npi in 0 ..< len(curves2) {
-						curves_i := &curves2[npi]
-						for i := 0; i < len(curves_i); i += 1 {
-							for npj in 0 ..< len(curves2) {
-								curves_j := &curves2[npj]
-								for j := 0; j < len(curves_j); j += 1 {
-									if npi == npj && i == j do continue
-									cur := curves_i[i]
-									cur2 := curves_j[j]
-									poly1 :=
-										cur.type == .Quadratic ? [][2]fixed_bcd.BCD(FRAC_DIGITS){cur.start, cur.ctl0, cur.end} : [][2]fixed_bcd.BCD(FRAC_DIGITS){cur.start, cur.ctl0, cur.ctl1, cur.end}
-									poly2 :=
-										cur2.type == .Quadratic ? [][2]fixed_bcd.BCD(FRAC_DIGITS){cur2.start, cur2.ctl0, cur2.end} : [][2]fixed_bcd.BCD(FRAC_DIGITS){cur2.start, cur2.ctl0, cur2.ctl1, cur2.end}
-									if !linalg_ex.PolygonOverlapsPolygon(poly1, poly2) do continue
-									subdiv_t: fixed_bcd.BCD(FRAC_DIGITS)
-									subdiv_t_: fixed_bcd.BCD(FRAC_DIGITS)
-									if cur2.type == .Quadratic {
-										_, subdiv_t, subdiv_t_ = linalg_ex.PointInLine(
-											cur2.ctl0,
-											cur.start,
-											cur.end,
-										)
-									} else {
-										half_pt := fixed_bcd.init_const(0, 5, 1, FRAC_DIGITS)
-										half2 := [2]fixed_bcd.BCD(FRAC_DIGITS){half_pt, half_pt}
-										_, subdiv_t, subdiv_t_ = linalg_ex.PointInLine(
-											linalg_ex.lerp_fixed(cur2.ctl0, cur2.ctl1, half2),
-											cur.start,
-											cur.end,
-										)
-									}
-									if cur.type == .Quadratic {
-										pt01, pt12, pt012 := linalg_ex.SubdivQuadraticBezier(
-											[3][2]fixed_bcd.BCD(FRAC_DIGITS) {
-												cur.start,
-												cur.ctl0,
-												cur.end,
-											},
-											fixed_bcd.div(subdiv_t, subdiv_t_),
-										)
-										curves_i[i] = curve_struct_fixed(FRAC_DIGITS) {
-											start = cur.start,
-											ctl0  = pt01,
-											end   = pt012,
-											type  = .Quadratic,
-										}
-										utils_private.non_zero_inject_at_elem(
-											curves_i,
-											i + 1,
-											curve_struct_fixed(FRAC_DIGITS) {
-												start = pt012,
-												ctl0 = pt12,
-												end = cur.end,
-												type = .Quadratic,
-											},
-										) or_return
-									} else {
-										pt01, pt12, pt23, pt012, pt123, pt0123 :=
-											linalg_ex.SubdivCubicBezier(
-												[4][2]fixed_bcd.BCD(FRAC_DIGITS) {
-													cur.start,
-													cur.ctl0,
-													cur.ctl1,
-													cur.end,
-												},
-												fixed_bcd.div(subdiv_t, subdiv_t_),
-											)
-										curves_i[i] = curve_struct_fixed(FRAC_DIGITS) {
-												start = cur.start,
-												ctl0  = pt01,
-												ctl1  = pt012,
-												end   = pt0123,
-												type  = .Unknown,
-											}
-										utils_private.non_zero_inject_at_elem(
-											curves_i,
-											i + 1,
-											curve_struct_fixed(FRAC_DIGITS) {
-												start = pt0123,
-												ctl0 = pt123,
-												ctl1 = pt23,
-												end = cur.end,
-												type = .Unknown,
-											},
-										) or_return
-									}
-									if i < j do j += 1
-									i += 1
-									has_overlap = true
-								}
-							}
-						}
-					}
-					if !has_overlap do break
 				}
 
-				// Insert curve control points into polygon boundaries (per-polygon)
+				// Overlap check (float)
+				overlap_skip2: [][dynamic]bool = utils_private.make_non_zeroed_slice(
+					[][dynamic]bool,
+					len(curves2),
+					context.temp_allocator,
+				) or_return
+				for &ov in overlap_skip2 do ov = make([dynamic]bool, context.temp_allocator) or_return
+
+				for npi in 0 ..< len(curves2) {
+					curves_n := &curves2[npi]
+					skip_n := &overlap_skip2[npi]
+					non_zero_resize(skip_n, len(curves_n)) or_return
+
+					for i := 0; i < len(curves_n); i += 1 {
+						for j := i + 1; j < len(curves_n); j += 1 {
+							if skip_n[i] || skip_n[j] do continue
+							cur := curves_n[i]
+							cur2 := curves_n[j]
+
+							k1, ip1 := linalg_ex.LinesIntersect2(
+								cur2.start,
+								cur2.end,
+								cur.start,
+								cur.ctl0,
+								true,
+							)
+							if k1 == .intersect {
+								_, t := linalg_ex.PointInLine(ip1, cur2.start, cur2.end)
+								non_zero_resize(skip_n, len(skip_n) + 1) or_return
+								skip_n[i], skip_n[j], skip_n[j + 1] = true, true, true
+
+								j += 1
+								mid, c0, c1 := SubdivCurveAndInjectAt(
+									curves_n,
+									j,
+									&cur2,
+									cur2,
+									t,
+								) or_return
+
+								// opp
+								k2, ip2 := linalg_ex.LinesIntersect2(
+									mid,
+									cur2.end,
+									cur.type == .Quadratic ? cur.ctl0 : cur.ctl1,
+									cur.end,
+									true,
+								)
+								if k2 != .intersect do continue
+								non_zero_resize(skip_n, len(skip_n) + 1) or_return
+								_, t2 := linalg_ex.PointInLine(ip2, mid, cur2.end)
+
+								if cur2.type == .Quadratic {
+									skip_n[j + 1] = true
+									SubdivCurveAndInjectAt(
+										curves_n,
+										j + 1,
+										&curves_n[j],
+										curve_struct_float(f32) {
+											start = mid,
+											ctl0 = c0,
+											end = cur2.end,
+											type = .Quadratic,
+										},
+										t2,
+									) or_return
+									j += 1
+								} else {
+									SubdivCurveAndInjectAt(
+										curves_n,
+										j + 1,
+										&curves_n[j],
+										curve_struct_float(f32) {
+											start = mid,
+											ctl0 = c0,
+											ctl1 = c1,
+											end = cur2.end,
+											type = .Unknown,
+										},
+										t2,
+									) or_return
+								}
+							} else {
+								k2, ip2 := linalg_ex.LinesIntersect2(
+									cur2.start,
+									cur2.end,
+									cur.type == .Quadratic ? cur.ctl0 : cur.ctl1,
+									cur.end,
+									true,
+								)
+								if k2 != .intersect do continue
+								non_zero_resize(skip_n, len(skip_n) + 1) or_return
+								skip_n[i], skip_n[j], skip_n[j + 1] = true, true, true
+								j += 1
+
+								_, t := linalg_ex.PointInLine(ip2, cur2.start, cur2.end)
+								SubdivCurveAndInjectAt(curves_n, j, &cur2, cur2, t) or_return
+							}
+						}
+					}
+				}
+
+				// Insert curve control points into polygon boundaries (float)
 				for npi in 0 ..< len(node.pts) {
 					non_curves_npi := &non_curves2[npi]
 					curves_npi := curves2[npi]
@@ -1228,7 +875,6 @@ shapes_compute_polygon_fixed :: proc(
 							for ; j < len(curves_npi) && non_next != curves_npi[j].start; j += 1 {}
 							non_zero_resize_dynamic_array(&insert_ar, 0) or_return
 
-
 							if ok :=
 								   linalg_ex.PointInPolygon(
 									   curves_npi[curve_idx].ctl0,
@@ -1252,13 +898,11 @@ shapes_compute_polygon_fixed :: proc(
 							}
 							for e := curve_idx + 1; e < j; e += 1 {
 								non_zero_append(&insert_ar, curves_npi[e].start) or_return
-
 								if ok :=
 									   linalg_ex.PointInPolygon(curves_npi[e].ctl0, poly_pts) ==
 									   .Inside; invent_b ? !ok : ok {
 									non_zero_append(&insert_ar, curves_npi[e].ctl0) or_return
 								}
-
 								if curves_npi[e].type != .Quadratic {
 									if ok :=
 										   linalg_ex.PointInPolygon(
@@ -1280,18 +924,17 @@ shapes_compute_polygon_fixed :: proc(
 
 							if j >= len(curves_npi) do break
 							curve_idx = j
-
 							i = next + len(insert_ar)
 						} else {
 							i += 1
 						}
 					}
 				}
+
 				non_zero_resize_dynamic_array(&non_curves, len(non_curves2)) or_return
-				for npi in 0 ..< len(non_curves2) {
-					non_curves[npi] = non_curves2[npi][:]
-				}
-				indices, tri_err := triangulation.TrianguatePolygons_Fixed(
+				for npi in 0 ..< len(non_curves2) do non_curves[npi] = non_curves2[npi][:]
+
+				indices, tri_err := triangulation.TrianguatePolygons(
 					non_curves[:],
 					context.temp_allocator,
 				)
@@ -1309,9 +952,9 @@ shapes_compute_polygon_fixed :: proc(
 					for vv in v {
 						non_zero_append(
 							vertList,
-							shape_vertex2d_fixed(FRAC_DIGITS) {
-								pos   = vv,
-								uvw   = linalg.Vector3f32{0.0, 0.0, -100.0}, //-100 check this is not curve
+							shape_vertex2d {
+								pos = linalg.Vector2f32{vv.x, vv.y},
+								uvw = {0.0, 0.0, -100.0},
 								color = poly.nodes[i].color,
 							},
 						) or_return
@@ -1323,15 +966,30 @@ shapes_compute_polygon_fixed :: proc(
 						_Shapes_ComputeLine(vertList, indList, poly.nodes[i].color, cc) or_return
 					}
 				}
-				for &idx in indList[len(indices):] {
-					idx += auto_cast len(indices)
-				}
+				for &idx in indList[len(indices):] do idx += auto_cast len(indices)
 			}
 		}
 		return
 	}
 
 	shapes_compute_polygon_in(&vertList, &indList, poly) or_return
+
+	res.vertices = utils_private.make_non_zeroed_slice(
+		[]shape_vertex2d,
+		len(vertList),
+		allocator,
+	) or_return
+	res.indices = utils_private.make_non_zeroed_slice([]u32, len(indList), allocator) or_return
+	mem.copy_non_overlapping(
+		raw_data(res.vertices),
+		raw_data(vertList[:]),
+		len(vertList) * size_of(shape_vertex2d),
+	)
+	mem.copy_non_overlapping(
+		raw_data(res.indices),
+		raw_data(indList[:]),
+		len(indList) * size_of(u32),
+	)
 	return
 }
 
@@ -1345,3 +1003,4 @@ poly_transform_matrix :: proc "contextless" (inout_poly: ^shapes, F: linalg.Matr
 		}
 	}
 }
+

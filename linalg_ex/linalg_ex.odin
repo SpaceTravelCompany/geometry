@@ -441,7 +441,6 @@ PointInLine :: proc "contextless" (
 ) -> (
 	bool,
 	T,
-	T,
 ) where intrinsics.type_is_float(T) ||
 	intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
 	intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
@@ -449,23 +448,18 @@ PointInLine :: proc "contextless" (
 		A := (l0.y - l1.y) / (l0.x - l1.x)
 		B := l0.y - A * l0.x
 		pY := A * p.x + B
-		EP :: epsilon(T) * 10.0
+
+		EP: T = epsilon(T) * T(10.0)
 		res := p.y >= pY - EP && p.y <= pY + EP
-		t: T = 0.0
-		t_: T = 1.0
-		if res {
-			minX := min(l0.x, l1.x)
-			maxX := max(l0.x, l1.x)
-			t = (p.x - minX)
-			t_ = (maxX - minX) // always positive
-		}
+		minX := min(l0.x, l1.x)
+		maxX := max(l0.x, l1.x)
+
 		return res &&
 			p.x >= min(l0.x, l1.x) &&
 			p.x <= max(l0.x, l1.x) &&
 			p.y >= min(l0.y, l1.y) &&
 			p.y <= max(l0.y, l1.y),
-			t,
-			t_
+			(p.x - minX) / (maxX - minX)
 	} else {
 		when intrinsics.type_is_specialization_of(T, fixed.Fixed) {
 			add :: fixed.add
@@ -488,23 +482,16 @@ PointInLine :: proc "contextless" (
 		A: T = div(sub(l0.y, l1.y), sub(l0.x, l1.x))
 		B: T = sub(l0.y, mul(A, l0.x))
 		pY: T = add(mul(A, p.x), B)
-		t: T = {}
-		t_: T
-		if p.y.i == pY.i {
-			minX: T = min_fixed(l0.x, l1.x)
-			maxX: T = max_fixed(l0.x, l1.x)
-			t = sub(p.x, minX)
-			t_ = sub(maxX, minX) // always positive
-		} else {
-			t_ = one_T
-		}
-		return p.y.i == pY.i &&
+		minX: T = min_fixed(l0.x, l1.x)
+		maxX: T = max_fixed(l0.x, l1.x)
+
+		res :=
+			p.y.i == pY.i &&
 			p.x.i >= min_fixed(l0.x, l1.x).i &&
 			p.x.i <= max_fixed(l0.x, l1.x).i &&
 			p.y.i >= min_fixed(l0.y, l1.y).i &&
-			p.y.i <= max_fixed(l0.y, l1.y).i,
-			t,
-			t_
+			p.y.i <= max_fixed(l0.y, l1.y).i
+		return res, div(sub(p.x, minX), sub(maxX, minX))
 	}
 }
 
@@ -546,7 +533,7 @@ SubdivQuadraticBezier :: proc "contextless" (
 	pts: [3][2]$T,
 	subdiv: T,
 ) -> (
-	pt01, pt12, pt012: [2]T,
+	pt01, pt012, pt12: [2]T,
 ) where intrinsics.type_is_float(T) ||
 	intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
 	intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
@@ -567,26 +554,29 @@ SubdivCubicBezier :: proc "contextless" (
 	pts: [4][2]$T,
 	subdiv: T,
 ) -> (
-	pt01, pt12, pt23, pt012, pt123, pt0123: [2]T,
+	c0, c1, m, d0, d1: [2]T,
 ) where intrinsics.type_is_float(T) ||
 	intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
 	intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
 	when intrinsics.type_is_float(T) {
-		pt01 = linalg.lerp(pts[0], pts[1], subdiv)
-		pt12 = linalg.lerp(pts[1], pts[2], subdiv)
-		pt23 = linalg.lerp(pts[2], pts[3], subdiv)
-		pt012 = linalg.lerp(pt01, pt12, subdiv)
-		pt123 = linalg.lerp(pt12, pt23, subdiv)
-		pt0123 = linalg.lerp(pt012, pt123, subdiv)
+		subdiv2 := subdiv
+		lerp_ :: linalg.lerp
 	} else {
 		subdiv2 := splat_2_fixed(subdiv)
-		pt01 = lerp_fixed(pts[0], pts[1], subdiv2)
-		pt12 = lerp_fixed(pts[1], pts[2], subdiv2)
-		pt23 = lerp_fixed(pts[2], pts[3], subdiv2)
-		pt012 = lerp_fixed(pt01, pt12, subdiv2)
-		pt123 = lerp_fixed(pt12, pt23, subdiv2)
-		pt0123 = lerp_fixed(pt012, pt123, subdiv2)
+		lerp_ :: lerp_fixed
 	}
+	p01 := lerp_(pts[0], pts[1], subdiv2)
+	p12 := lerp_(pts[1], pts[2], subdiv2)
+	p23 := lerp_(pts[2], pts[3], subdiv2)
+
+	p012 := lerp_(p01, p12, subdiv2)
+	p123 := lerp_(p12, p23, subdiv2)
+
+	c0 = p01
+	c1 = p012
+	m = lerp_(p012, p123, subdiv2)
+	d0 = p123
+	d1 = p23
 	return
 }
 
@@ -1368,7 +1358,7 @@ round_rect_line_init :: proc "contextless" (
 	_radius: f32,
 ) -> (
 	pts: [16]linalg.Vector2f32,
-	curve_pts_ids: [8]u32,
+	is_curves: [16]bool,
 ) {
 	r := _radius
 	// Clamp radius to fit within rect
@@ -1411,7 +1401,24 @@ round_rect_line_init :: proc "contextless" (
 		linalg.Vector2f32{_rect.right - r + tt, _rect.top},
 		// Top line - counter-clockwise: from right to left
 		linalg.Vector2f32{_rect.right - r, _rect.top},
-	}, [8]u32{1, 2, 5, 6, 9, 10, 13, 14}
+	}, [16]bool {
+		false,
+		true,
+		true,
+		false,
+		false,
+		true,
+		true,
+		false,
+		false,
+		true,
+		true,
+		false,
+		false,
+		true,
+		true,
+		false,
+	}
 }
 
 circle_cubic_init :: proc "contextless" (
@@ -1419,7 +1426,7 @@ circle_cubic_init :: proc "contextless" (
 	_r: f32,
 ) -> (
 	pts: [12]linalg.Vector2f32,
-	curve_pts_ids: [8]u32,
+	is_curves: [12]bool,
 ) {
 	t: f32 = (4.0 / 3.0) * math.tan_f32(math.PI / 8.0)
 	tt := t * _r
@@ -1436,7 +1443,7 @@ circle_cubic_init :: proc "contextless" (
 		linalg.Vector2f32{_center.x, _center.y + _r},
 		linalg.Vector2f32{_center.x - tt, _center.y + _r},
 		linalg.Vector2f32{_center.x - _r, _center.y + tt},
-	}, [8]u32{1, 2, 4, 5, 7, 8, 10, 11}
+	}, [12]bool{false, true, true, false, true, true, false, true, true, false, true, true}
 }
 
 ellipse_cubic_init :: proc "contextless" (
@@ -1444,7 +1451,7 @@ ellipse_cubic_init :: proc "contextless" (
 	_rxy: linalg.Vector2f32,
 ) -> (
 	pts: [12]linalg.Vector2f32,
-	curve_pts_ids: [8]u32,
+	is_curves: [12]bool,
 ) {
 	t: f32 = (4.0 / 3.0) * math.tan_f32(math.PI / 8.0)
 	ttx := t * _rxy.x
@@ -1462,7 +1469,7 @@ ellipse_cubic_init :: proc "contextless" (
 		linalg.Vector2f32{_center.x, _center.y + _rxy.y},
 		linalg.Vector2f32{_center.x - ttx, _center.y + _rxy.y},
 		linalg.Vector2f32{_center.x - _rxy.x, _center.y + tty},
-	}, [8]u32{1, 2, 4, 5, 7, 8, 10, 11}
+	}, [12]bool{false, true, true, false, true, true, false, true, true, false, true, true}
 }
 
 //(p2.x - p1.x) * (p3.y - p1.y) - (p2.y - p1.y) * (p3.x - p1.x) == (p2.x - p1.x) * (p3.y - p2.y) - (p2.y - p1.y) * (p3.x - p2.x)

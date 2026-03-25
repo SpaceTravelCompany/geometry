@@ -2801,16 +2801,16 @@ BooleanOpCurve_Fixed :: proc(
 	subjects: [][][2]fixed_bcd.BCD(FRAC_DIGITS),
 	clips: [][][2]fixed_bcd.BCD(FRAC_DIGITS),
 	opens: [][][2]fixed_bcd.BCD(FRAC_DIGITS),
-	subjects_curve_ids: [][]u32,
-	clips_curve_ids: [][]u32,
-	opens_curve_ids: [][]u32,
+	subjects_is_curves: [][]bool,
+	clips_is_curves: [][]bool,
+	opens_is_curves: [][]bool,
 	fill_rule: FillRule = .Positive,
 	allocator := context.allocator,
 ) -> (
 	res: [][][2]fixed_bcd.BCD(FRAC_DIGITS),
 	res_open: [][][2]fixed_bcd.BCD(FRAC_DIGITS),
-	res_curve_ids: [][]u32,
-	res_open_curve_ids: [][]u32,
+	res_is_curves: [][]bool,
+	res_open_is_curves: [][]bool,
 	err: Clipper_Error,
 ) {
 	ctx := Context(FRAC_DIGITS) {
@@ -3084,16 +3084,16 @@ BooleanOpCurve :: proc(
 	subjects: [][][2]T,
 	clips: [][][2]T,
 	opens: [][][2]T,
-	subjects_curve_ids: [][]u32,
-	clips_curve_ids: [][]u32,
-	opens_curve_ids: [][]u32,
+	subjects_is_curves: [][]bool,
+	clips_is_curves: [][]bool,
+	opens_is_curves: [][]bool,
 	fill_rule: FillRule = .Positive,
 	allocator := context.allocator,
 ) -> (
 	res: [][][2]T,
 	res_open: [][][2]T,
-	res_curve_ids: [][]u32,
-	res_open_curve_ids: [][]u32,
+	res_is_curves: [][]bool,
+	res_open_is_curves: [][]bool,
 	err: Clipper_Error,
 ) where intrinsics.type_is_float(T) {
 	FRAC :: fixed_bcd.MAX_FRAC_DIGITS
@@ -3103,15 +3103,15 @@ BooleanOpCurve :: proc(
 
 	res_bcd: [][][2]fixed_bcd.BCD(FRAC_DIGITS)
 	res_open_bcd: [][][2]fixed_bcd.BCD(FRAC_DIGITS)
-	res_bcd, res_open_bcd, res_curve_ids, res_open_curve_ids = BooleanOpCurve_Fixed(
+	res_bcd, res_open_bcd, res_is_curves, res_open_is_curves = BooleanOpCurve_Fixed(
 		clip_type,
 		T,
 		sub_bcd,
 		clip_bcd,
 		open_bcd,
-		subjects_curve_ids,
-		clips_curve_ids,
-		opens_curve_ids,
+		subjects_is_curves,
+		clips_is_curves,
+		opens_is_curves,
 		fill_rule,
 		context.temp_allocator,
 	) or_return

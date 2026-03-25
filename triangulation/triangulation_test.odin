@@ -1,31 +1,31 @@
 package triangulation
 
+import "core:math/fixed"
 import "core:testing"
 import "shared:utils_private"
-import "shared:utils_private/fixed_bcd"
 
-@(private = "file")
-DEF_FRAC_DIGITS :: fixed_bcd.MAX_FRAC_DIGITS
 
 @(private)
-_make_square_path_bcd :: proc(
-	x0, y0, size: fixed_bcd.BCD($FRAC_DIGITS),
+_make_square_path :: proc(
+	x0, y0, size: FixedDef,
 	invent := false,
 	allocator := context.allocator,
-) -> [][2]fixed_bcd.BCD(FRAC_DIGITS) {
-	result := utils_private.make_non_zeroed_slice([][2]fixed_bcd.BCD(FRAC_DIGITS), 4, allocator)
-	two := fixed_bcd.init_const(2, 0, 0, FRAC_DIGITS)
-	half := fixed_bcd.div(size, two)
+) -> [][2]FixedDef {
+	result := utils_private.make_non_zeroed_slice([][2]FixedDef, 4, allocator)
+	two: FixedDef = FixedDef {
+		i = 2 << FixedDef.Fraction_Width,
+	}
+	half := fixed.div(size, two)
 	if !invent {
-		result[0] = {fixed_bcd.add(x0, half), fixed_bcd.add(y0, half)}
-		result[1] = {fixed_bcd.sub(x0, half), fixed_bcd.add(y0, half)}
-		result[2] = {fixed_bcd.sub(x0, half), fixed_bcd.sub(y0, half)}
-		result[3] = {fixed_bcd.add(x0, half), fixed_bcd.sub(y0, half)}
+		result[0] = {fixed.add(x0, half), fixed.add(y0, half)}
+		result[1] = {fixed.sub(x0, half), fixed.add(y0, half)}
+		result[2] = {fixed.sub(x0, half), fixed.sub(y0, half)}
+		result[3] = {fixed.add(x0, half), fixed.sub(y0, half)}
 	} else {
-		result[0] = {fixed_bcd.sub(x0, half), fixed_bcd.sub(y0, half)}
-		result[1] = {fixed_bcd.add(x0, half), fixed_bcd.sub(y0, half)}
-		result[2] = {fixed_bcd.add(x0, half), fixed_bcd.add(y0, half)}
-		result[3] = {fixed_bcd.sub(x0, half), fixed_bcd.add(y0, half)}
+		result[0] = {fixed.sub(x0, half), fixed.sub(y0, half)}
+		result[1] = {fixed.add(x0, half), fixed.sub(y0, half)}
+		result[2] = {fixed.add(x0, half), fixed.add(y0, half)}
+		result[3] = {fixed.sub(x0, half), fixed.add(y0, half)}
 	}
 	return result
 }
@@ -33,21 +33,32 @@ _make_square_path_bcd :: proc(
 
 @(test)
 test_triangulation_2square :: proc(t: ^testing.T) {
-	x0 := fixed_bcd.init_const(2, 0, 0, DEF_FRAC_DIGITS)
-	y0 := fixed_bcd.init_const(0, 0, 0, DEF_FRAC_DIGITS)
-	size := fixed_bcd.init_const(100, 0, 0, DEF_FRAC_DIGITS)
+	x0 := FixedDef {
+		i = 2 << FixedDef.Fraction_Width,
+	}
+	y0 := FixedDef {
+		i = 0,
+	}
+	size := FixedDef {
+		i = 100 << FixedDef.Fraction_Width,
+	}
+	x1 := FixedDef {
+		i = 25 << FixedDef.Fraction_Width,
+	}
+	y1 := FixedDef {
+		i = -25 << FixedDef.Fraction_Width,
+	}
+	size2 := FixedDef {
+		i = 50 << FixedDef.Fraction_Width,
+	}
 
-	x1 := fixed_bcd.init_const(25, 0, 0, DEF_FRAC_DIGITS)
-	y1 := fixed_bcd.init_const(-25, 0, 0, DEF_FRAC_DIGITS)
-	size2 := fixed_bcd.init_const(50, 0, 0, DEF_FRAC_DIGITS)
-
-	square := _make_square_path_bcd(x0, y0, size)
+	square := _make_square_path(x0, y0, size)
 	defer delete(square)
 
-	square2 := _make_square_path_bcd(x1, y1, size2)
+	square2 := _make_square_path(x1, y1, size2)
 	defer delete(square2)
 
-	poly := [][][2]fixed_bcd.BCD(DEF_FRAC_DIGITS){square, square2}
+	poly := [][][2]FixedDef{square, square2}
 	indices, err := TrianguatePolygons_Fixed(poly)
 	defer delete(indices)
 

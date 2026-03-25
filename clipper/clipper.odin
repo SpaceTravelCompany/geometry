@@ -410,11 +410,6 @@ IsHorizontal :: proc "contextless" (e: ^Active) -> bool {
 
 @(private = "file")
 GetDx :: proc "contextless" (pt1, pt2: [2]FixedDef) -> FixedDef {
-	context = runtime.Context {
-		allocator      = runtime.panic_allocator(),
-		temp_allocator = runtime.panic_allocator(),
-	} //dummy
-
 	dy := fixed.sub(pt2.y, pt1.y)
 	if dy.i != 0 {
 		return fixed.div(fixed.sub(pt2.x, pt1.x), dy)
@@ -433,11 +428,6 @@ GetLineIntersectPt :: proc "contextless" (
 	ok: bool,
 	ip: [2]FixedDef,
 ) {
-	context = runtime.Context {
-		allocator      = runtime.panic_allocator(),
-		temp_allocator = runtime.panic_allocator(),
-	} //dummy
-
 	den := fixed.sub(
 		fixed.mul(fixed.sub(b2.y, b1.y), fixed.sub(a2.x, a1.x)),
 		fixed.mul(fixed.sub(b2.x, b1.x), fixed.sub(a2.y, a1.y)),
@@ -565,10 +555,6 @@ TopX :: proc "contextless" (ae: ^Active, current_y: FixedDef) -> FixedDef {
 	if current_y == ae.top.y || ae.top.x == ae.bot.x do return ae.top.x
 	if current_y == ae.bot.y do return ae.bot.x
 
-	context = runtime.Context {
-		allocator      = runtime.panic_allocator(),
-		temp_allocator = runtime.panic_allocator(),
-	} //dummy
 	return fixed.add(ae.bot.x, fixed.mul(ae.dx, fixed.sub(current_y, ae.bot.y)))
 }
 
@@ -1424,11 +1410,6 @@ IsCollinear :: proc "contextless" (
 	sharedPt: [2]FixedDef,
 	pt2: [2]FixedDef,
 ) -> bool {
-	context = runtime.Context {
-		allocator      = runtime.panic_allocator(),
-		temp_allocator = runtime.panic_allocator(),
-	} //dummy
-
 	a := fixed.sub(sharedPt.x, pt1.x)
 	b := fixed.sub(pt2.y, sharedPt.y)
 	c := fixed.sub(sharedPt.y, pt1.y)
@@ -1445,10 +1426,7 @@ SegmentsIntersectExclusive :: proc "contextless" (
 	seg2a: [2]FixedDef,
 	seg2b: [2]FixedDef,
 ) -> bool {
-	context = runtime.Context {
-		allocator      = runtime.panic_allocator(),
-		temp_allocator = runtime.panic_allocator(),
-	} //dummy
+
 
 	zero :: FixedDef{}
 	dy1 := fixed.sub(seg1b.y, seg1a.y)
@@ -1518,11 +1496,6 @@ CleanCollinear :: proc(ctx: ^Context, outrec: ^OutRec) -> Clipper_Error {
 
 @(private = "file")
 Area_Double :: proc "contextless" (op: ^OutPt) -> FixedDef {
-	context = runtime.Context {
-		allocator      = runtime.panic_allocator(),
-		temp_allocator = runtime.panic_allocator(),
-	} //dummy
-
 	// Shoelace formula: https://en.wikipedia.org/wiki/Shoelace_formula
 	result := FixedDef{}
 	op2 := op
@@ -1545,11 +1518,6 @@ AreaTriangle :: proc "contextless" (
 	pt2: [2]FixedDef,
 	pt3: [2]FixedDef,
 ) -> FixedDef {
-	context = runtime.Context {
-		allocator      = runtime.panic_allocator(),
-		temp_allocator = runtime.panic_allocator(),
-	} //dummy
-
 	term1 := fixed.mul(fixed.add(pt3.y, pt1.y), fixed.sub(pt3.x, pt1.x))
 	term2 := fixed.mul(fixed.add(pt1.y, pt2.y), fixed.sub(pt1.x, pt2.x))
 	term3 := fixed.mul(fixed.add(pt2.y, pt3.y), fixed.sub(pt2.x, pt3.x))

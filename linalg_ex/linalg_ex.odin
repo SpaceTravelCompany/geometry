@@ -393,10 +393,7 @@ PointInTriangle :: proc "contextless" (
 		return (u < 0.0) && (v < 0.0) && (u + v > denominator)
 	} else {
 		when intrinsics.type_is_specialization_of(T, fixed.Fixed) {
-			context = runtime.Context {
-				allocator      = runtime.panic_allocator(),
-				temp_allocator = runtime.panic_allocator(),
-			} //dummy
+
 			add :: fixed.add
 			sub :: fixed.sub
 			mul :: fixed.mul
@@ -467,10 +464,7 @@ PointInLine :: proc "contextless" (
 			(p.x - minX) / (maxX - minX)
 	} else {
 		when intrinsics.type_is_specialization_of(T, fixed.Fixed) {
-			context = runtime.Context {
-				allocator      = runtime.panic_allocator(),
-				temp_allocator = runtime.panic_allocator(),
-			} //dummy
+
 			add :: fixed.add
 			sub :: fixed.sub
 			mul :: fixed.mul
@@ -605,10 +599,7 @@ lerp_fixed :: proc "contextless" (
 		return res
 	} else {
 		when intrinsics.type_is_specialization_of(intrinsics.type_elem_type(T), fixed.Fixed) {
-			context = runtime.Context {
-				allocator      = runtime.panic_allocator(),
-				temp_allocator = runtime.panic_allocator(),
-			} //dummy
+
 			return fixed.add(a, fixed.mul(t, fixed.sub(b, a)))
 		} else {
 			return fixed_bcd.add(a, fixed_bcd.mul(t, fixed_bcd.sub(b, a)))
@@ -644,10 +635,7 @@ PointInVector :: proc "contextless" (
 		return res == 0, res
 	} else {
 		when intrinsics.type_is_specialization_of(T, fixed.Fixed) {
-			context = runtime.Context {
-				allocator      = runtime.panic_allocator(),
-				temp_allocator = runtime.panic_allocator(),
-			} //dummy
+
 			add :: fixed.add
 			sub :: fixed.sub
 			mul :: fixed.mul
@@ -804,10 +792,7 @@ CenterPointInPolygon :: proc "contextless" (
 		return p
 	} else {
 		when intrinsics.type_is_specialization_of(T, fixed.Fixed) {
-			context = runtime.Context {
-				allocator      = runtime.panic_allocator(),
-				temp_allocator = runtime.panic_allocator(),
-			} //dummy
+
 			add :: fixed.add
 			sub :: fixed.sub
 			mul :: fixed.mul
@@ -942,10 +927,7 @@ LinesIntersect2 :: proc "contextless" (
 		return res_den ? .intersect : .none, [2]T{a1.x + t * (a2.x - a1.x), a1.y + t * (a2.y - a1.y)}
 	} else {
 		when intrinsics.type_is_specialization_of(T, fixed.Fixed) {
-			context = runtime.Context {
-				allocator      = runtime.panic_allocator(),
-				temp_allocator = runtime.panic_allocator(),
-			} //dummy
+
 			add :: fixed.add
 			sub :: fixed.sub
 			mul :: fixed.mul
@@ -1001,10 +983,7 @@ LinesIntersect3 :: proc "contextless" (
 		return res_den ? .intersect : .none
 	} else {
 		when intrinsics.type_is_specialization_of(T, fixed.Fixed) {
-			context = runtime.Context {
-				allocator      = runtime.panic_allocator(),
-				temp_allocator = runtime.panic_allocator(),
-			} //dummy
+
 			add :: fixed.add
 			sub :: fixed.sub
 			mul :: fixed.mul
@@ -1042,10 +1021,7 @@ NearestPointBetweenPointAndLine :: proc "contextless" (
 		return l0 + AB * (linalg.vector_dot(AB, AC) / linalg.vector_dot(AB, AB))
 	} else {
 		when intrinsics.type_is_specialization_of(T, fixed.Fixed) {
-			context = runtime.Context {
-				allocator      = runtime.panic_allocator(),
-				temp_allocator = runtime.panic_allocator(),
-			} //dummy
+
 			sub :: fixed.sub
 			mul :: fixed.mul
 			div :: fixed.div
@@ -1089,10 +1065,7 @@ xy_mirror_point :: #force_inline proc "contextless" (
 		return [2]T{2.0, 2.0} * pivot - target
 	} else {
 		when intrinsics.type_is_specialization_of(T, fixed.Fixed) {
-			context = runtime.Context {
-				allocator      = runtime.panic_allocator(),
-				temp_allocator = runtime.panic_allocator(),
-			} //dummy
+
 			add :: fixed.add
 			sub :: fixed.sub
 			mul :: fixed.mul
@@ -1170,10 +1143,7 @@ ShortestLength2Line :: proc "contextless" (
 		}
 	} else {
 		when intrinsics.type_is_specialization_of(T, fixed.Fixed) {
-			context = runtime.Context {
-				allocator      = runtime.panic_allocator(),
-				temp_allocator = runtime.panic_allocator(),
-			} //dummy
+
 			add :: fixed.add
 			sub :: fixed.sub
 			mul :: fixed.mul
@@ -1535,10 +1505,7 @@ CrossProductSign :: proc "contextless" (
 		if ab < cd do return -1
 	} else {
 		when intrinsics.type_is_specialization_of(T, fixed.Fixed) {
-			context = runtime.Context {
-				allocator      = runtime.panic_allocator(),
-				temp_allocator = runtime.panic_allocator(),
-			} //dummy
+
 			add :: fixed.add
 			sub :: fixed.sub
 			mul :: fixed.mul
@@ -1578,10 +1545,7 @@ DotProduct :: proc "contextless" (
 		return a * b + c * d
 	} else {
 		when intrinsics.type_is_specialization_of(T, fixed.Fixed) {
-			context = runtime.Context {
-				allocator      = runtime.panic_allocator(),
-				temp_allocator = runtime.panic_allocator(),
-			} //dummy
+
 			add :: fixed.add
 			sub :: fixed.sub
 			mul :: fixed.mul
@@ -1622,10 +1586,7 @@ InCircleTest :: proc "contextless" (
 		)
 	} else {
 		when intrinsics.type_is_specialization_of(T, fixed.Fixed) {
-			context = runtime.Context {
-				allocator      = runtime.panic_allocator(),
-				temp_allocator = runtime.panic_allocator(),
-			} //dummy
+
 			add :: fixed.add
 			sub :: fixed.sub
 			mul :: fixed.mul

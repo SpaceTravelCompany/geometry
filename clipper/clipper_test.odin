@@ -216,7 +216,6 @@ test_custom :: proc(t: ^testing.T) {
 		delete(res)
 	}
 
-
 	testing.expect_value(t, err, nil)
 	testing.expect_value(t, len(res), 1)
 	testing.expect_value(t, len(res[0]), 10)

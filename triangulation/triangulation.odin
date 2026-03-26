@@ -297,45 +297,6 @@ TrianguatePolygons_Fixed_Impl :: proc(
 }
 
 @(private = "file")
-TrianguatePolygons_WithFrac_Impl :: proc(
-	$FRAC: int,
-	poly: [][][2]FixedDef,
-	allocator := context.allocator,
-) -> (
-	indices: []u32,
-	err: Trianguate_Error,
-) where intrinsics.type_is_float {
-	poly_fixed := make([dynamic][][2]fixed.BCD(FRAC), context.temp_allocator) or_return
-	non_zero_resize(&poly_fixed, len(poly)) or_return
-
-	for i in 0 ..< len(poly) {
-		path_fixed := make([dynamic][2]fixed.BCD(FRAC), context.temp_allocator) or_return
-		non_zero_resize(&path_fixed, len(poly[i])) or_return
-
-		for j in 0 ..< len(poly[i]) {
-			path_fixed[j] = [2]fixed.BCD(FRAC) {
-				fixed.from_f64(FRAC, f64(poly[i][j].x)),
-				fixed.from_f64(FRAC, f64(poly[i][j].y)),
-			}
-		}
-		poly_fixed[i] = path_fixed[:]
-	}
-
-	return TrianguatePolygons_Fixed_Impl(poly_fixed[:], allocator)
-}
-
-@(private = "file")
-TrianguatePolygons_Impl :: proc(
-	poly: [][][2]$T,
-	allocator := context.allocator,
-) -> (
-	indices: []u32,
-	err: Trianguate_Error,
-) where intrinsics.type_is_float(T) {
-	return TrianguatePolygons_WithFrac_Impl(fixed.MAX_FRAC_DIGITS, poly, allocator)
-}
-
-@(private = "file")
 triangle_vertices :: proc "contextless" (tri: ^Triangle) -> [3]^Vertex {
 	e0, e1 := tri.edges[0], tri.edges[1]
 	vs: [3]^Vertex
@@ -1089,6 +1050,20 @@ TrianguatePolygons :: proc(
 	indices: []u32,
 	err: Trianguate_Error,
 ) where intrinsics.type_is_float(T) {
-	return TrianguatePolygons_Impl(poly, allocator)
+	poly_fixed := make([dynamic][][2]FixedDef, context.temp_allocator) or_return
+	non_zero_resize(&poly_fixed, len(poly)) or_return
+
+	for i in 0 ..< len(poly) {
+		path_fixed := make([dynamic][2]FixedDef, context.temp_allocator) or_return
+		non_zero_resize(&path_fixed, len(poly[i])) or_return
+
+		for j in 0 ..< len(poly[i]) {
+			fixed.init_from_f64(&path_fixed[j].x, f64(poly[i][j].x))
+			fixed.init_from_f64(&path_fixed[j].y, f64(poly[i][j].y))
+		}
+		poly_fixed[i] = path_fixed[:]
+	}
+
+	return TrianguatePolygons_Fixed_Impl(poly_fixed[:], allocator)
 }
 

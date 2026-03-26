@@ -97,10 +97,13 @@ Scanline :: struct {
 // Vertex: polygon vertex, circular doubly linked (clipper.engine.h)
 @(private = "file")
 Vertex :: struct {
-	pt:    [2]FixedDef,
-	next:  ^Vertex,
-	prev:  ^Vertex,
-	flags: VertexFlags_Set,
+	pt:         [2]FixedDef,
+	c0:         [2]FixedDef,
+	c1:         [2]FixedDef,
+	next:       ^Vertex,
+	prev:       ^Vertex,
+	flags:      VertexFlags_Set,
+	curve_kind: linalg_ex.BezierKind,
 }
 
 // LocalMinima: bottom of an edge bound (clipper.engine.h)
@@ -125,11 +128,14 @@ OutRec :: struct {
 // OutPt: output polygon vertex, circular doubly linked (clipper.engine.h)
 @(private = "file")
 OutPt :: struct {
-	pt:     [2]FixedDef,
-	next:   ^OutPt,
-	prev:   ^OutPt,
-	outrec: ^OutRec,
-	horz:   ^HorzSegment,
+	pt:         [2]FixedDef,
+	c0:         [2]FixedDef,
+	c1:         [2]FixedDef,
+	next:       ^OutPt,
+	prev:       ^OutPt,
+	outrec:     ^OutRec,
+	horz:       ^HorzSegment,
+	curve_kind: linalg_ex.BezierKind,
 }
 
 // Active: edge in AEL/SEL (clipper.engine.h)
@@ -187,11 +193,12 @@ AddPaths :: proc(
 	paths: [][][2]FixedDef,
 	polytype: PathType,
 	$is_open: bool,
+	is_curves: [][]bool = nil,
 ) -> (
 	err: Clipper_Error,
 ) {
 	when is_open do ctx.has_open_paths_ = true
-	AddPaths_(ctx, paths, polytype, is_open) or_return
+	AddPaths_(ctx, paths, polytype, is_open, is_curves) or_return
 	return
 }
 
@@ -201,6 +208,7 @@ AddPaths_ :: proc(
 	paths: [][][2]FixedDef,
 	polytype: PathType,
 	$is_open: bool,
+	is_curves: [][]bool = nil,
 ) -> (
 	err: Clipper_Error,
 ) {
@@ -220,7 +228,7 @@ AddPaths_ :: proc(
 	)
 
 	v := all_vertices
-	for path in paths {
+	for path, path_idx in paths {
 		//for each path create a circular double linked list of vertices
 		v0 := v
 		curr_v := v
@@ -228,12 +236,32 @@ AddPaths_ :: proc(
 
 		if len(path) == 0 do continue
 
+		has_curves := is_curves != nil && path_idx < len(is_curves)
+
 		cnt := 0
 		v.prev = nil
-		for pt in path {
+		for pt_idx := 0; pt_idx < len(path); pt_idx += 1 {
+			pt := path[pt_idx]
 			if prev_v != nil {
 				if prev_v.pt == pt do continue // skip duplicates
 				prev_v.next = curr_v
+			}
+
+			if has_curves {
+				cur := is_curves[path_idx]
+
+				if len(cur) > pt_idx + 1 && cur[pt_idx + 1] {
+					if len(cur) > pt_idx + 2 && cur[pt_idx + 2] {
+						curr_v.curve_kind = .Cubic
+						curr_v.c0 = path[pt_idx + 1]
+						curr_v.c1 = path[pt_idx + 2]
+						pt_idx += 2
+					} else {
+						curr_v.curve_kind = .Quad
+						curr_v.c1 = path[pt_idx + 1]
+						pt_idx += 1
+					}
+				}
 			}
 
 			curr_v.prev = prev_v
@@ -260,7 +288,7 @@ AddPaths_ :: proc(
 		going_up, going_up0: bool
 		when is_open {
 			curr_v = v0.next
-			for curr_v != v0 && curr_v.pt.y == v0.pt.y {
+			for curr_v != v0 && (curr_v.pt.y == v0.pt.y) {
 				curr_v = curr_v.next
 			}
 
@@ -274,7 +302,7 @@ AddPaths_ :: proc(
 
 		} else { 	// closed path
 			prev_v = v0.prev
-			for prev_v != v0 && prev_v.pt.y == v0.pt.y {
+			for prev_v != v0 && (prev_v.pt.y == v0.pt.y) {
 				prev_v = prev_v.prev
 			}
 			if prev_v == v0 do continue // only open paths can be completely flat
@@ -333,23 +361,35 @@ AddLocMin :: proc(
 
 
 @(private = "file")
-AddSubject :: proc(ctx: ^Context, subjects: [][][2]FixedDef) -> Clipper_Error {
+AddSubject :: proc(
+	ctx: ^Context,
+	subjects: [][][2]FixedDef,
+	is_curves: [][]bool = nil,
+) -> Clipper_Error {
 	if subjects == nil do return nil
-	AddPaths(ctx, subjects, .Subject, false) or_return
+	AddPaths(ctx, subjects, .Subject, false, is_curves) or_return
 	return nil
 }
 
 @(private = "file")
-AddOpenSubject :: proc(ctx: ^Context, opens: [][][2]FixedDef) -> Clipper_Error {
+AddOpenSubject :: proc(
+	ctx: ^Context,
+	opens: [][][2]FixedDef,
+	is_curves: [][]bool = nil,
+) -> Clipper_Error {
 	if opens == nil do return nil
-	AddPaths(ctx, opens, .Subject, true) or_return
+	AddPaths(ctx, opens, .Subject, true, is_curves) or_return
 	return nil
 }
 
 @(private = "file")
-AddClip :: proc(ctx: ^Context, clips: [][][2]FixedDef) -> Clipper_Error {
+AddClip :: proc(
+	ctx: ^Context,
+	clips: [][][2]FixedDef,
+	is_curves: [][]bool = nil,
+) -> Clipper_Error {
 	if clips == nil do return nil
-	AddPaths(ctx, clips, .Clip, false) or_return
+	AddPaths(ctx, clips, .Clip, false, is_curves) or_return
 	return nil
 }
 
@@ -2608,6 +2648,7 @@ BuildPath64 :: proc(
 	reverse: bool,
 	$is_open: bool,
 	path: ^[dynamic][dynamic][2]FixedDef,
+	path_is_curves: ^[dynamic][dynamic]bool = nil,
 ) -> Clipper_Error {
 	if op == nil || op.next == op do return nil
 	when !is_open {
@@ -2616,6 +2657,13 @@ BuildPath64 :: proc(
 	op := op
 
 	non_zero_append(path, make([dynamic][2]FixedDef, context.temp_allocator) or_return) or_return
+	if path_is_curves != nil {
+		non_zero_append(
+			path_is_curves,
+			make([dynamic]bool, context.temp_allocator) or_return,
+		) or_return
+	}
+	//TODO Support Curves
 
 	op2: ^OutPt
 	if (reverse) {
@@ -2636,6 +2684,100 @@ BuildPath64 :: proc(
 		else do op2 = op2.next
 	}
 	return nil
+}
+
+@(private = "file")
+CopySolutionPathsToSlices :: proc(
+	has_curves: bool,
+	solution: [dynamic][dynamic][2]FixedDef,
+	solution_is_curves: [dynamic][dynamic]bool,
+	allocator: runtime.Allocator,
+) -> (
+	res: [][][2]FixedDef,
+	res_is_curves: [][]bool,
+	err: Clipper_Error,
+) {
+	if len(solution) == 0 {
+		return nil, nil, nil
+	}
+	res = utils_private.make_non_zeroed_slice([][][2]FixedDef, len(solution), allocator) or_return
+	if has_curves {
+		res_is_curves = utils_private.make_non_zeroed_slice(
+			[][]bool,
+			len(solution),
+			allocator,
+		) or_return
+	}
+	for i in 0 ..< len(solution) {
+		res[i] = utils_private.make_non_zeroed_slice(
+			[][2]FixedDef,
+			len(solution[i]),
+			allocator,
+		) or_return
+		if has_curves {
+			res_is_curves[i] = utils_private.make_non_zeroed_slice(
+				[]bool,
+				len(solution_is_curves[i]),
+				allocator,
+			) or_return
+			intrinsics.mem_copy_non_overlapping(
+				raw_data(res_is_curves[i]),
+				raw_data(solution_is_curves[i]),
+				len(solution_is_curves[i]) * size_of(bool),
+			)
+		}
+		intrinsics.mem_copy_non_overlapping(
+			raw_data(res[i]),
+			raw_data(solution[i]),
+			len(solution[i]) * size_of([2]FixedDef),
+		)
+	}
+	return res, res_is_curves, nil
+}
+
+
+@(private = "file")
+ToFixedPaths :: proc(
+	paths: [][][2]$T,
+) -> (
+	res: [][][2]FixedDef,
+	err: Clipper_Error,
+) where intrinsics.type_is_float(T) {
+	if paths == nil do return nil, nil
+	out := make([dynamic][][2]FixedDef, context.temp_allocator) or_return
+	non_zero_resize(&out, len(paths)) or_return
+	for i in 0 ..< len(paths) {
+		p := paths[i]
+		p_out := make([dynamic][2]FixedDef, context.temp_allocator) or_return
+		non_zero_resize(&p_out, len(p)) or_return
+		for j in 0 ..< len(p) {
+			fixed.init_from_f64(&p_out[j].x, f64(p[j].x))
+			fixed.init_from_f64(&p_out[j].y, f64(p[j].y))
+		}
+		out[i] = p_out[:]
+	}
+	return out[:], nil
+}
+
+@(private = "file")
+FromFixedPaths :: proc(
+	$T: typeid,
+	paths: [][][2]FixedDef,
+	allocator := context.allocator,
+) -> (
+	res: [][][2]T,
+	err: Clipper_Error,
+) where intrinsics.type_is_float(T) {
+	if paths == nil do return nil, nil
+	out := utils_private.make_non_zeroed_slice([][][2]T, len(paths), allocator) or_return
+	for i in 0 ..< len(paths) {
+		p := paths[i]
+		out[i] = utils_private.make_non_zeroed_slice([][2]T, len(p), allocator) or_return
+		for j in 0 ..< len(p) {
+			out[i][j] = [2]T{T(fixed.to_f64(p[j].x)), T(fixed.to_f64(p[j].y))}
+		}
+	}
+	return out, nil
 }
 
 //
@@ -2676,9 +2818,9 @@ BooleanOpCurve_Fixed :: proc(
 			return a.i > b.i
 		}, pq.default_swap_proc(FixedDef), allocator = context.temp_allocator) or_return
 
-	AddSubject(&ctx, subjects) or_return
-	AddOpenSubject(&ctx, opens) or_return
-	AddClip(&ctx, clips) or_return
+	AddSubject(&ctx, subjects, subjects_is_curves) or_return
+	AddOpenSubject(&ctx, opens, opens_is_curves) or_return
+	AddClip(&ctx, clips, clips_is_curves) or_return
 
 	slice.stable_sort_by(ctx.minima_list_[:], proc(a, b: ^LocalMinima) -> bool {
 		if b.vertex.pt.y != a.vertex.pt.y do return b.vertex.pt.y.i < a.vertex.pt.y.i
@@ -2728,104 +2870,62 @@ BooleanOpCurve_Fixed :: proc(
 	non_zero_reserve(&solution_close, len(ctx.outrec_list_)) or_return
 	non_zero_reserve(&solution_open, len(ctx.outrec_list_)) or_return
 
+	has_curves := subjects_is_curves != nil || clips_is_curves != nil || opens_is_curves != nil
+
+	solution_close_is_curves: [dynamic][dynamic]bool
+	solution_open_is_curves: [dynamic][dynamic]bool
+	if has_curves {
+		solution_close_is_curves = make([dynamic][dynamic]bool, context.temp_allocator) or_return
+		solution_open_is_curves = make([dynamic][dynamic]bool, context.temp_allocator) or_return
+		non_zero_reserve(&solution_close_is_curves, len(ctx.outrec_list_)) or_return
+		non_zero_reserve(&solution_open_is_curves, len(ctx.outrec_list_)) or_return
+	}
+
 	for out in ctx.outrec_list_ {
 		if out.pts == nil do continue
 
 		if out.is_open {
-			BuildPath64(out.pts, ctx.reverse_solution_, true, &solution_open) or_return
+			if has_curves {
+				BuildPath64(
+					out.pts,
+					ctx.reverse_solution_,
+					true,
+					&solution_open,
+					&solution_open_is_curves,
+				) or_return
+			} else {
+				BuildPath64(out.pts, ctx.reverse_solution_, true, &solution_open) or_return
+			}
 		} else {
 			CleanCollinear(&ctx, out) or_return
-			BuildPath64(out.pts, ctx.reverse_solution_, false, &solution_close) or_return
+			if has_curves {
+				BuildPath64(
+					out.pts,
+					ctx.reverse_solution_,
+					false,
+					&solution_close,
+					&solution_close_is_curves,
+				) or_return
+			} else {
+				BuildPath64(out.pts, ctx.reverse_solution_, false, &solution_close) or_return
+			}
 		}
 	}
 
-	if len(solution_close) > 0 {
-		res = utils_private.make_non_zeroed_slice(
-			[][][2]FixedDef,
-			len(solution_close),
-			allocator,
-		) or_return
-		for i in 0 ..< len(solution_close) {
-			res[i] = utils_private.make_non_zeroed_slice(
-				[][2]FixedDef,
-				len(solution_close[i]),
-				allocator,
-			) or_return
-
-			intrinsics.mem_copy_non_overlapping(
-				raw_data(res[i]),
-				raw_data(solution_close[i]),
-				len(solution_close[i]) * size_of([2]FixedDef),
-			)
-		}
-	}
-	if len(solution_open) > 0 {
-		res_open = utils_private.make_non_zeroed_slice(
-			[][][2]FixedDef,
-			len(solution_open),
-			allocator,
-		) or_return
-
-		for i in 0 ..< len(solution_open) {
-			res_open[i] = utils_private.make_non_zeroed_slice(
-				[][2]FixedDef,
-				len(solution_open[i]),
-				allocator,
-			) or_return
-
-			intrinsics.mem_copy_non_overlapping(
-				raw_data(res_open[i]),
-				raw_data(solution_open[i]),
-				len(solution_open[i]) * size_of([2]FixedDef),
-			)
-		}
-	}
+	res, res_is_curves = CopySolutionPathsToSlices(
+		has_curves,
+		solution_close,
+		solution_close_is_curves,
+		allocator,
+	) or_return
+	res_open, res_open_is_curves = CopySolutionPathsToSlices(
+		has_curves,
+		solution_open,
+		solution_open_is_curves,
+		allocator,
+	) or_return
 
 	return
-}
-
-@(private = "file")
-ToFixedPaths :: proc(
-	paths: [][][2]$T,
-) -> (
-	res: [][][2]FixedDef,
-	err: Clipper_Error,
-) where intrinsics.type_is_float(T) {
-	if paths == nil do return nil, nil
-	out := make([dynamic][][2]FixedDef, context.temp_allocator) or_return
-	non_zero_resize(&out, len(paths)) or_return
-	for i in 0 ..< len(paths) {
-		p := paths[i]
-		p_out := make([dynamic][2]FixedDef, context.temp_allocator) or_return
-		non_zero_resize(&p_out, len(p)) or_return
-		for j in 0 ..< len(p) {
-			fixed.init_from_f64(&p_out[j].x, f64(p[j].x))
-			fixed.init_from_f64(&p_out[j].y, f64(p[j].y))
-		}
-		out[i] = p_out[:]
-	}
-	return out[:], nil
-}
-
-@(private = "file")
-FromBcdPaths :: proc(
-	$T: typeid,
-	paths: [][][2]FixedDef,
-	allocator := context.allocator,
-) -> (
-	res: [][][2]T,
-	err: Clipper_Error,
-) where intrinsics.type_is_float(T) {
-	if paths == nil do return nil, nil
-	out := utils_private.make_non_zeroed_slice([][][2]T, len(paths), allocator) or_return
-	for i in 0 ..< len(paths) {
-		p := paths[i]
-		out[i] = utils_private.make_non_zeroed_slice([][2]T, len(p), allocator) or_return
-		for j in 0 ..< len(p) {
-			out[i][j] = [2]T{T(fixed.to_f64(p[j].x)), T(fixed.to_f64(p[j].y))}
-		}
-	}
-	return out, nil
 }
 
 BooleanOp_Fixed :: proc(
@@ -2883,8 +2983,8 @@ BooleanOp :: proc(
 		context.temp_allocator,
 	) or_return
 
-	res = FromBcdPaths(T, res_bcd, allocator) or_return
-	res_open = FromBcdPaths(T, res_open_bcd, allocator) or_return
+	res = FromFixedPaths(T, res_bcd, allocator) or_return
+	res_open = FromFixedPaths(T, res_open_bcd, allocator) or_return
 	return
 }
 

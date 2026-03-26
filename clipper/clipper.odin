@@ -2663,7 +2663,28 @@ BuildPath64 :: proc(
 			make([dynamic]bool, context.temp_allocator) or_return,
 		) or_return
 	}
-	//TODO Support Curves
+
+	insert_pt :: proc(
+		op: ^OutPt,
+		path: ^[dynamic][dynamic][2]FixedDef,
+		path_is_curves: ^[dynamic][dynamic]bool,
+	) -> Clipper_Error {
+		if path_is_curves != nil {
+			non_zero_append(&path_is_curves[len(path_is_curves) - 1], false) or_return
+		}
+		non_zero_append(&path[len(path) - 1], op.pt) or_return
+
+		if op.curve_kind == .Quad {
+			non_zero_append(&path_is_curves[len(path_is_curves) - 1], true) or_return
+			non_zero_append(&path[len(path) - 1], op.c0) or_return
+		} else if op.curve_kind == .Cubic {
+			non_zero_append(&path_is_curves[len(path_is_curves) - 1], true) or_return
+			non_zero_append(&path_is_curves[len(path_is_curves) - 1], true) or_return
+			non_zero_append(&path[len(path) - 1], op.c0) or_return
+			non_zero_append(&path[len(path) - 1], op.c1) or_return
+		}
+		return nil
+	}
 
 	op2: ^OutPt
 	if (reverse) {
@@ -2673,12 +2694,12 @@ BuildPath64 :: proc(
 		op2 = op.next
 	}
 	lastPt := op.pt
-	non_zero_append(&path[len(path) - 1], lastPt) or_return
+	insert_pt(op, path, path_is_curves) or_return
 
 	for op2 != op {
 		if (op2.pt != lastPt) {
 			lastPt = op2.pt
-			non_zero_append(&path[len(path) - 1], lastPt) or_return
+			insert_pt(op2, path, path_is_curves) or_return
 		}
 		if (reverse) do op2 = op2.prev
 		else do op2 = op2.next

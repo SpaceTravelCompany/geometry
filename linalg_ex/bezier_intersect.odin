@@ -24,101 +24,6 @@ bezier_order :: #force_inline proc "contextless" (kind: BezierKind) -> int {
 	return 0
 }
 
-// Polymorphic arithmetic helpers (fixed / float)
-
-@(private = "file")
-_bz_add :: #force_inline proc "contextless" (
-	a, b: $T,
-) -> T where intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
-	intrinsics.type_is_float(T) {
-	when intrinsics.type_is_float(T) {return a + b} else {return fixed.add(a, b)}
-}
-
-@(private = "file")
-_bz_sub :: #force_inline proc "contextless" (
-	a, b: $T,
-) -> T where intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
-	intrinsics.type_is_float(T) {
-	when intrinsics.type_is_float(T) {return a - b} else {return fixed.sub(a, b)}
-}
-
-@(private = "file")
-_bz_mul :: #force_inline proc "contextless" (
-	a, b: $T,
-) -> T where intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
-	intrinsics.type_is_float(T) {
-	when intrinsics.type_is_float(T) {return a * b} else {return fixed.mul(a, b)}
-}
-
-@(private = "file")
-_bz_div :: #force_inline proc "contextless" (
-	a, b: $T,
-) -> T where intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
-	intrinsics.type_is_float(T) {
-	when intrinsics.type_is_float(T) {return a / b} else {return fixed.div(a, b)}
-}
-
-@(private = "file")
-_bz_lt :: #force_inline proc "contextless" (
-	a, b: $T,
-) -> bool where intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
-	intrinsics.type_is_float(T) {
-	when intrinsics.type_is_float(T) {return a < b} else {return a.i < b.i}
-}
-
-@(private = "file")
-_bz_gt :: #force_inline proc "contextless" (
-	a, b: $T,
-) -> bool where intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
-	intrinsics.type_is_float(T) {
-	when intrinsics.type_is_float(T) {return a > b} else {return a.i > b.i}
-}
-
-@(private = "file")
-_bz_le :: #force_inline proc "contextless" (
-	a, b: $T,
-) -> bool where intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
-	intrinsics.type_is_float(T) {
-	when intrinsics.type_is_float(T) {return a <= b} else {return a.i <= b.i}
-}
-
-@(private = "file")
-_bz_ge :: #force_inline proc "contextless" (
-	a, b: $T,
-) -> bool where intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
-	intrinsics.type_is_float(T) {
-	when intrinsics.type_is_float(T) {return a >= b} else {return a.i >= b.i}
-}
-
-@(private = "file")
-_bz_eq :: #force_inline proc "contextless" (
-	a, b: $T,
-) -> bool where intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
-	intrinsics.type_is_float(T) {
-	when intrinsics.type_is_float(T) {return a == b} else {return a.i == b.i}
-}
-
-@(private = "file")
-_bz_mid :: #force_inline proc "contextless" (
-	a, b: $T,
-) -> T where intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
-	intrinsics.type_is_float(T) {
-	when intrinsics.type_is_float(
-		T,
-	) {return (a + b) * T(0.5)} else {return T{i = (a.i + b.i) >> 1}}
-}
-
-@(private = "file")
-_bz_ratio :: #force_inline proc "contextless" (num, den: int, $T: typeid) -> T {
-	when intrinsics.type_is_float(T) {
-		return T(num) / T(den)
-	} else {
-		Frac :: intrinsics.type_polymorphic_record_parameter_value(T, 1)
-		Backing :: intrinsics.type_polymorphic_record_parameter_value(T, 0)
-		return T{i = (Backing(num) << Frac) / Backing(den)}
-	}
-}
-
 // Split Bézier at t=0.5, returning left and right halves.
 @(private = "file")
 _split_half :: proc "contextless" (
@@ -156,7 +61,7 @@ _dist_to_baseline :: #force_inline proc "contextless" (
 	px, py, ax, ay, dx, dy: $T,
 ) -> T where intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
 	intrinsics.type_is_float(T) {
-	return _bz_sub(_bz_mul(_bz_sub(px, ax), dy), _bz_mul(_bz_sub(py, ay), dx))
+	return NumSub(NumMul(NumSub(px, ax), dy), NumMul(NumSub(py, ay), dx))
 }
 
 // Clip convex hull of distance control polygon against fat line band [d_min, d_max].
@@ -179,33 +84,33 @@ _clip_hull :: proc "contextless" (
 	t_hi = zero
 
 	for i in 0 ..= n {
-		if _bz_ge(d[i], d_min) && _bz_le(d[i], d_max) {
-			ti := _bz_ratio(i, n, T)
-			if _bz_lt(ti, t_lo) do t_lo = ti
-			if _bz_gt(ti, t_hi) do t_hi = ti
+		if NumGe(d[i], d_min) && NumLe(d[i], d_max) {
+			ti := NumRatio(i, n, T)
+			if NumLt(ti, t_lo) do t_lo = ti
+			if NumGt(ti, t_hi) do t_hi = ti
 		}
 	}
 
 	for i in 0 ..= n {
 		for j in i + 1 ..= n {
-			ti := _bz_ratio(i, n, T)
-			tj := _bz_ratio(j, n, T)
-			dd := _bz_sub(d[j], d[i])
-			if _bz_eq(dd, zero) do continue
-			dt := _bz_sub(tj, ti)
+			ti := NumRatio(i, n, T)
+			tj := NumRatio(j, n, T)
+			dd := NumSub(d[j], d[i])
+			if NumEq(dd, zero) do continue
+			dt := NumSub(tj, ti)
 
-			if _bz_lt(d[i], d_min) != _bz_lt(d[j], d_min) {
-				tc := _bz_add(ti, _bz_mul(_bz_div(_bz_sub(d_min, d[i]), dd), dt))
-				if _bz_ge(tc, zero) && _bz_le(tc, one) {
-					if _bz_lt(tc, t_lo) do t_lo = tc
-					if _bz_gt(tc, t_hi) do t_hi = tc
+			if NumLt(d[i], d_min) != NumLt(d[j], d_min) {
+				tc := NumAdd(ti, NumMul(NumDiv(NumSub(d_min, d[i]), dd), dt))
+				if NumGe(tc, zero) && NumLe(tc, one) {
+					if NumLt(tc, t_lo) do t_lo = tc
+					if NumGt(tc, t_hi) do t_hi = tc
 				}
 			}
-			if _bz_gt(d[i], d_max) != _bz_gt(d[j], d_max) {
-				tc := _bz_add(ti, _bz_mul(_bz_div(_bz_sub(d_max, d[i]), dd), dt))
-				if _bz_ge(tc, zero) && _bz_le(tc, one) {
-					if _bz_lt(tc, t_lo) do t_lo = tc
-					if _bz_gt(tc, t_hi) do t_hi = tc
+			if NumGt(d[i], d_max) != NumGt(d[j], d_max) {
+				tc := NumAdd(ti, NumMul(NumDiv(NumSub(d_max, d[i]), dd), dt))
+				if NumGe(tc, zero) && NumLe(tc, one) {
+					if NumLt(tc, t_lo) do t_lo = tc
+					if NumGt(tc, t_hi) do t_hi = tc
 				}
 			}
 		}
@@ -241,7 +146,7 @@ _extract_sub :: proc "contextless" (
 	zero := T(0) when intrinsics.type_is_float(T) else T{i = 0}
 	result := pts
 
-	if _bz_gt(t_lo, zero) {
+	if NumGt(t_lo, zero) {
 		switch kind {
 		case .Line:
 			p := SubdivLine([2][2]T{pts[0], pts[1]}, t_lo)
@@ -255,10 +160,10 @@ _extract_sub :: proc "contextless" (
 		}
 	}
 
-	denom := _bz_sub(one, t_lo)
-	if _bz_le(denom, zero) do return result
-	t_adj := _bz_div(_bz_sub(t_hi, t_lo), denom)
-	if _bz_ge(t_adj, one) do return result
+	denom := NumSub(one, t_lo)
+	if NumLe(denom, zero) do return result
+	t_adj := NumDiv(NumSub(t_hi, t_lo), denom)
+	if NumGe(t_adj, one) do return result
 
 	switch kind {
 	case .Line:
@@ -294,7 +199,7 @@ GetBezierIntersectPt :: proc "contextless" (
 		}
 	zero := T(0) when intrinsics.type_is_float(T) else T{i = 0}
 	eps: T = epsilon(T) when intrinsics.type_is_float(T) else T{}
-	four_fifth := _bz_ratio(4, 5, T)
+	four_fifth := NumRatio(4, 5, T)
 
 	Work :: _BezClipWork(T)
 	stack: [64]Work
@@ -315,19 +220,19 @@ GetBezierIntersectPt :: proc "contextless" (
 		sp -= 1
 		w := stack[sp]
 
-		a_range := _bz_sub(w.a_hi, w.a_lo)
-		b_range := _bz_sub(w.b_hi, w.b_lo)
+		a_range := NumSub(w.a_hi, w.a_lo)
+		b_range := NumSub(w.b_hi, w.b_lo)
 
-		if _bz_le(a_range, eps) && _bz_le(b_range, eps) {
+		if NumLe(a_range, eps) && NumLe(b_range, eps) {
 			na := bezier_order(w.kind_a) - 1
-			ip.x = _bz_mid(w.a[0].x, w.a[na].x)
-			ip.y = _bz_mid(w.a[0].y, w.a[na].y)
+			ip.x = NumMid(w.a[0].x, w.a[na].x)
+			ip.y = NumMid(w.a[0].y, w.a[na].y)
 			if !w.swapped {
-				t_a = _bz_mid(w.a_lo, w.a_hi)
-				t_b = _bz_mid(w.b_lo, w.b_hi)
+				t_a = NumMid(w.a_lo, w.a_hi)
+				t_b = NumMid(w.b_lo, w.b_hi)
 			} else {
-				t_a = _bz_mid(w.b_lo, w.b_hi)
-				t_b = _bz_mid(w.a_lo, w.a_hi)
+				t_a = NumMid(w.b_lo, w.b_hi)
+				t_b = NumMid(w.a_lo, w.a_hi)
 			}
 			return true, ip, t_a, t_b
 		}
@@ -335,10 +240,10 @@ GetBezierIntersectPt :: proc "contextless" (
 		na := bezier_order(w.kind_a) - 1
 		ax := w.a[0].x
 		ay := w.a[0].y
-		dx := _bz_sub(w.a[na].x, ax)
-		dy := _bz_sub(w.a[na].y, ay)
+		dx := NumSub(w.a[na].x, ax)
+		dy := NumSub(w.a[na].y, ay)
 
-		if _bz_eq(dx, zero) && _bz_eq(dy, zero) {
+		if NumEq(dx, zero) && NumEq(dy, zero) {
 			continue
 		}
 
@@ -346,8 +251,8 @@ GetBezierIntersectPt :: proc "contextless" (
 		d_max := zero
 		for i in 1 ..< na {
 			d := _dist_to_baseline(w.a[i].x, w.a[i].y, ax, ay, dx, dy)
-			if _bz_lt(d, d_min) do d_min = d
-			if _bz_gt(d, d_max) do d_max = d
+			if NumLt(d, d_min) do d_min = d
+			if NumGt(d, d_max) do d_max = d
 		}
 
 		nb := bezier_order(w.kind_b) - 1
@@ -357,23 +262,23 @@ GetBezierIntersectPt :: proc "contextless" (
 		}
 
 		clip_lo, clip_hi := _clip_hull(db, nb, d_min, d_max)
-		if _bz_gt(clip_lo, clip_hi) do continue
+		if NumGt(clip_lo, clip_hi) do continue
 
-		if _bz_lt(clip_lo, zero) do clip_lo = zero
-		if _bz_gt(clip_hi, one) do clip_hi = one
+		if NumLt(clip_lo, zero) do clip_lo = zero
+		if NumGt(clip_hi, one) do clip_hi = one
 
-		b_span := _bz_sub(w.b_hi, w.b_lo)
-		new_b_lo := _bz_add(w.b_lo, _bz_mul(clip_lo, b_span))
-		new_b_hi := _bz_add(w.b_lo, _bz_mul(clip_hi, b_span))
+		b_span := NumSub(w.b_hi, w.b_lo)
+		new_b_lo := NumAdd(w.b_lo, NumMul(clip_lo, b_span))
+		new_b_hi := NumAdd(w.b_lo, NumMul(clip_hi, b_span))
 		b_clipped := _extract_sub(w.kind_b, w.b, clip_lo, clip_hi)
 
-		clip_range := _bz_sub(clip_hi, clip_lo)
+		clip_range := NumSub(clip_hi, clip_lo)
 
-		if _bz_gt(clip_range, four_fifth) {
+		if NumGt(clip_range, four_fifth) {
 			if sp + 2 > len(stack) do continue
-			if _bz_ge(a_range, b_range) {
+			if NumGe(a_range, b_range) {
 				a_left, a_right := _split_half(w.kind_a, w.a)
-				a_mid := _bz_mid(w.a_lo, w.a_hi)
+				a_mid := NumMid(w.a_lo, w.a_hi)
 				stack[sp] = Work {
 					a       = b_clipped,
 					b       = a_left,
@@ -400,7 +305,7 @@ GetBezierIntersectPt :: proc "contextless" (
 				sp += 1
 			} else {
 				b_left, b_right := _split_half(w.kind_b, b_clipped)
-				b_mid := _bz_mid(new_b_lo, new_b_hi)
+				b_mid := NumMid(new_b_lo, new_b_hi)
 				stack[sp] = Work {
 					a       = b_left,
 					b       = w.a,
@@ -445,6 +350,151 @@ GetBezierIntersectPt :: proc "contextless" (
 	return false, {}, zero, zero
 }
 
+// Finds parameter t on a Bezier curve from a point by binary search.
+GetBezierTFromPoint :: proc "contextless" (
+	kind: BezierKind,
+	pts: [4][2]$T,
+	point: [2]T,
+) -> (
+	t: T,
+	ok: bool,
+) where intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
+	intrinsics.type_is_float(T) {
+	zero := T(0) when intrinsics.type_is_float(T) else T{i = 0}
+	one :=
+		T(1) when intrinsics.type_is_float(T) else T {
+			i = 1 << intrinsics.type_polymorphic_record_parameter_value(T, 1),
+		}
+	ten := NumConst(10, T)
+	lo := zero
+	hi := one
+	cmp_eps := NumMul(epsilon(T), ten) when intrinsics.type_is_float(T) else zero
+
+	for i in 0 ..< 64 {
+		mid := NumMid(lo, hi)
+		p := EvalBezier(kind, pts, mid)
+		diff := Vec2Sub(p, point)
+		if NumLe(NumAbs(diff[0]), cmp_eps) && NumLe(NumAbs(diff[1]), cmp_eps) {
+			return mid, true
+		}
+
+		// Use tangent direction to choose the next half interval.
+		tangent := EvalBezierTangent(kind, pts, mid)
+		if NumGt(Vec2Dot(tangent, diff), zero) {
+			hi = mid
+		} else {
+			lo = mid
+		}
+	}
+
+	mid := NumMid(lo, hi)
+	p := EvalBezier(kind, pts, mid)
+	diff := Vec2Sub(p, point)
+	if NumLe(NumAbs(diff[0]), cmp_eps) && NumLe(NumAbs(diff[1]), cmp_eps) {
+		return mid, true
+	}
+
+	return zero, false
+}
+
+// Evaluates a point on a quadratic or cubic Bezier curve.
+EvalBezier :: proc "contextless" (
+	kind: BezierKind,
+	pts: [4][2]$T,
+	t: T,
+) -> [2]T where intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
+	intrinsics.type_is_float(T) {
+	one :=
+		T(1) when intrinsics.type_is_float(T) else T {
+			i = 1 << intrinsics.type_polymorphic_record_parameter_value(T, 1),
+		}
+	u := NumSub(one, t)
+	two := NumConst(2, T)
+	three := NumConst(3, T)
+	switch kind {
+	case .Quad:
+		p0, p1, p2 := pts[0], pts[1], pts[2]
+		uu := NumMul(u, u)
+		tt := NumMul(t, t)
+		ut2 := NumMul(NumMul(two, u), t)
+		return {
+			NumAdd(NumAdd(NumMul(uu, p0[0]), NumMul(ut2, p1[0])), NumMul(tt, p2[0])),
+			NumAdd(NumAdd(NumMul(uu, p0[1]), NumMul(ut2, p1[1])), NumMul(tt, p2[1])),
+		}
+	case .Cubic:
+		p0, p1, p2, p3 := pts[0], pts[1], pts[2], pts[3]
+		uu := NumMul(u, u)
+		tt := NumMul(t, t)
+		uuu := NumMul(uu, u)
+		ttt := NumMul(tt, t)
+		uut3 := NumMul(NumMul(three, uu), t)
+		utt3 := NumMul(NumMul(three, u), tt)
+		return {
+			NumAdd(
+				NumAdd(NumAdd(NumMul(uuu, p0[0]), NumMul(uut3, p1[0])), NumMul(utt3, p2[0])),
+				NumMul(ttt, p3[0]),
+			),
+			NumAdd(
+				NumAdd(NumAdd(NumMul(uuu, p0[1]), NumMul(uut3, p1[1])), NumMul(utt3, p2[1])),
+				NumMul(ttt, p3[1]),
+			),
+		}
+	}
+	return {}
+}
+
+// Evaluates a tangent on a quadratic or cubic Bezier curve.
+EvalBezierTangent :: proc "contextless" (
+	kind: BezierKind,
+	pts: [4][2]$T,
+	t: T,
+) -> [2]T where intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
+	intrinsics.type_is_float(T) {
+	one :=
+		T(1) when intrinsics.type_is_float(T) else T {
+			i = 1 << intrinsics.type_polymorphic_record_parameter_value(T, 1),
+		}
+	u := NumSub(one, t)
+	two := NumConst(2, T)
+	three := NumConst(3, T)
+	six := NumConst(6, T)
+	switch kind {
+	case .Quad:
+		p0, p1, p2 := pts[0], pts[1], pts[2]
+		return {
+			NumAdd(
+				NumMul(NumMul(two, u), NumSub(p1[0], p0[0])),
+				NumMul(NumMul(two, t), NumSub(p2[0], p1[0])),
+			),
+			NumAdd(
+				NumMul(NumMul(two, u), NumSub(p1[1], p0[1])),
+				NumMul(NumMul(two, t), NumSub(p2[1], p1[1])),
+			),
+		}
+	case .Cubic:
+		p0, p1, p2, p3 := pts[0], pts[1], pts[2], pts[3]
+		uu := NumMul(u, u)
+		tt := NumMul(t, t)
+		ut6 := NumMul(NumMul(six, u), t)
+		return {
+			NumAdd(
+				NumAdd(
+					NumMul(NumMul(three, uu), NumSub(p1[0], p0[0])),
+					NumMul(ut6, NumSub(p2[0], p1[0])),
+				),
+				NumMul(NumMul(three, tt), NumSub(p3[0], p2[0])),
+			),
+			NumAdd(
+				NumAdd(
+					NumMul(NumMul(three, uu), NumSub(p1[1], p0[1])),
+					NumMul(ut6, NumSub(p2[1], p1[1])),
+				),
+				NumMul(NumMul(three, tt), NumSub(p3[1], p2[1])),
+			),
+		}
+	}
+	return {}
+}
 
 @(test)
 test_2quad_curves :: proc(t: ^testing.T) {
@@ -452,8 +502,7 @@ test_2quad_curves :: proc(t: ^testing.T) {
 
 	pt1: [4]linalg.Vector2f32 = {{1.0, 0.0}, {0.0, 0.0}, {0.0, -1.0}, {}} //last leave empty
 
-	ok, pt, t_a, t_b := GetBezierIntersectPt(.Quad, pt0, .Quad, pt1)
-
+	ok, _, t_a, t_b := GetBezierIntersectPt(.Quad, pt0, .Quad, pt1)
 
 	testing.expect_value(t, ok, true)
 	testing.expect_value(t, t_a == t_b, true)

@@ -360,6 +360,212 @@ SplitPathCurvesYMonotone :: proc(v0: ^Vertex) -> (err: Clipper_Error) {
 	return nil
 }
 
+@(private = "file")
+AddSubject :: proc(
+	ctx: ^Context,
+	subjects: [][][2]FixedDef,
+	is_curves: [][]bool = nil,
+) -> Clipper_Error {
+	if subjects == nil do return nil
+	AddPaths(ctx, subjects, .Subject, false, is_curves) or_return
+	return nil
+}
+
+@(private = "file")
+AddOpenSubject :: proc(
+	ctx: ^Context,
+	opens: [][][2]FixedDef,
+	is_curves: [][]bool = nil,
+) -> Clipper_Error {
+	if opens == nil do return nil
+	AddPaths(ctx, opens, .Subject, true, is_curves) or_return
+	return nil
+}
+
+@(private = "file")
+AddClip :: proc(
+	ctx: ^Context,
+	clips: [][][2]FixedDef,
+	is_curves: [][]bool = nil,
+) -> Clipper_Error {
+	if clips == nil do return nil
+	AddPaths(ctx, clips, .Clip, false, is_curves) or_return
+	return nil
+}
+
+@(private = "file")
+AddPaths :: proc(
+	ctx: ^Context,
+	paths: [][][2]FixedDef,
+	polytype: PathType,
+	$is_open: bool,
+	is_curves: [][]bool = nil,
+) -> (
+	err: Clipper_Error,
+) {
+	when is_open do ctx.has_open_paths_ = true
+	AddPaths_(ctx, paths, polytype, is_open, is_curves) or_return
+	return
+}
+
+
+@(private = "file")
+AddPaths_ :: proc(
+	ctx: ^Context,
+	paths: [][][2]FixedDef,
+	polytype: PathType,
+	$is_open: bool,
+	is_curves: [][]bool = nil,
+) -> (
+	err: Clipper_Error,
+) {
+	total_vertices := 0
+	for path in paths {
+		total_vertices += len(path)
+	}
+	if total_vertices == 0 do return nil
+
+	all_vertices := (^Vertex)(
+		raw_data(
+			runtime.mem_alloc_non_zeroed(
+				size_of(Vertex) * total_vertices,
+				allocator = context.temp_allocator,
+			) or_return,
+		),
+	)
+
+	v := all_vertices
+	for path, path_idx in paths {
+		//for each path create a circular double linked list of vertices
+		v0 := v
+		curr_v := v
+		prev_v: ^Vertex = nil
+
+		if len(path) == 0 do continue
+
+		has_curves := is_curves != nil && path_idx < len(is_curves)
+
+		cnt := 0
+		v.prev = nil
+		for pt_idx := 0; pt_idx < len(path); pt_idx += 1 {
+			pt := path[pt_idx]
+			if prev_v != nil {
+				if prev_v.pt == pt do continue // skip duplicates
+				prev_v.next = curr_v
+			}
+
+			if has_curves {
+				cur := is_curves[path_idx]
+
+				if len(cur) > pt_idx + 1 && cur[pt_idx + 1] {
+					if len(cur) > pt_idx + 2 && cur[pt_idx + 2] {
+						curr_v.curve_kind = .Cubic
+						curr_v.c0 = path[pt_idx + 1]
+						curr_v.c1 = path[pt_idx + 2]
+						pt_idx += 2
+					} else {
+						curr_v.curve_kind = .Quad
+						curr_v.c1 = path[pt_idx + 1]
+						pt_idx += 1
+					}
+				}
+			}
+
+			curr_v.prev = prev_v
+			curr_v.pt = pt
+			curr_v.flags = {}
+			prev_v = curr_v
+			curr_v = intrinsics.ptr_offset(curr_v, 1)
+			cnt += 1
+		}
+		if prev_v == nil || prev_v.prev == nil do continue
+		when !is_open {
+			if prev_v.pt == v0.pt do prev_v = prev_v.prev
+		}
+
+		prev_v.next = v0
+		v0.prev = prev_v
+		v = curr_v // get ready for next path
+
+		if cnt < 2 do continue
+		when !is_open {
+			if cnt == 2 do continue
+		}
+
+		// find and assign local minima
+		going_up, going_up0: bool
+		when is_open {
+			curr_v = v0.next
+			for curr_v != v0 && (curr_v.pt.y == v0.pt.y) {
+				curr_v = curr_v.next
+			}
+
+			going_up = curr_v.pt.y.i <= v0.pt.y.i
+			if going_up {
+				v0.flags = {.OpenStart}
+				AddLocMin(ctx, v0, polytype, true) or_return
+			} else {
+				v0.flags = {.OpenStart, .LocalMax}
+			}
+
+		} else { 	// closed path
+			prev_v = v0.prev
+			for prev_v != v0 && (prev_v.pt.y == v0.pt.y) {
+				prev_v = prev_v.prev
+			}
+			if prev_v == v0 do continue // only open paths can be completely flat
+			going_up = prev_v.pt.y.i > v0.pt.y.i
+		}
+
+		going_up0 = going_up
+		prev_v = v0
+		curr_v = v0.next
+		for curr_v != v0 {
+			if curr_v.pt.y.i > prev_v.pt.y.i && going_up {
+				prev_v.flags += {.LocalMax}
+				going_up = false
+			} else if curr_v.pt.y.i < prev_v.pt.y.i && !going_up {
+				going_up = true
+				AddLocMin(ctx, prev_v, polytype, is_open) or_return
+			}
+			prev_v = curr_v
+			curr_v = curr_v.next
+		}
+
+		when is_open {
+			prev_v.flags += {.OpenEnd}
+			if going_up do prev_v.flags += {.LocalMax}
+			else do AddLocMin(ctx, prev_v, polytype, is_open) or_return
+		} else {
+			if going_up != going_up0 {
+				if going_up0 do AddLocMin(ctx, prev_v, polytype, false) or_return
+				else do prev_v.flags += {.LocalMax}
+			}
+		}
+	}
+	non_zero_append(&ctx.vertex_lists_, all_vertices) or_return
+	return nil
+}
+
+@(private = "file")
+AddLocMin :: proc(
+	ctx: ^Context,
+	vert: ^Vertex,
+	polytype: PathType,
+	$is_open: bool,
+) -> (
+	err: Clipper_Error,
+) {
+	if .LocalMin in vert.flags do return nil //make sure the vertex is added only once ...
+
+	vert.flags += {.LocalMin}
+	lm := new(LocalMinima, context.temp_allocator) or_return
+	lm.vertex = vert
+	lm.polytype = polytype
+	lm.is_open = is_open
+	non_zero_append(&ctx.minima_list_, lm) or_return
+	return
+}
 
 //convert fixed
 

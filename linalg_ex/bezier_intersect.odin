@@ -12,6 +12,8 @@ BezierKind :: enum u8 {
 	Cubic,
 }
 
+MaxBezierIntersections :: 9
+
 bezier_order :: #force_inline proc "contextless" (kind: BezierKind) -> int {
 	switch kind {
 	case .Line:
@@ -180,17 +182,17 @@ _extract_sub :: proc "contextless" (
 }
 
 // Bézier Clipping intersection (Sederberg-Nishita).
-// Returns the first intersection point and each input curve's t, or ok=false. //TODO Check This Code Later. (maybe only worked now.)
+// Returns all intersections found (up to fixed capacity), with each input curve's t.
 GetBezierIntersectPt :: proc "contextless" (
 	kind_a: BezierKind,
 	a_in: [4][2]$T,
 	kind_b: BezierKind,
 	b_in: [4][2]T,
 ) -> (
-	ok: bool,
-	ip: [2]T,
-	t_a: T,
-	t_b: T,
+	count: int,
+	ips: [MaxBezierIntersections][2]T,
+	t_as: [MaxBezierIntersections]T,
+	t_bs: [MaxBezierIntersections]T,
 ) where intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
 	intrinsics.type_is_float(T) {
 	one :=
@@ -199,6 +201,7 @@ GetBezierIntersectPt :: proc "contextless" (
 		}
 	zero := T(0) when intrinsics.type_is_float(T) else T{i = 0}
 	eps: T = epsilon(T) when intrinsics.type_is_float(T) else T{}
+	eps_hit := NumMul(eps, NumConst(10, T)) when intrinsics.type_is_float(T) else zero
 	four_fifth := NumRatio(4, 5, T)
 
 	Work :: _BezClipWork(T)
@@ -225,8 +228,9 @@ GetBezierIntersectPt :: proc "contextless" (
 
 		if NumLe(a_range, eps) && NumLe(b_range, eps) {
 			na := bezier_order(w.kind_a) - 1
-			ip.x = NumMid(w.a[0].x, w.a[na].x)
-			ip.y = NumMid(w.a[0].y, w.a[na].y)
+			ip := [2]T{NumMid(w.a[0].x, w.a[na].x), NumMid(w.a[0].y, w.a[na].y)}
+			t_a: T
+			t_b: T
 			if !w.swapped {
 				t_a = NumMid(w.a_lo, w.a_hi)
 				t_b = NumMid(w.b_lo, w.b_hi)
@@ -234,7 +238,22 @@ GetBezierIntersectPt :: proc "contextless" (
 				t_a = NumMid(w.b_lo, w.b_hi)
 				t_b = NumMid(w.a_lo, w.a_hi)
 			}
-			return true, ip, t_a, t_b
+
+			is_dup := false
+			for i in 0 ..< count {
+				if NumLe(NumAbs(NumSub(t_as[i], t_a)), eps_hit) &&
+				   NumLe(NumAbs(NumSub(t_bs[i], t_b)), eps_hit) {
+					is_dup = true
+					break
+				}
+			}
+			if !is_dup && count < len(ips) {
+				ips[count] = ip
+				t_as[count] = t_a
+				t_bs[count] = t_b
+				count += 1
+			}
+			continue
 		}
 
 		na := bezier_order(w.kind_a) - 1
@@ -347,7 +366,7 @@ GetBezierIntersectPt :: proc "contextless" (
 			sp += 1
 		}
 	}
-	return false, {}, zero, zero
+	return count, ips, t_as, t_bs
 }
 
 // Finds parameter t on a Bezier curve from a point by binary search.
@@ -502,10 +521,10 @@ test_2quad_curves :: proc(t: ^testing.T) {
 
 	pt1: [4]linalg.Vector2f32 = {{1.0, 0.0}, {0.0, 0.0}, {0.0, -1.0}, {}} //last leave empty
 
-	ok, _, t_a, t_b := GetBezierIntersectPt(.Quad, pt0, .Quad, pt1)
+	count, _, t_as, t_bs := GetBezierIntersectPt(.Quad, pt0, .Quad, pt1)
 
-	testing.expect_value(t, ok, true)
-	testing.expect_value(t, t_a == t_b, true)
+	testing.expect_value(t, count == 1, true)
+	testing.expect_value(t, t_as[0] == t_bs[0], true)
 	//fmt.println(ok, pt)
 }
 

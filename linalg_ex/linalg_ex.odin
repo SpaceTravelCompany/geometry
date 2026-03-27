@@ -32,7 +32,11 @@ PointInPolygonResult :: enum u8 {
 	Inside,
 }
 
-Rect_ :: struct($T: typeid) where intrinsics.type_is_numeric(T) {
+Rect_ :: struct(
+	$T: typeid
+) where intrinsics.type_is_numeric(T) ||
+	intrinsics.type_is_specialization_of(T, fixed.Fixed)
+{
 	left:   T,
 	right:  T,
 	top:    T,
@@ -51,13 +55,13 @@ Rect_Init :: #force_inline proc "contextless" (left: $T, right: T, top: T, botto
 
 Check_Rect :: #force_inline proc "contextless" (
 	_pts: [4][$N]$T,
-) -> bool where N >= 2 &&
-	intrinsics.type_is_numeric(T) {
+) -> bool where N >= 2 && intrinsics.type_is_numeric(T) ||
+	intrinsics.type_is_specialization_of(T, fixed.Fixed) {
 	return(
-		!(_pts[0].y != _pts[1].y ||
-			_pts[2].y != _pts[3].y ||
-			_pts[0].x != _pts[2].x ||
-			_pts[1].x != _pts[3].x) \
+		!(!NumEq(_pts[0].y, _pts[1].y) ||
+			!NumEq(_pts[2].y, _pts[3].y) ||
+			!NumEq(_pts[0].x, _pts[2].x) ||
+			!NumEq(_pts[1].x, _pts[3].x)) \
 	)
 }
 

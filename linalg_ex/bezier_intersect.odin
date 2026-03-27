@@ -215,14 +215,15 @@ _clip_hull :: proc "contextless" (
 
 @(private = "file")
 _BezClipWork :: struct($T: typeid) {
-	a:      [4][2]T,
-	b:      [4][2]T,
-	kind_a: BezierKind,
-	kind_b: BezierKind,
-	a_lo:   T,
-	a_hi:   T,
-	b_lo:   T,
-	b_hi:   T,
+	a:       [4][2]T,
+	b:       [4][2]T,
+	kind_a:  BezierKind,
+	kind_b:  BezierKind,
+	a_lo:    T,
+	a_hi:    T,
+	b_lo:    T,
+	b_hi:    T,
+	swapped: bool, // true when a/b correspond to original b/a
 }
 
 // Extract sub-curve for parameter range [t_lo, t_hi].
@@ -274,7 +275,7 @@ _extract_sub :: proc "contextless" (
 }
 
 // Bézier Clipping intersection (Sederberg-Nishita).
-// Returns the first intersection point found, or ok=false. //TODO Check This Code Later. (maybe only worked now.)
+// Returns the first intersection point and each input curve's t, or ok=false. //TODO Check This Code Later. (maybe only worked now.)
 GetBezierIntersectPt :: proc "contextless" (
 	kind_a: BezierKind,
 	a_in: [4][2]$T,
@@ -283,6 +284,8 @@ GetBezierIntersectPt :: proc "contextless" (
 ) -> (
 	ok: bool,
 	ip: [2]T,
+	t_a: T,
+	t_b: T,
 ) where intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
 	intrinsics.type_is_float(T) {
 	one :=
@@ -297,14 +300,15 @@ GetBezierIntersectPt :: proc "contextless" (
 	stack: [64]Work
 	sp := 1
 	stack[0] = Work {
-		a      = a_in,
-		b      = b_in,
-		kind_a = kind_a,
-		kind_b = kind_b,
-		a_lo   = zero,
-		a_hi   = one,
-		b_lo   = zero,
-		b_hi   = one,
+		a       = a_in,
+		b       = b_in,
+		kind_a  = kind_a,
+		kind_b  = kind_b,
+		a_lo    = zero,
+		a_hi    = one,
+		b_lo    = zero,
+		b_hi    = one,
+		swapped = false,
 	}
 
 	for sp > 0 {
@@ -318,7 +322,14 @@ GetBezierIntersectPt :: proc "contextless" (
 			na := bezier_order(w.kind_a) - 1
 			ip.x = _bz_mid(w.a[0].x, w.a[na].x)
 			ip.y = _bz_mid(w.a[0].y, w.a[na].y)
-			return true, ip
+			if !w.swapped {
+				t_a = _bz_mid(w.a_lo, w.a_hi)
+				t_b = _bz_mid(w.b_lo, w.b_hi)
+			} else {
+				t_a = _bz_mid(w.b_lo, w.b_hi)
+				t_b = _bz_mid(w.a_lo, w.a_hi)
+			}
+			return true, ip, t_a, t_b
 		}
 
 		na := bezier_order(w.kind_a) - 1
@@ -364,69 +375,74 @@ GetBezierIntersectPt :: proc "contextless" (
 				a_left, a_right := _split_half(w.kind_a, w.a)
 				a_mid := _bz_mid(w.a_lo, w.a_hi)
 				stack[sp] = Work {
-					a      = b_clipped,
-					b      = a_left,
-					kind_a = w.kind_b,
-					kind_b = w.kind_a,
-					a_lo   = new_b_lo,
-					a_hi   = new_b_hi,
-					b_lo   = w.a_lo,
-					b_hi   = a_mid,
+					a       = b_clipped,
+					b       = a_left,
+					kind_a  = w.kind_b,
+					kind_b  = w.kind_a,
+					a_lo    = new_b_lo,
+					a_hi    = new_b_hi,
+					b_lo    = w.a_lo,
+					b_hi    = a_mid,
+					swapped = !w.swapped,
 				}
 				sp += 1
 				stack[sp] = Work {
-					a      = b_clipped,
-					b      = a_right,
-					kind_a = w.kind_b,
-					kind_b = w.kind_a,
-					a_lo   = new_b_lo,
-					a_hi   = new_b_hi,
-					b_lo   = a_mid,
-					b_hi   = w.a_hi,
+					a       = b_clipped,
+					b       = a_right,
+					kind_a  = w.kind_b,
+					kind_b  = w.kind_a,
+					a_lo    = new_b_lo,
+					a_hi    = new_b_hi,
+					b_lo    = a_mid,
+					b_hi    = w.a_hi,
+					swapped = !w.swapped,
 				}
 				sp += 1
 			} else {
 				b_left, b_right := _split_half(w.kind_b, b_clipped)
 				b_mid := _bz_mid(new_b_lo, new_b_hi)
 				stack[sp] = Work {
-					a      = b_left,
-					b      = w.a,
-					kind_a = w.kind_b,
-					kind_b = w.kind_a,
-					a_lo   = new_b_lo,
-					a_hi   = b_mid,
-					b_lo   = w.a_lo,
-					b_hi   = w.a_hi,
+					a       = b_left,
+					b       = w.a,
+					kind_a  = w.kind_b,
+					kind_b  = w.kind_a,
+					a_lo    = new_b_lo,
+					a_hi    = b_mid,
+					b_lo    = w.a_lo,
+					b_hi    = w.a_hi,
+					swapped = !w.swapped,
 				}
 				sp += 1
 				stack[sp] = Work {
-					a      = b_right,
-					b      = w.a,
-					kind_a = w.kind_b,
-					kind_b = w.kind_a,
-					a_lo   = b_mid,
-					a_hi   = new_b_hi,
-					b_lo   = w.a_lo,
-					b_hi   = w.a_hi,
+					a       = b_right,
+					b       = w.a,
+					kind_a  = w.kind_b,
+					kind_b  = w.kind_a,
+					a_lo    = b_mid,
+					a_hi    = new_b_hi,
+					b_lo    = w.a_lo,
+					b_hi    = w.a_hi,
+					swapped = !w.swapped,
 				}
 				sp += 1
 			}
 		} else {
 			if sp + 1 > len(stack) do continue
 			stack[sp] = Work {
-				a      = b_clipped,
-				b      = w.a,
-				kind_a = w.kind_b,
-				kind_b = w.kind_a,
-				a_lo   = new_b_lo,
-				a_hi   = new_b_hi,
-				b_lo   = w.a_lo,
-				b_hi   = w.a_hi,
+				a       = b_clipped,
+				b       = w.a,
+				kind_a  = w.kind_b,
+				kind_b  = w.kind_a,
+				a_lo    = new_b_lo,
+				a_hi    = new_b_hi,
+				b_lo    = w.a_lo,
+				b_hi    = w.a_hi,
+				swapped = !w.swapped,
 			}
 			sp += 1
 		}
 	}
-	return false, {}
+	return false, {}, zero, zero
 }
 
 
@@ -436,9 +452,11 @@ test_2quad_curves :: proc(t: ^testing.T) {
 
 	pt1: [4]linalg.Vector2f32 = {{1.0, 0.0}, {0.0, 0.0}, {0.0, -1.0}, {}} //last leave empty
 
-	ok, pt := GetBezierIntersectPt(.Quad, pt0, .Quad, pt1)
+	ok, pt, t_a, t_b := GetBezierIntersectPt(.Quad, pt0, .Quad, pt1)
+
 
 	testing.expect_value(t, ok, true)
+	testing.expect_value(t, t_a == t_b, true)
 	//fmt.println(ok, pt)
 }
 

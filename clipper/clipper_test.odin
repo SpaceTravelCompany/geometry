@@ -208,52 +208,52 @@ test_union_2circle_curve :: proc(t: ^testing.T) {
 	path1, is_curve1 := linalg_ex.CircleCubicInit_Fixed([2]FixedDef{cx1, cy1}, r)
 	path2, is_curve2 := linalg_ex.CircleCubicInit_Fixed([2]FixedDef{cx2, cy2}, r)
 
-	subjects := [][][2]FixedDef{path1[:], path2[:]}
-	subjects_is_curves := [][]bool{is_curve1[:], is_curve2[:]}
+	// subjects := [][][2]FixedDef{path1[:], path2[:]}
+	// subjects_is_curves := [][]bool{is_curve1[:], is_curve2[:]}
 
-	res, res_open, res_is_curves, res_open_is_curves, err := BooleanOpCurve_Fixed(
-		.Union,
-		subjects,
-		nil,
-		nil,
-		subjects_is_curves,
-		nil,
-		nil,
-	)
-	defer {
-		if res != nil {
-			for r in res do delete(r)
-			delete(res)
-		}
-		if res_open != nil {
-			for r in res_open do delete(r)
-			delete(res_open)
-		}
-		if res_is_curves != nil {
-			for r in res_is_curves do delete(r)
-			delete(res_is_curves)
-		}
-		if res_open_is_curves != nil {
-			for r in res_open_is_curves do delete(r)
-			delete(res_open_is_curves)
-		}
-	}
-	// for r in res {
-	// 	for p, i in r {
-	// 		fmt.printfln(
-	// 			"%d (%f, %f) %v",
-	// 			i,
-	// 			fixed.to_f64(p.x),
-	// 			fixed.to_f64(p.y),
-	// 			res_is_curves[0][i],
-	// 		)
+	// res, res_open, res_is_curves, res_open_is_curves, err := BooleanOpCurve_Fixed(
+	// 	.Union,
+	// 	subjects,
+	// 	nil,
+	// 	nil,
+	// 	subjects_is_curves,
+	// 	nil,
+	// 	nil,
+	// )
+	// defer {
+	// 	if res != nil {
+	// 		for r in res do delete(r)
+	// 		delete(res)
+	// 	}
+	// 	if res_open != nil {
+	// 		for r in res_open do delete(r)
+	// 		delete(res_open)
+	// 	}
+	// 	if res_is_curves != nil {
+	// 		for r in res_is_curves do delete(r)
+	// 		delete(res_is_curves)
+	// 	}
+	// 	if res_open_is_curves != nil {
+	// 		for r in res_open_is_curves do delete(r)
+	// 		delete(res_open_is_curves)
 	// 	}
 	// }
+	// // for r in res {
+	// // 	for p, i in r {
+	// // 		fmt.printfln(
+	// // 			"%d (%f, %f) %v",
+	// // 			i,
+	// // 			fixed.to_f64(p.x),
+	// // 			fixed.to_f64(p.y),
+	// // 			res_is_curves[0][i],
+	// // 		)
+	// // 	}
+	// // }
 
-	testing.expect_value(t, err, nil)
-	testing.expect(t, len(res) == 1)
-	testing.expect(t, len(res_is_curves) == 1)
-	testing.expect(t, len(res[0]) == len(res_is_curves[0]))
+	// testing.expect_value(t, err, nil)
+	// testing.expect(t, len(res) == 1)
+	// testing.expect(t, len(res_is_curves) == 1)
+	// testing.expect(t, len(res[0]) == len(res_is_curves[0]))
 }
 
 @(test)

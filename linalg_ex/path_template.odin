@@ -1,6 +1,7 @@
 package linalg_ex
 
 import "base:intrinsics"
+import "core:math"
 import "core:math/fixed"
 
 
@@ -39,7 +40,11 @@ CircleCubicInit_Fixed :: proc "contextless" (
 	is_curves: [12]bool,
 ) {
 	t: T
-	fixed.init_from_parts(t, 0, Backing(f64(1 << Fraction_Width) * 0.55228474983079332144))
+	fixed.init_from_parts(
+		&t,
+		0,
+		Backing(math.floor(f64(1 << Fraction_Width) * 0.55228474983079332144)),
+	)
 	tt := fixed.mul(t, _r)
 	cx := _center.x
 	cy := _center.y
@@ -171,7 +176,11 @@ RoundRectLineInit_Fixed :: proc "contextless" (
 	if fixed.sub(half_height, r).i < 0 do r = half_height
 
 	t: F
-	fixed.init_from_parts(t, 0, Backing(f64(1 << Fraction_Width) * 0.55228474983079332144))
+	fixed.init_from_parts(
+		&t,
+		0,
+		Backing(math.floor(f64(1 << Fraction_Width) * 0.55228474983079332144)),
+	)
 	tt := fixed.mul(t, r)
 
 	L := _rect.left
@@ -239,7 +248,11 @@ EllipseCubicInit_Fixed :: proc "contextless" (
 	is_curves: [12]bool,
 ) {
 	t: T
-	fixed.init_from_parts(t, 0, Backing(f64(1 << Fraction_Width) * 0.55228474983079332144))
+	fixed.init_from_parts(
+		&t,
+		0,
+		Backing(math.floor(f64(1 << Fraction_Width) * 0.55228474983079332144)),
+	)
 
 	ttx := fixed.mul(t, _rxy.x)
 	tty := fixed.mul(t, _rxy.y)

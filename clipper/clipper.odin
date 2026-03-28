@@ -3,9 +3,10 @@ package clipper
 import "../linalg_ex"
 import "base:intrinsics"
 import "base:runtime"
+import "core:container/avl"
 import pq "core:container/priority_queue"
 import "core:math/fixed"
-import "core:slice"
+import "core:sys/darwin/Security"
 import "shared:utils_private"
 
 FixedDef :: fixed.Fixed(i64, 38)
@@ -48,7 +49,7 @@ LeftOrRight :: enum u8 {
 @(private = "file")
 Context :: struct {
 	scanline_list_:  pq.Priority_Queue(^SweepEvent),
-	sweep_list_:     pq.Priority_Queue(^SweepEvent),
+	sweep_list_:     avl.Tree(^SweepEvent),
 	out:             [dynamic][dynamic]OutPt,
 	out_is_open:     [dynamic]bool,
 	/*
@@ -271,8 +272,34 @@ CopySolutionPathsToSlices :: proc(
 }
 
 @(private = "file")
-SweepList_Less :: proc(a, b: ^SweepEvent) -> bool {
-	return true
+YatX :: proc(a: ^SweepEvent, x: FixedDef) -> FixedDef {
+	return {} //TODO
+}
+
+@(private = "file")
+SweepList_Cmp :: proc(a, b: ^SweepEvent) -> avl.Ordering {
+	ay := YatX(a, a.pt.x)
+	by := YatX(b, b.pt.x)
+
+	if ay.i < by.i do return .Less
+	else if ay.i > by.i do return .Greater
+
+	if a.other.pt.y.i < b.other.pt.y.i do return .Less
+	else if a.other.pt.y.i > b.other.pt.y.i do return .Greater
+
+	return .Equal
+}
+
+@(private = "file")
+Scanline_Less :: proc(a, b: ^SweepEvent) -> bool {
+	if a.pt.x.i == b.pt.x.i {
+		if a.pt.y.i == b.pt.y.i {
+			if a.left_or_right != b.left_or_right do return a.left_or_right == .Right
+			return a.other.pt.y.i < b.other.pt.y.i
+		}
+		return a.pt.y.i < b.pt.y.i
+	}
+	return a.pt.x.i < b.pt.x.i
 }
 
 //convert fixed
@@ -348,23 +375,14 @@ BooleanOpCurve_Fixed :: proc(
 	}
 
 	// 작은 x가 먼저 나옴
-	pq.init(&ctx.scanline_list_, proc(a, b: ^SweepEvent) -> bool {
-			if a.pt.x.i == b.pt.x.i {
-				if a.pt.y.i == b.pt.y.i {
-					if a.left_or_right != b.left_or_right do return a.left_or_right == .Right
-					return a.other.pt.y.i < b.other.pt.y.i
-				}
-				return a.pt.y.i < b.pt.y.i
-			}
-			return a.pt.x.i < b.pt.x.i
-		}, pq.default_swap_proc(^SweepEvent), allocator = context.temp_allocator) or_return
-
 	pq.init(
-		&ctx.sweep_list_,
-		SweepList_Less,
+		&ctx.scanline_list_,
+		Scanline_Less,
 		pq.default_swap_proc(^SweepEvent),
 		allocator = context.temp_allocator,
 	) or_return
+
+	avl.init_cmp(&ctx.sweep_list_, SweepList_Cmp, context.temp_allocator)
 
 	AddSubject(&ctx, subjects, subjects_is_curves) or_return
 	AddOpenSubject(&ctx, opens, opens_is_curves) or_return

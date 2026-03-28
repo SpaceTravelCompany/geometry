@@ -1,7 +1,6 @@
 package linalg_ex
 
 import "base:intrinsics"
-import "core:math"
 import "core:math/fixed"
 
 
@@ -39,7 +38,7 @@ CircleCubicInit_Fixed :: proc "contextless" (
 	pts: [12][2]T,
 	is_curves: [12]bool,
 ) {
-	t: F
+	t: T
 	fixed.init_from_parts(t, 0, Backing(f64(1 << Fraction_Width) * 0.55228474983079332144))
 	tt := fixed.mul(t, _r)
 	cx := _center.x

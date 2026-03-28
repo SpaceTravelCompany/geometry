@@ -160,30 +160,16 @@ AddClip :: proc(
 AddPaths :: proc(
 	ctx: ^Context,
 	paths: [][][2]FixedDef,
-	polytype: PathType,
+	$polytype: PathType,
 	$is_open: bool,
 	is_curves: [][]bool = nil,
 ) -> (
 	err: Clipper_Error,
 ) {
 	when is_open do ctx.has_open_paths_ = true
-	AddPaths_(ctx, paths, polytype, is_open, is_curves) or_return
+
+
 	return
-}
-
-
-@(private = "file")
-AddPaths_ :: proc(
-	ctx: ^Context,
-	paths: [][][2]FixedDef,
-	polytype: PathType,
-	$is_open: bool,
-	is_curves: [][]bool = nil,
-) -> (
-	err: Clipper_Error,
-) {
-
-	return nil
 }
 
 @(private = "file")
@@ -284,6 +270,11 @@ CopySolutionPathsToSlices :: proc(
 	return res, res_is_curves, nil
 }
 
+@(private = "file")
+SweepList_Less :: proc(a, b: ^SweepEvent) -> bool {
+	return true
+}
+
 //convert fixed
 
 @(private = "file")
@@ -357,11 +348,20 @@ BooleanOpCurve_Fixed :: proc(
 	}
 
 	// 작은 x가 먼저 나옴
+	pq.init(&ctx.scanline_list_, proc(a, b: ^SweepEvent) -> bool {
+			if a.pt.x.i == b.pt.x.i {
+				if a.pt.y.i == b.pt.y.i {
+					if a.left_or_right != b.left_or_right do return a.left_or_right == .Right
+					return a.other.pt.y.i < b.other.pt.y.i
+				}
+				return a.pt.y.i < b.pt.y.i
+			}
+			return a.pt.x.i < b.pt.x.i
+		}, pq.default_swap_proc(^SweepEvent), allocator = context.temp_allocator) or_return
+
 	pq.init(
-		&ctx.scanline_list_,
-		proc(a, b: ^SweepEvent) -> bool {
-			return true //TODO
-		},
+		&ctx.sweep_list_,
+		SweepList_Less,
 		pq.default_swap_proc(^SweepEvent),
 		allocator = context.temp_allocator,
 	) or_return

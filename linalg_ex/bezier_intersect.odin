@@ -430,7 +430,7 @@ EvalBezier :: proc "contextless" (
 	u := NumSub(one, t)
 	two := NumConst(2, T)
 	three := NumConst(3, T)
-	switch kind {
+	#partial switch kind {
 	case .Quad:
 		p0, p1, p2 := pts[0], pts[1], pts[2]
 		uu := NumMul(u, u)

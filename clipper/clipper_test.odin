@@ -1,5 +1,6 @@
 package clipper
 
+import "../linalg_ex"
 import "base:intrinsics"
 import "core:fmt"
 import "core:math/fixed"
@@ -184,54 +185,6 @@ test_intersection_2square :: proc(t: ^testing.T) {
 	testing.expect_value(t, len(res[0]), 4)
 }
 
-@(private)
-_make_circle_path :: proc(
-	cx, cy, r: FixedDef,
-	allocator := context.allocator,
-) -> (
-	path: [][2]FixedDef,
-	is_curve: []bool,
-) {
-	kappa: FixedDef
-	fixed.init_from_f64(&kappa, 0.5522847498)
-	kr := fixed.mul(kappa, r)
-
-	path = make([][2]FixedDef, 12, allocator)
-	is_curve = make([]bool, 12, allocator)
-
-	// 4 cubic Bézier arcs, CCW winding
-	// Right anchor
-	path[0] = {fixed.add(cx, r), cy}
-	// Right → Top controls
-	path[1] = {fixed.add(cx, r), fixed.add(cy, kr)}
-	path[2] = {fixed.add(cx, kr), fixed.add(cy, r)}
-	// Top anchor
-	path[3] = {cx, fixed.add(cy, r)}
-	// Top → Left controls
-	path[4] = {fixed.sub(cx, kr), fixed.add(cy, r)}
-	path[5] = {fixed.sub(cx, r), fixed.add(cy, kr)}
-	// Left anchor
-	path[6] = {fixed.sub(cx, r), cy}
-	// Left → Bottom controls
-	path[7] = {fixed.sub(cx, r), fixed.sub(cy, kr)}
-	path[8] = {fixed.sub(cx, kr), fixed.sub(cy, r)}
-	// Bottom anchor
-	path[9] = {cx, fixed.sub(cy, r)}
-	// Bottom → Right controls
-	path[10] = {fixed.add(cx, kr), fixed.sub(cy, r)}
-	path[11] = {fixed.add(cx, r), fixed.sub(cy, kr)}
-
-	is_curve[1] = true
-	is_curve[2] = true
-	is_curve[4] = true
-	is_curve[5] = true
-	is_curve[7] = true
-	is_curve[8] = true
-	is_curve[10] = true
-	is_curve[11] = true
-	return
-}
-
 @(test)
 test_union_2circle_curve :: proc(t: ^testing.T) {
 	r := FixedDef {
@@ -252,16 +205,11 @@ test_union_2circle_curve :: proc(t: ^testing.T) {
 		i = 0,
 	}
 
-	path1, is_curve1 := _make_circle_path(cx1, cy1, r)
-	defer delete(path1)
-	defer delete(is_curve1)
+	path1, is_curve1 := linalg_ex.CircleCubicInit_Fixed([2]FixedDef{cx1, cy1}, r)
+	path2, is_curve2 := linalg_ex.CircleCubicInit_Fixed([2]FixedDef{cx2, cy2}, r)
 
-	path2, is_curve2 := _make_circle_path(cx2, cy2, r)
-	defer delete(path2)
-	defer delete(is_curve2)
-
-	subjects := [][][2]FixedDef{path1, path2}
-	subjects_is_curves := [][]bool{is_curve1, is_curve2}
+	subjects := [][][2]FixedDef{path1[:], path2[:]}
+	subjects_is_curves := [][]bool{is_curve1[:], is_curve2[:]}
 
 	res, res_open, res_is_curves, res_open_is_curves, err := BooleanOpCurve_Fixed(
 		.Union,

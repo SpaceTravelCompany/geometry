@@ -14,7 +14,7 @@ Recti32 :: Rect_(i32)
 Rectu32 :: Rect_(u32)
 Rectf32 :: Rect_(f32)
 
-center_pt_pos :: enum {
+CenterPtPos :: enum {
 	Center,
 	Left,
 	Right,
@@ -402,7 +402,6 @@ max_fixed :: proc "contextless" (
 	intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
 	return v0.i > v1.i ? v0 : v1
 }
-
 
 SubdivLine :: proc "contextless" (
 	pts: [2][2]$T,

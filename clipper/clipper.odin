@@ -6,7 +6,6 @@ import "base:runtime"
 import "core:container/avl"
 import pq "core:container/priority_queue"
 import "core:math/fixed"
-import "core:sys/darwin/Security"
 import "shared:utils_private"
 
 FixedDef :: fixed.Fixed(i64, 38)
@@ -14,6 +13,9 @@ FixedDef :: fixed.Fixed(i64, 38)
 __Clipper_Error :: enum {
 	ADD_LOCAL_MAX_POLY_FAILED,
 	FAILED,
+	CANT_FIRST_CURVE,
+	OPEN_CURVE_END,
+	TOO_SMALL,
 }
 Clipper_Error :: union #shared_nil {
 	__Clipper_Error,
@@ -96,31 +98,12 @@ _fixed_const :: #force_inline proc "contextless" (num: i64) -> FixedDef {
 	return FixedDef{i = num << Frac}
 }
 
-@(private = "file") // TODO 최적화 필요 나중에
-_isqrt_u128 :: #force_inline proc "contextless" (n: u128) -> u128 {
-	if n == 0 do return 0
-	n := n
-	res: u128 = 0
-	bit: u128 = u128(1) << 126
-	for bit > n do bit >>= 2
-	for bit != 0 {
-		if n >= res + bit {
-			n -= res + bit
-			res = (res >> 1) + bit
-		} else {
-			res >>= 1
-		}
-		bit >>= 2
-	}
-	return res
-}
-
 @(private = "file")
 _fixed_sqrt :: #force_inline proc "contextless" (v: FixedDef) -> FixedDef {
 	Frac :: intrinsics.type_polymorphic_record_parameter_value(FixedDef, 1)
 	scaled := u128(v.i) << Frac
-	root := _isqrt_u128(scaled)
-	if root > u128(max(i64)) do return FixedDef{i = max(i64)}
+	root :=
+		scaled > u128(max(u64)) ? u64(utils_private.sqrt_128(scaled)) : utils_private.sqrt_64(u64(scaled))
 	return FixedDef{i = i64(root)}
 }
 
@@ -169,7 +152,81 @@ AddPaths :: proc(
 ) {
 	when is_open do ctx.has_open_paths_ = true
 
+	sweep_line: [2]^SweepEvent
+	sweep_line_cnt := 0
+	for path, i in paths {
+		curves: []bool = nil
+		if is_curves != nil && len(is_curves) > i {
+			curves = is_curves[i]
+			if curves[0] do return .CANT_FIRST_CURVE
+		}
+		when is_open {
+			if len(path) < 2 do return .TOO_SMALL
+		} else {
+			if len(path) < 3 do return .TOO_SMALL
+		}
 
+		j := 0
+		closed := false
+		for {
+			when is_open {
+				if j >= len(path) do break
+			} else {
+				if j >= len(path) {
+					j = 0 // 시작점으로 되돌아와서 닫는다.
+					closed = true
+				} else if closed {
+					break
+				}
+			}
+			sweep := utils_private.new_non_zeroed(SweepEvent, context.temp_allocator) or_return
+			sweep.pt = path[j]
+			sweep.winding_cnt = 0 //? 초기값 필요?
+			sweep.inside = false //? 초기값 필요?
+			sweep.pathType = polytype
+
+			if curves != nil && !closed { 	// (시작점)끝점인 경우 곡선처리 X
+				if j + 1 <= len(curves) - 1 && curves[j + 1] {
+					sweep.c0 = path[j]
+
+					if j + 2 <= len(curves) - 1 && curves[j + 2] {
+						sweep.c1 = path[j + 1]
+						sweep.curve_kind = .Cubic
+					} else {
+						sweep.curve_kind = .Quad
+					}
+				} else {
+					sweep.curve_kind = .Line
+				}
+			} else {
+				sweep.curve_kind = .Line
+			}
+
+			sweep_line[sweep_line_cnt] = sweep
+			sweep_line_cnt += 1
+			if sweep_line_cnt == 2 {
+				sweep_line[0].other = sweep_line[1]
+				sweep_line[1].other = sweep_line[0]
+
+				if sweep_line[0].pt.x.i == sweep_line[1].pt.x.i {
+					sweep_line[0].left_or_right =
+						sweep_line[0].pt.y.i < sweep_line[1].pt.y.i ? .Left : .Right
+				} else {
+					sweep_line[0].left_or_right =
+						sweep_line[0].pt.x.i < sweep_line[1].pt.x.i ? .Left : .Right
+				}
+				sweep_line[1].left_or_right = sweep_line[0].left_or_right == .Left ? .Right : .Left
+
+				pq.push(&ctx.scanline_list_, sweep_line[0]) or_return
+				pq.push(&ctx.scanline_list_, sweep_line[1]) or_return
+				sweep_line_cnt = 0
+			} else {
+				j += 1 // sweep_line_cnt == 2일때는 j를 더하지 않아서 다음 시작점이 이전 끝점과 동일해야 한다.
+				if sweep.curve_kind == .Cubic do j += 2
+				else if sweep.curve_kind == .Quad do j += 1
+			}
+		}
+	}
 	return
 }
 

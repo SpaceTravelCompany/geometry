@@ -424,19 +424,19 @@ SubdivQuadraticBezier :: proc "contextless" (
 	pts: [3][2]$T,
 	subdiv: T,
 ) -> (
-	pt01, pt012, pt12: [2]T,
+	pt1, pt12, pt2: [2]T,
 ) where intrinsics.type_is_float(T) ||
 	intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
 	intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
 	when intrinsics.type_is_float(T) {
-		pt01 = linalg.lerp(pts[0], pts[1], subdiv)
-		pt12 = linalg.lerp(pts[1], pts[2], subdiv)
-		pt012 = linalg.lerp(pt01, pt12, subdiv)
+		pt1 = linalg.lerp(pts[0], pts[1], subdiv)
+		pt2 = linalg.lerp(pts[1], pts[2], subdiv)
+		pt12 = linalg.lerp(pt1, pt2, subdiv)
 	} else {
 		subdiv2 := splat_2_fixed(subdiv)
-		pt01 = lerp_fixed(pts[0], pts[1], subdiv2)
-		pt12 = lerp_fixed(pts[1], pts[2], subdiv2)
-		pt012 = lerp_fixed(pt01, pt12, subdiv2)
+		pt1 = lerp_fixed(pts[0], pts[1], subdiv2)
+		pt2 = lerp_fixed(pts[1], pts[2], subdiv2)
+		pt12 = lerp_fixed(pt1, pt2, subdiv2)
 	}
 	return
 }

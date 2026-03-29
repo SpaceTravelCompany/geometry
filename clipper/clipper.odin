@@ -141,6 +141,32 @@ AddClip :: proc(
 }
 
 @(private = "file")
+SetLeftOrRight :: proc "contextless" (sweep: ^SweepEvent) {
+	if sweep.pt.x.i == sweep.other.x.i {
+		sweep.left_or_right = sweep.pt.y.i < sweep.other.y.i ? .Left : .Right
+	} else {
+		sweep.left_or_right = sweep.pt.x.i < sweep.other.x.i ? .Left : .Right
+	}
+}
+
+@(private = "file")
+NewSweep :: proc(
+	pt: [2]FixedDef,
+	path_type: PathType,
+) -> (
+	sweep: ^SweepEvent,
+	err: Clipper_Error,
+) {
+	sweep = utils_private.new_non_zeroed(SweepEvent, context.temp_allocator) or_return
+	sweep.pt = pt
+	sweep.winding_cnt = 0 //? 초기값 필요?
+	sweep.inside = false //? 초기값 필요?
+	sweep.pathType = path_type
+
+	return
+}
+
+@(private = "file")
 AddPaths :: proc(
 	ctx: ^Context,
 	paths: [][][2]FixedDef,
@@ -173,16 +199,11 @@ AddPaths :: proc(
 					break
 				}
 			}
-			sweep := utils_private.new_non_zeroed(SweepEvent, context.temp_allocator) or_return
-			sweep.pt = path[j]
-			sweep.winding_cnt = 0 //? 초기값 필요?
-			sweep.inside = false //? 초기값 필요?
-			sweep.pathType = polytype
+			sweep := NewSweep(path[j], polytype) or_return
 
 			if curves != nil { 	//TODO 이웃한 점이 좌표가 완전히 겹칠때 처리? 일단 생각안함.
 				if j + 1 <= len(curves) - 1 && curves[j + 1] {
 					sweep.c0 = path[j]
-
 					if j + 2 <= len(curves) - 1 && curves[j + 2] {
 						sweep.c1 = path[j + 1]
 						sweep.curve_kind = .Cubic
@@ -194,7 +215,6 @@ AddPaths :: proc(
 				} else {
 					sweep.curve_kind = .Line
 				}
-
 			} else {
 				sweep.curve_kind = .Line
 			}
@@ -205,12 +225,87 @@ AddPaths :: proc(
 			} else {
 				sweep.other = path[j]
 			}
-			if sweep.pt.x.i == sweep.other.x.i {
-				sweep.left_or_right = sweep.pt.y.i < sweep.other.y.i ? .Left : .Right
-			} else {
-				sweep.left_or_right = sweep.pt.x.i < sweep.other.x.i ? .Left : .Right
+			ONE: FixedDef.Backing : (1 << FixedDef.Fraction_Width)
+			if sweep.curve_kind == .Quad {
+				t, _ := linalg_ex.GetBezierTForXMonotone(
+					.Quad,
+					[4]FixedDef{sweep.pt.x, sweep.c0.x, sweep.other.x, {}},
+				)
+				if t.i > 0 && t.i < ONE {
+					p1, p12, p2 := linalg_ex.SubdivQuadraticBezier(
+						[3][2]FixedDef{sweep.pt, sweep.c0, sweep.other},
+						t,
+					)
+					end := sweep.other
+					sweep.c0 = p1
+					sweep.other = p12
+					SetLeftOrRight(sweep)
+					pq.push(&ctx.scanline_list_, sweep) or_return
+
+					sweep = NewSweep(sweep.other, polytype) or_return
+					sweep.curve_kind = .Quad
+					sweep.c0 = p2
+					sweep.other = end
+				}
+			} else if sweep.curve_kind == .Cubic {
+				t0, t1 := linalg_ex.GetBezierTForXMonotone(
+					.Cubic,
+					[4]FixedDef{sweep.pt.x, sweep.c0.x, sweep.c1.x, sweep.other.x},
+				)
+				if t0.i > 0 && t0.i < ONE && (t1.i <= 0 || t1.i >= ONE) { 	// t0만 유효할경우 한번만 나눈다.
+					c0, c1, m, d0, d1 := linalg_ex.SubdivCubicBezier(
+						[4][2]FixedDef{sweep.pt, sweep.c0, sweep.c1, sweep.other},
+						t0,
+					)
+					end := sweep.other
+
+					sweep.c0 = c0
+					sweep.c1 = c1
+					sweep.other = m
+					SetLeftOrRight(sweep)
+					pq.push(&ctx.scanline_list_, sweep) or_return
+
+					sweep = NewSweep(sweep.other, polytype) or_return
+					sweep.curve_kind = .Cubic
+					sweep.c0 = d0
+					sweep.c1 = d1
+					sweep.other = end
+				} else if t0.i > 0 && t0.i < ONE && t1.i > 0 && t1.i < ONE { 	// 둘다 유효하면 삼등분
+					c0, c1, m, d0, d1 := linalg_ex.SubdivCubicBezier(
+						[4][2]FixedDef{sweep.pt, sweep.c0, sweep.c1, sweep.other},
+						t0,
+					)
+					end := sweep.other
+
+					sweep.c0 = c0
+					sweep.c1 = c1
+					sweep.other = m
+					SetLeftOrRight(sweep)
+					pq.push(&ctx.scanline_list_, sweep) or_return
+
+					t1 = fixed.div(fixed.sub(t1, t0), fixed.sub(FixedDef{i = ONE}, t0))
+					cc0, cc1, mm, dd0, dd1 := linalg_ex.SubdivCubicBezier(
+						[4][2]FixedDef{m, d0, d1, end},
+						t1,
+					)
+
+					sweep = NewSweep(sweep.other, polytype) or_return
+					sweep.curve_kind = .Cubic
+					sweep.c0 = cc0
+					sweep.c1 = cc1
+					sweep.other = mm
+					SetLeftOrRight(sweep)
+					pq.push(&ctx.scanline_list_, sweep) or_return
+
+					sweep = NewSweep(sweep.other, polytype) or_return
+					sweep.curve_kind = .Cubic
+					sweep.c0 = dd0
+					sweep.c1 = dd1
+					sweep.other = end
+				}
 			}
 
+			SetLeftOrRight(sweep)
 			pq.push(&ctx.scanline_list_, sweep) or_return
 		}
 	}
@@ -432,7 +527,6 @@ BooleanOpCurve_Fixed :: proc(
 	AddOpenSubject(&ctx, opens, opens_is_curves) or_return
 	AddClip(&ctx, clips, clips_is_curves) or_return
 
-	y: FixedDef
 	pop_res := PopScanline(&ctx) or_return
 
 	if (pop_res == nil) do return nil, nil, nil, nil, .FAILED

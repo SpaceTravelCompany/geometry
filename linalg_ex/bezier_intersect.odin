@@ -518,7 +518,7 @@ EvalBezierTangent :: proc "contextless" (
 //return -1 if failed
 GetBezierTForXMonotone :: proc(
 	kind: BezierKind,
-	pts: [4][2]$T,
+	pts: [4]$T,
 ) -> (
 	t0: T,
 	t1: T,
@@ -526,9 +526,9 @@ GetBezierTForXMonotone :: proc(
 	intrinsics.type_is_float(T) {
 	if kind == .Quad {
 		// dx/dt = A + B·t = 0
-		x0, x1, x2 := pts[0].x, pts[1].x, pts[2].x
+		x0, x1, x2 := pts[0], pts[1], pts[2]
 		A: T = NumAdd(NumMul(NumConst(-2, T), x0), NumMul(NumConst(2, T), x1))
-		B: T = NumMul(NumConst(2, T), NumAdd(NumSub(p0[0], NumMul(NumConst(2, T), x1)), x2))
+		B: T = NumMul(NumConst(2, T), NumAdd(NumSub(x0, NumMul(NumConst(2, T), x1)), x2))
 
 		if NumEq(B, NumConst(0, T)) do return NumConst(-1, T), NumConst(-1, T)
 		return NumDiv(NumSign(A), B), NumConst(-1, T)
@@ -538,7 +538,7 @@ GetBezierTForXMonotone :: proc(
 		three := NumConst(3, T)
 		six := NumConst(6, T)
 		four := NumConst(4, T)
-		x0, x1, x2, x3 := pts[0].x, pts[1].x, pts[2].x, pts[3].x
+		x0, x1, x2, x3 := pts[0], pts[1], pts[2], pts[3]
 		coef_A := NumMul(
 			three,
 			NumAdd(NumSub(NumMul(three, x1), x0), NumSub(x3, NumMul(three, x2))),

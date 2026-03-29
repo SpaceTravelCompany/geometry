@@ -2,7 +2,9 @@
 package linalg_ex
 
 import "base:intrinsics"
+import "core:math"
 import "core:math/fixed"
+import "shared:utils_private"
 import "shared:utils_private/fixed_bcd"
 
 NumAdd :: #force_inline proc "contextless" (
@@ -10,7 +12,9 @@ NumAdd :: #force_inline proc "contextless" (
 ) -> T where intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
 	intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) ||
 	intrinsics.type_is_float(T) {
-	when intrinsics.type_is_float(T) {return a + b} else when intrinsics.type_is_specialization_of(T, fixed.Fixed) {return fixed.add(a, b)} else {return fixed_bcd.add(a, b)}
+	when intrinsics.type_is_float(
+		T,
+	) {return a + b} else when intrinsics.type_is_specialization_of(T, fixed.Fixed) {return fixed.add(a, b)} else {return fixed_bcd.add(a, b)}
 }
 
 NumSub :: #force_inline proc "contextless" (
@@ -18,7 +22,17 @@ NumSub :: #force_inline proc "contextless" (
 ) -> T where intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
 	intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) ||
 	intrinsics.type_is_float(T) {
-	when intrinsics.type_is_float(T) {return a - b} else when intrinsics.type_is_specialization_of(T, fixed.Fixed) {return fixed.sub(a, b)} else {return fixed_bcd.sub(a, b)}
+	when intrinsics.type_is_float(
+		T,
+	) {return a - b} else when intrinsics.type_is_specialization_of(T, fixed.Fixed) {return fixed.sub(a, b)} else {return fixed_bcd.sub(a, b)}
+}
+
+NumSign :: #force_inline proc "contextless" (
+	a: $T,
+) -> T where intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
+	intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) ||
+	intrinsics.type_is_float(T) {
+	when intrinsics.type_is_float(T) {return -a} else {return T{i = -a.i}}
 }
 
 NumMul :: #force_inline proc "contextless" (
@@ -26,7 +40,9 @@ NumMul :: #force_inline proc "contextless" (
 ) -> T where intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
 	intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) ||
 	intrinsics.type_is_float(T) {
-	when intrinsics.type_is_float(T) {return a * b} else when intrinsics.type_is_specialization_of(T, fixed.Fixed) {return fixed.mul(a, b)} else {return fixed_bcd.mul(a, b)}
+	when intrinsics.type_is_float(
+		T,
+	) {return a * b} else when intrinsics.type_is_specialization_of(T, fixed.Fixed) {return fixed.mul(a, b)} else {return fixed_bcd.mul(a, b)}
 }
 
 NumDiv :: #force_inline proc "contextless" (
@@ -34,7 +50,9 @@ NumDiv :: #force_inline proc "contextless" (
 ) -> T where intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
 	intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) ||
 	intrinsics.type_is_float(T) {
-	when intrinsics.type_is_float(T) {return a / b} else when intrinsics.type_is_specialization_of(T, fixed.Fixed) {return fixed.div(a, b)} else {return fixed_bcd.div(a, b)}
+	when intrinsics.type_is_float(
+		T,
+	) {return a / b} else when intrinsics.type_is_specialization_of(T, fixed.Fixed) {return fixed.div(a, b)} else {return fixed_bcd.div(a, b)}
 }
 
 NumLt :: #force_inline proc "contextless" (
@@ -138,6 +156,24 @@ NumAbs :: #force_inline proc "contextless" (
 	zero := T(0) when intrinsics.type_is_float(T) else T{i = 0}
 	if NumLt(v, zero) do return NumSub(zero, v)
 	return v
+}
+
+NumSqrt :: #force_inline proc "contextless" (
+	v: $T,
+) -> T where intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
+	intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) ||
+	intrinsics.type_is_float(T) {
+	when intrinsics.type_is_float(T) {
+		return math.sqrt(v)
+	} else when intrinsics.type_is_specialization_of(T, fixed.Fixed) {
+		n := u128(v.i) << u128(T.Fraction_Width)
+		if n > u128(max(u64)) do return T{i = T.Backing(utils_private.sqrt_128(n))}
+		return T{i = T.Backing(utils_private.sqrt_64(n))}
+	} else {
+		n := u128(v.i) * u128(fixed_bcd._SCALE_TABLE[T.FRAC_DIGITS])
+		if n > u128(max(u64)) do return T{i = T.Backing(utils_private.sqrt_128(n))}
+		return T{i = T.Backing(utils_private.sqrt_64(n))}
+	}
 }
 
 Vec2Dot :: #force_inline proc "contextless" (

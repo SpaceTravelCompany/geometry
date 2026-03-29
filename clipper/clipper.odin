@@ -74,7 +74,7 @@ SweepEvent :: struct {
 	pt:            [2]FixedDef,
 	c0:            [2]FixedDef,
 	c1:            [2]FixedDef,
-	other:         ^SweepEvent,
+	other:         [2]FixedDef,
 	winding_cnt:   i32,
 	inside:        bool,
 	left_or_right: LeftOrRight,
@@ -152,8 +152,6 @@ AddPaths :: proc(
 ) {
 	when is_open do ctx.has_open_paths_ = true
 
-	sweep_line: [2]^SweepEvent
-	sweep_line_cnt := 0
 	for path, i in paths {
 		curves: []bool = nil
 		if is_curves != nil && len(is_curves) > i {
@@ -167,15 +165,11 @@ AddPaths :: proc(
 		}
 
 		j := 0
-		closed := false
 		for {
 			when is_open {
-				if j >= len(path) do break
+				if j >= len(path) - 1 do break //맨끝 전에서 이미 끝을 other로 참조한다.
 			} else {
 				if j >= len(path) {
-					j = 0 // 시작점으로 되돌아와서 닫는다.
-					closed = true
-				} else if closed {
 					break
 				}
 			}
@@ -185,46 +179,39 @@ AddPaths :: proc(
 			sweep.inside = false //? 초기값 필요?
 			sweep.pathType = polytype
 
-			if curves != nil && !closed { 	// (시작점)끝점인 경우 곡선처리 X
+			if curves != nil { 	//TODO 이웃한 점이 좌표가 완전히 겹칠때 처리? 일단 생각안함.
 				if j + 1 <= len(curves) - 1 && curves[j + 1] {
 					sweep.c0 = path[j]
 
 					if j + 2 <= len(curves) - 1 && curves[j + 2] {
 						sweep.c1 = path[j + 1]
 						sweep.curve_kind = .Cubic
+						j += 2
 					} else {
 						sweep.curve_kind = .Quad
+						j += 1
 					}
 				} else {
 					sweep.curve_kind = .Line
 				}
+
 			} else {
 				sweep.curve_kind = .Line
 			}
 
-			sweep_line[sweep_line_cnt] = sweep
-			sweep_line_cnt += 1
-			if sweep_line_cnt == 2 {
-				sweep_line[0].other = sweep_line[1]
-				sweep_line[1].other = sweep_line[0]
-
-				if sweep_line[0].pt.x.i == sweep_line[1].pt.x.i {
-					sweep_line[0].left_or_right =
-						sweep_line[0].pt.y.i < sweep_line[1].pt.y.i ? .Left : .Right
-				} else {
-					sweep_line[0].left_or_right =
-						sweep_line[0].pt.x.i < sweep_line[1].pt.x.i ? .Left : .Right
-				}
-				sweep_line[1].left_or_right = sweep_line[0].left_or_right == .Left ? .Right : .Left
-
-				pq.push(&ctx.scanline_list_, sweep_line[0]) or_return
-				pq.push(&ctx.scanline_list_, sweep_line[1]) or_return
-				sweep_line_cnt = 0
+			j += 1
+			if j == len(path) {
+				sweep.other = path[0]
 			} else {
-				j += 1 // sweep_line_cnt == 2일때는 j를 더하지 않아서 다음 시작점이 이전 끝점과 동일해야 한다.
-				if sweep.curve_kind == .Cubic do j += 2
-				else if sweep.curve_kind == .Quad do j += 1
+				sweep.other = path[j]
 			}
+			if sweep.pt.x.i == sweep.other.x.i {
+				sweep.left_or_right = sweep.pt.y.i < sweep.other.y.i ? .Left : .Right
+			} else {
+				sweep.left_or_right = sweep.pt.x.i < sweep.other.x.i ? .Left : .Right
+			}
+
+			pq.push(&ctx.scanline_list_, sweep) or_return
 		}
 	}
 	return
@@ -341,8 +328,8 @@ SweepList_Cmp :: proc(a, b: ^SweepEvent) -> avl.Ordering {
 	if ay.i < by.i do return .Less
 	else if ay.i > by.i do return .Greater
 
-	if a.other.pt.y.i < b.other.pt.y.i do return .Less
-	else if a.other.pt.y.i > b.other.pt.y.i do return .Greater
+	if a.other.y.i < b.other.y.i do return .Less
+	else if a.other.y.i > b.other.y.i do return .Greater
 
 	return .Equal
 }
@@ -352,7 +339,7 @@ Scanline_Less :: proc(a, b: ^SweepEvent) -> bool {
 	if a.pt.x.i == b.pt.x.i {
 		if a.pt.y.i == b.pt.y.i {
 			if a.left_or_right != b.left_or_right do return a.left_or_right == .Right
-			return a.other.pt.y.i < b.other.pt.y.i
+			return a.other.y.i < b.other.y.i
 		}
 		return a.pt.y.i < b.pt.y.i
 	}

@@ -515,6 +515,59 @@ EvalBezierTangent :: proc "contextless" (
 	return {}
 }
 
+//return -1 if failed
+GetBezierTForXMonotone :: proc(
+	kind: BezierKind,
+	pts: [4][2]$T,
+) -> (
+	t0: T,
+	t1: T,
+) where intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
+	intrinsics.type_is_float(T) {
+	if kind == .Quad {
+		// dx/dt = A + B·t = 0
+		x0, x1, x2 := pts[0].x, pts[1].x, pts[2].x
+		A: T = NumAdd(NumMul(NumConst(-2, T), x0), NumMul(NumConst(2, T), x1))
+		B: T = NumMul(NumConst(2, T), NumAdd(NumSub(p0[0], NumMul(NumConst(2, T), x1)), x2))
+
+		if NumEq(B, NumConst(0, T)) do return NumConst(-1, T), NumConst(-1, T)
+		return NumDiv(NumSign(A), B), NumConst(-1, T)
+	} else if kind == .Cubic {
+		// dx/dt = coef_A·t² + coef_B·t + coef_C = 0 (x component)
+		two := NumConst(2, T)
+		three := NumConst(3, T)
+		six := NumConst(6, T)
+		four := NumConst(4, T)
+		x0, x1, x2, x3 := pts[0].x, pts[1].x, pts[2].x, pts[3].x
+		coef_A := NumMul(
+			three,
+			NumAdd(NumSub(NumMul(three, x1), x0), NumSub(x3, NumMul(three, x2))),
+		)
+		coef_B := NumMul(six, NumAdd(NumSub(x0, NumMul(two, x1)), x2))
+		coef_C := NumMul(three, NumSub(x1, x0))
+		zero := NumConst(0, T)
+		two_A := NumMul(two, coef_A)
+
+		if NumEq(coef_A, zero) {
+			if NumEq(coef_B, zero) do return NumConst(-1, T), NumConst(-1, T)
+			return NumDiv(NumSign(coef_C), coef_B), NumConst(-1, T)
+		}
+
+		D := NumSub(NumMul(coef_B, coef_B), NumMul(NumMul(four, coef_A), coef_C))
+		if NumLt(D, zero) {
+			return NumConst(-1, T), NumConst(-1, T)
+		} else if NumEq(D, zero) {
+			return NumDiv(NumSign(coef_B), two_A), NumConst(-1, T)
+		}
+
+		sqrt_D := NumSqrt(D)
+		r0 := NumDiv(NumSub(NumSign(coef_B), sqrt_D), two_A)
+		r1 := NumDiv(NumAdd(NumSign(coef_B), sqrt_D), two_A)
+		return NumMin(r0, r1), NumMax(r0, r1)
+	}
+	return NumConst(-1, T), NumConst(-1, T)
+}
+
 @(test)
 test_2quad_curves :: proc(t: ^testing.T) {
 	pt0: [4]linalg.Vector2f32 = {{0.0, 0.0}, {1.0, 0.0}, {1.0, -1.0}, {}} //last leave empty

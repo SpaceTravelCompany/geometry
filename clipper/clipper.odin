@@ -412,7 +412,68 @@ CopySolutionPathsToSlices :: proc(
 
 @(private = "file")
 YatX :: proc(a: ^SweepEvent, x: FixedDef) -> FixedDef {
-	return {} //TODO
+	ONE :: FixedDef {
+		i = 1 << FixedDef.Fraction_Width,
+	}
+	TWO :: FixedDef {
+		i = 2 << FixedDef.Fraction_Width,
+	}
+	THREE :: FixedDef {
+		i = 3 << FixedDef.Fraction_Width,
+	}
+
+	if a.curve_kind == .Line {
+		dx := fixed.sub(a.pt.x, a.other.x)
+		if dx.i == 0 do return a.pt.y.i < a.other.y.i ? a.pt.y : a.other.y
+		return fixed.add(
+			a.pt.y,
+			fixed.mul(fixed.sub(x, a.pt.x), fixed.div(fixed.sub(a.other.y, a.pt.y), dx)),
+		)
+	} else if a.curve_kind == .Quad {
+		p0 := a.pt
+		p1 := a.c0
+		p2 := a.other
+
+		// t = (x - p0.x) / (p2.x - p0.x)
+		t := fixed.div(fixed.sub(x, p0.x), fixed.sub(p2.x, p0.x))
+		mt := fixed.sub(ONE, t)
+
+		mt2 := fixed.mul(mt, mt)
+		tmt := fixed.mul(t, mt)
+		t2 := fixed.mul(t, t)
+
+		// y = (1-t)²·p0.y + 2·t·(1-t)·p1.y + t²·p2.y
+		return fixed.add(
+			fixed.add(fixed.mul(mt2, p0.y), fixed.mul(fixed.mul(TWO, tmt), p1.y)),
+			fixed.mul(t2, p2.y),
+		)
+	} else {
+		p0 := a.pt
+		p1 := a.c0
+		p2 := a.c1
+		p3 := a.other
+
+		// t = (x - p0.x) / (p3.x - p0.x)
+		t := fixed.div(fixed.sub(x, p0.x), fixed.sub(p3.x, p0.x))
+		mt := fixed.sub(ONE, t)
+
+		mt2 := fixed.mul(mt, mt)
+		mt3 := fixed.mul(mt2, mt)
+		tmt2 := fixed.mul(t, mt2)
+		t2mt := fixed.mul(fixed.mul(t, t), mt)
+		t2 := fixed.mul(t, t)
+		t3 := fixed.mul(t2, t)
+
+		// y = (1-t)³·p0.y + 3·t·(1-t)²·p1.y + 3·t²·(1-t)·p2.y + t³·p3.y
+		return fixed.add(
+			fixed.add(
+				fixed.add(fixed.mul(mt3, p0.y), fixed.mul(fixed.mul(THREE, tmt2), p1.y)),
+				fixed.mul(fixed.mul(THREE, t2mt), p2.y),
+			),
+			fixed.mul(t3, p3.y),
+		)
+	}
+	return {}
 }
 
 @(private = "file")

@@ -50,7 +50,7 @@ LeftOrRight :: enum u8 {
 // Clipper context (clipper.engine)
 @(private = "file")
 Context :: struct {
-	scanline_list_:  pq.Priority_Queue(^SweepEvent),
+	scanline_list_:  pq.Priority_Queue(SweepEventNode),
 	sweep_list_:     avl.Tree(^SweepEvent),
 	out:             [dynamic][dynamic]OutPt,
 	out_is_open:     [dynamic]bool,
@@ -80,6 +80,12 @@ SweepEvent :: struct {
 	left_or_right: LeftOrRight,
 	curve_kind:    linalg_ex.BezierKind,
 	pathType:      PathType,
+}
+
+@(private = "file")
+SweepEventNode :: struct {
+	sweep:  ^SweepEvent,
+	is_end: bool,
 }
 
 @(private = "file")
@@ -240,7 +246,8 @@ AddPaths :: proc(
 					sweep.c0 = p1
 					sweep.other = p12
 					SetLeftOrRight(sweep)
-					pq.push(&ctx.scanline_list_, sweep) or_return
+					pq.push(&ctx.scanline_list_, SweepEventNode{sweep, false}) or_return
+					pq.push(&ctx.scanline_list_, SweepEventNode{sweep, true}) or_return
 
 					sweep = NewSweep(sweep.other, polytype) or_return
 					sweep.curve_kind = .Quad
@@ -263,7 +270,8 @@ AddPaths :: proc(
 					sweep.c1 = c1
 					sweep.other = m
 					SetLeftOrRight(sweep)
-					pq.push(&ctx.scanline_list_, sweep) or_return
+					pq.push(&ctx.scanline_list_, SweepEventNode{sweep, false}) or_return
+					pq.push(&ctx.scanline_list_, SweepEventNode{sweep, true}) or_return
 
 					sweep = NewSweep(sweep.other, polytype) or_return
 					sweep.curve_kind = .Cubic
@@ -281,7 +289,8 @@ AddPaths :: proc(
 					sweep.c1 = c1
 					sweep.other = m
 					SetLeftOrRight(sweep)
-					pq.push(&ctx.scanline_list_, sweep) or_return
+					pq.push(&ctx.scanline_list_, SweepEventNode{sweep, false}) or_return
+					pq.push(&ctx.scanline_list_, SweepEventNode{sweep, true}) or_return
 
 					t1 = fixed.div(fixed.sub(t1, t0), fixed.sub(FixedDef{i = ONE}, t0))
 					cc0, cc1, mm, dd0, dd1 := linalg_ex.SubdivCubicBezier(
@@ -295,7 +304,8 @@ AddPaths :: proc(
 					sweep.c1 = cc1
 					sweep.other = mm
 					SetLeftOrRight(sweep)
-					pq.push(&ctx.scanline_list_, sweep) or_return
+					pq.push(&ctx.scanline_list_, SweepEventNode{sweep, false}) or_return
+					pq.push(&ctx.scanline_list_, SweepEventNode{sweep, true}) or_return
 
 					sweep = NewSweep(sweep.other, polytype) or_return
 					sweep.curve_kind = .Cubic
@@ -306,16 +316,17 @@ AddPaths :: proc(
 			}
 
 			SetLeftOrRight(sweep)
-			pq.push(&ctx.scanline_list_, sweep) or_return
+			pq.push(&ctx.scanline_list_, SweepEventNode{sweep, false}) or_return
+			pq.push(&ctx.scanline_list_, SweepEventNode{sweep, true}) or_return
 		}
 	}
 	return
 }
 
 @(private = "file")
-PopScanline :: proc(ctx: ^Context) -> (res: ^SweepEvent, err: Clipper_Error) {
+PopScanline :: proc(ctx: ^Context) -> (res: SweepEventNode, err: Clipper_Error) {
 	if pq.len(ctx.scanline_list_) == 0 {
-		return nil, nil
+		return {}, nil
 	}
 	return pq.pop(&ctx.scanline_list_), nil
 }
@@ -491,15 +502,22 @@ SweepList_Cmp :: proc(a, b: ^SweepEvent) -> avl.Ordering {
 }
 
 @(private = "file")
-Scanline_Less :: proc(a, b: ^SweepEvent) -> bool {
-	if a.pt.x.i == b.pt.x.i {
-		if a.pt.y.i == b.pt.y.i {
-			if a.left_or_right != b.left_or_right do return a.left_or_right == .Right
-			return a.other.y.i < b.other.y.i
+Scanline_Less :: proc(a, b: SweepEventNode) -> bool {
+	aa := a.sweep.pt
+	bb := b.sweep.pt
+	ao := a.sweep.other
+	bo := b.sweep.other
+	if a.is_end do aa, ao = ao, aa
+	if b.is_end do bb, bo = bo, bb
+
+	if aa.x.i == bb.x.i {
+		if aa.y.i == bb.y.i {
+			if a.sweep.left_or_right != b.sweep.left_or_right do return a.sweep.left_or_right == .Right
+			return ao.y.i < bo.y.i
 		}
-		return a.pt.y.i < b.pt.y.i
+		return aa.y.i < bb.y.i
 	}
-	return a.pt.x.i < b.pt.x.i
+	return aa.x.i < bb.x.i
 }
 
 //convert fixed
@@ -578,7 +596,7 @@ BooleanOpCurve_Fixed :: proc(
 	pq.init(
 		&ctx.scanline_list_,
 		Scanline_Less,
-		pq.default_swap_proc(^SweepEvent),
+		pq.default_swap_proc(SweepEventNode),
 		allocator = context.temp_allocator,
 	) or_return
 
@@ -588,13 +606,16 @@ BooleanOpCurve_Fixed :: proc(
 	AddOpenSubject(&ctx, opens, opens_is_curves) or_return
 	AddClip(&ctx, clips, clips_is_curves) or_return
 
+	x: FixedDef
 	pop_res := PopScanline(&ctx) or_return
 
-	if (pop_res == nil) do return nil, nil, nil, nil, .FAILED
+	if (pop_res.sweep == nil) do return nil, nil, nil, nil, .FAILED
 	for {
+		x = pop_res.sweep.pt.x
+		avl.find_or_insert(&ctx.sweep_list_, pop_res.sweep) or_return
 
 		pop_res = PopScanline(&ctx) or_return
-		if pop_res == nil do break
+		if pop_res.sweep == nil do break
 	}
 
 	// Build result from outrec_list_: CleanCollinear for closed paths, then BuildPath64.

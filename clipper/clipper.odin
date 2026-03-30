@@ -567,6 +567,16 @@ FromFixedPaths :: proc(
 	}
 	return out, nil
 }
+@(private = "file")
+possibleInter :: proc(a, b: ^SweepEvent) {
+	if a == b do return
+
+	if a.curve_kind == .Line && b.curve_kind == .Line {
+		kind, pt := linalg_ex.LinesIntersect2(a.pt, a.other, b.pt, b.other, true)
+		if kind != .intersect do return
+		//TODO
+	}
+}
 
 // Public
 
@@ -614,7 +624,44 @@ BooleanOpCurve_Fixed :: proc(
 	if (pop_res.sweep == nil) do return nil, nil, nil, nil, .FAILED
 	for {
 		ctx.sweep_x = pop_res.sweep.pt.x
-		avl.find_or_insert(&ctx.sweep_list_, pop_res.sweep) or_return
+		node, inserted := avl.find_or_insert(&ctx.sweep_list_, pop_res.sweep) or_return
+
+		if inserted { 	//처음 들어갔을때 첫번째 교차 검사
+			it_next: avl.Iterator(^SweepEvent) = avl.iterator_from_pos(
+				&ctx.sweep_list_,
+				node,
+				.Forward,
+			)
+			it_prev: avl.Iterator(^SweepEvent) = avl.iterator_from_pos(
+				&ctx.sweep_list_,
+				node,
+				.Backward,
+			)
+
+			if it_next._next != nil {
+				possibleInter(node.value, it_next._next.value)
+			}
+			if it_prev._next != nil {
+				possibleInter(node.value, it_prev._next.value)
+			}
+		} else { 	//이미 들어간 것이면 해당 변 제거후 그자리에서 다시 교차 검사
+			it_next: avl.Iterator(^SweepEvent) = avl.iterator_from_pos(
+				&ctx.sweep_list_,
+				node,
+				.Forward,
+			)
+			it_prev: avl.Iterator(^SweepEvent) = avl.iterator_from_pos(
+				&ctx.sweep_list_,
+				node,
+				.Backward,
+			)
+			next, prev: ^SweepEvent
+			if it_next._next != nil && it_prev._next != nil {
+				next, prev = it_next._next.value, it_prev._next.value
+			}
+			avl.remove_node(&ctx.sweep_list_, node, false)
+			if next != nil && prev != nil do possibleInter(prev, next)
+		}
 
 		pop_res = PopScanline(&ctx) or_return
 		if pop_res.sweep == nil do break

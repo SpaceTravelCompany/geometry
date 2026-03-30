@@ -54,6 +54,7 @@ Context :: struct {
 	sweep_list_:     avl.Tree(^SweepEvent),
 	out:             [dynamic][dynamic]OutPt,
 	out_is_open:     [dynamic]bool,
+	sweep_x:         FixedDef,
 	/*
 	Whenever adjacent edges are collinear in closed path solutions,
 	the common vertex can be removed from the path without altering its shape.
@@ -489,8 +490,9 @@ YatX :: proc(a: ^SweepEvent, x: FixedDef) -> FixedDef {
 
 @(private = "file")
 SweepList_Cmp :: proc(a, b: ^SweepEvent) -> avl.Ordering {
-	ay := YatX(a, a.pt.x)
-	by := YatX(b, b.pt.x)
+	ctx: ^Context = (^Context)(context.user_ptr)
+	ay := YatX(a, ctx.sweep_x)
+	by := YatX(b, ctx.sweep_x)
 
 	if ay.i < by.i do return .Less
 	else if ay.i > by.i do return .Greater
@@ -591,6 +593,7 @@ BooleanOpCurve_Fixed :: proc(
 		fill_rule_  = fill_rule,
 		clip_type_  = clip_type,
 	}
+	context.user_ptr = &ctx
 
 	// 작은 x가 먼저 나옴
 	pq.init(
@@ -606,12 +609,11 @@ BooleanOpCurve_Fixed :: proc(
 	AddOpenSubject(&ctx, opens, opens_is_curves) or_return
 	AddClip(&ctx, clips, clips_is_curves) or_return
 
-	x: FixedDef
 	pop_res := PopScanline(&ctx) or_return
 
 	if (pop_res.sweep == nil) do return nil, nil, nil, nil, .FAILED
 	for {
-		x = pop_res.sweep.pt.x
+		ctx.sweep_x = pop_res.sweep.pt.x
 		avl.find_or_insert(&ctx.sweep_list_, pop_res.sweep) or_return
 
 		pop_res = PopScanline(&ctx) or_return

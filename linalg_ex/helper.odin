@@ -4,8 +4,8 @@ package linalg_ex
 import "base:intrinsics"
 import "core:math"
 import "core:math/fixed"
-import "shared:utils_private"
-import "shared:utils_private/fixed_bcd"
+import "engine:utils_private"
+import "engine:utils_private/fixed_bcd"
 
 NumAdd :: #force_inline proc "contextless" (
 	a, b: $T,

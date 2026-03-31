@@ -9,7 +9,7 @@ import "core:mem"
 import "core:slice"
 
 import "core:math/fixed"
-import utils "shared:utils_private"
+import utils "engine:utils_private"
 
 FixedDef :: fixed.Fixed(i64, 38)
 

@@ -2,7 +2,7 @@ package triangulation
 
 import "core:math/fixed"
 import "core:testing"
-import "shared:utils_private"
+import "engine:utils_private"
 
 
 @(private)

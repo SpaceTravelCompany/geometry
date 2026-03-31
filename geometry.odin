@@ -9,9 +9,9 @@ import "core:math"
 import "core:math/linalg"
 import "core:mem"
 
-import "shared:utils_private/fixed_bcd"
+import "engine:utils_private/fixed_bcd"
 
-import "shared:utils_private"
+import "engine:utils_private"
 
 
 //use gpu shader std140 layout

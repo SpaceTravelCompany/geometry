@@ -5,9 +5,9 @@ import "base:runtime"
 import "core:math"
 import "core:math/fixed"
 import "core:math/linalg"
-import "shared:utils_private/fixed_bcd"
+import "engine:utils_private/fixed_bcd"
 
-import "shared:utils_private"
+import "engine:utils_private"
 
 
 Recti32 :: Rect_(i32)
@@ -830,7 +830,7 @@ Area_PointIn :: #force_inline proc "contextless" (
 	case Rect_(T):
 		return Rect_PointIn(a, pt)
 	case [][2]T:
-		return PointInPolygon(pt, a)
+		return PointInPolygon(pt, a) != .Outside
 	case ImageArea:
 		panic_contextless("ImageArea: Available only for ImageButton\n")
 	}

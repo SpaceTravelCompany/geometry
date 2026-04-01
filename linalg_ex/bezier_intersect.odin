@@ -387,13 +387,12 @@ GetBezierTFromPoint :: proc "contextless" (
 	ten := NumConst(10, T)
 	lo := zero
 	hi := one
-	cmp_eps := NumMul(epsilon(T), ten) when intrinsics.type_is_float(T) else zero
 
 	for i in 0 ..< 64 {
 		mid := NumMid(lo, hi)
 		p := EvalBezier(kind, pts, mid)
 		diff := Vec2Sub(p, point)
-		if NumLe(NumAbs(diff[0]), cmp_eps) && NumLe(NumAbs(diff[1]), cmp_eps) {
+		if NumEqE(NumAbs(diff[0]), NumAbs(diff[1])) {
 			return mid, true
 		}
 
@@ -409,7 +408,7 @@ GetBezierTFromPoint :: proc "contextless" (
 	mid := NumMid(lo, hi)
 	p := EvalBezier(kind, pts, mid)
 	diff := Vec2Sub(p, point)
-	if NumLe(NumAbs(diff[0]), cmp_eps) && NumLe(NumAbs(diff[1]), cmp_eps) {
+	if NumEqE(NumAbs(diff[0]), NumAbs(diff[1])) {
 		return mid, true
 	}
 

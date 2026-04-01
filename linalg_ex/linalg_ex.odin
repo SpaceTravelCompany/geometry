@@ -377,14 +377,8 @@ PointInLine :: proc "contextless" (
 	in_bbox := NumGe(p.x, min_x) && NumLe(p.x, max_x) && NumGe(p.y, min_y) && NumLe(p.y, max_y)
 	t := NumDiv(NumSub(p.x, min_x), NumSub(max_x, min_x))
 
-	when intrinsics.type_is_float(T) {
-		ep: T = epsilon(T) * NumConst(10, T)
-		on_line := NumLe(NumAbs(NumSub(p.y, p_y)), ep)
-		return on_line && in_bbox, t
-	} else {
-		on_line := NumEq(p.y, p_y)
-		return on_line && in_bbox, t
-	}
+	on_line := NumEqE(p.y, p_y)
+	return on_line && in_bbox, t
 }
 
 min_fixed :: proc "contextless" (
@@ -520,7 +514,7 @@ PointInVector :: proc "contextless" (
 	b := NumSub(v0.x, v1.x)
 	c := NumAdd(NumMul(v1.x, v0.y), NumMul(v0.x, v1.y))
 	res := NumAdd(NumAdd(NumMul(a, p.x), NumMul(b, p.y)), c)
-	return NumEq(res, zero), res
+	return NumEqE(res, zero), res
 }
 
 PointLineLeftOrRight :: #force_inline proc "contextless" (
@@ -646,8 +640,8 @@ LineInPolygon :: proc "contextless" (
 		j := (i + 1) % len(polygon)
 		ok, res = LinesIntersect2(polygon[i], polygon[j], a, b)
 		if ok == .intersect {
-			same_a := NumEq(a.x, res.x) && NumEq(a.y, res.y)
-			same_b := NumEq(b.x, res.x) && NumEq(b.y, res.y)
+			same_a := NumEqE(a.x, res.x) && NumEqE(a.y, res.y)
+			same_b := NumEqE(b.x, res.x) && NumEqE(b.y, res.y)
 			if same_a || same_b do continue
 			return true
 		}
@@ -676,10 +670,10 @@ LinesIntersect2 :: proc "contextless" (
 	intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
 	intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
 	if check_is_touching {
-		same_a_b1 := NumEq(a1.x, b1.x) && NumEq(a1.y, b1.y)
-		same_a_b2 := NumEq(a1.x, b2.x) && NumEq(a1.y, b2.y)
-		same_a2_b1 := NumEq(a2.x, b1.x) && NumEq(a2.y, b1.y)
-		same_a2_b2 := NumEq(a2.x, b2.x) && NumEq(a2.y, b2.y)
+		same_a_b1 := NumEqE(a1.x, b1.x) && NumEqE(a1.y, b1.y)
+		same_a_b2 := NumEqE(a1.x, b2.x) && NumEqE(a1.y, b2.y)
+		same_a2_b1 := NumEqE(a2.x, b1.x) && NumEqE(a2.y, b1.y)
+		same_a2_b2 := NumEqE(a2.x, b2.x) && NumEqE(a2.y, b2.y)
 		if same_a_b1 || same_a_b2 do return .none, a1
 		else if same_a2_b1 || same_a2_b2 do return .none, a2
 	}
@@ -718,10 +712,10 @@ LinesIntersect3 :: proc "contextless" (
 ) -> IntersectKind where intrinsics.type_is_float(T) ||
 	intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
 	intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
-	same_a1_b1 := NumEq(a1.x, b1.x) && NumEq(a1.y, b1.y)
-	same_a2_b1 := NumEq(a2.x, b1.x) && NumEq(a2.y, b1.y)
-	same_a1_b2 := NumEq(a1.x, b2.x) && NumEq(a1.y, b2.y)
-	same_a2_b2 := NumEq(a2.x, b2.x) && NumEq(a2.y, b2.y)
+	same_a1_b1 := NumEqE(a1.x, b1.x) && NumEqE(a1.y, b1.y)
+	same_a2_b1 := NumEqE(a2.x, b1.x) && NumEqE(a2.y, b1.y)
+	same_a1_b2 := NumEqE(a1.x, b2.x) && NumEqE(a1.y, b2.y)
+	same_a2_b2 := NumEqE(a2.x, b2.x) && NumEqE(a2.y, b2.y)
 	if check_is_touching && (same_a1_b1 || same_a2_b1 || same_a1_b2 || same_a2_b2) do return .none
 
 	zero := NumConst(0, T)

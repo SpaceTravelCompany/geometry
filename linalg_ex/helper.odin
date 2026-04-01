@@ -95,6 +95,16 @@ NumEq :: #force_inline proc "contextless" (
 	when intrinsics.type_is_float(T) {return a == b} else {return a.i == b.i}
 }
 
+NumEqE :: #force_inline proc "contextless" (
+	a, b: $T,
+) -> bool where intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
+	intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) ||
+	intrinsics.type_is_float(T) {
+	when intrinsics.type_is_float(
+		T,
+	) {return a <= b + epsilon(T) * 1.0 && a >= b - epsilon(T) * 1.0} else {return a.i <= b.i + 1 && a.i >= b.i - 1}
+}
+
 NumMid :: #force_inline proc "contextless" (
 	a, b: $T,
 ) -> T where intrinsics.type_is_specialization_of(T, fixed.Fixed) ||

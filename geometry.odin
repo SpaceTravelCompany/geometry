@@ -5,6 +5,7 @@ import "./linalg_ex"
 import "./triangulation"
 import "base:intrinsics"
 import "base:runtime"
+import "core:fmt"
 import "core:math"
 import "core:math/linalg"
 import "core:mem"
@@ -642,11 +643,6 @@ shapes_compute_polygon :: proc(
 			return
 		}
 
-		to_pt :: #force_inline proc "contextless" (p: linalg.Vector2f32) -> [2]f32 {return[2]f32 {
-				p.x,
-				p.y,
-			}}
-
 		for node, nidx in poly.nodes {
 			if node.color.a > 0 {
 				non_zero_resize_dynamic_array(&non_curves2, len(node.pts)) or_return
@@ -666,8 +662,8 @@ shapes_compute_polygon :: proc(
 				}
 
 				for np, npi in node.pts {
-					for pt_v, i in np {
-						pt := to_pt(pt_v)
+					for i := 0; i < len(np); i += 1 {
+						pt := np[i]
 						if node.is_curves != nil &&
 						   npi < len(node.is_curves) &&
 						   i < len(node.is_curves[npi]) &&
@@ -676,20 +672,21 @@ shapes_compute_polygon :: proc(
 								non_zero_append(
 									&curves2[npi],
 									curve_struct_float(f32) {
-										start = to_pt(np[i - 1]),
+										start = np[i - 1],
 										ctl0 = pt,
-										ctl1 = to_pt(np[i + 1]),
-										end = to_pt(np[(i + 2) % len(np)]),
+										ctl1 = np[i + 1],
+										end = np[(i + 2) % len(np)],
 										type = .Unknown,
 									},
 								) or_return
+								i += 1
 							} else {
 								non_zero_append(
 									&curves2[npi],
 									curve_struct_float(f32) {
-										start = to_pt(np[i - 1]),
+										start = np[i - 1],
 										ctl0 = pt,
-										end = to_pt(np[(i + 1) % len(np)]),
+										end = np[(i + 1) % len(np)],
 										type = .Quadratic,
 									},
 								) or_return
@@ -715,11 +712,14 @@ shapes_compute_polygon :: proc(
 							if curveType == .Loop {
 								disc := 4 * d0 * d2 - 3 * d1 * d1
 								// Due to float error, disc can be a tiny negative even for Loop.
-								if disc < 0 {
-									if disc > -math.F32_EPSILON * 10.0 do disc = 0
+								t1: f32
+								if disc <= 0 {
+									if disc > -math.F32_EPSILON do disc = 0.0
 									else do continue
+									t1 = 0.0
+								} else {
+									t1 = math.sqrt_f32(disc)
 								}
-								t1 := math.sqrt_f32(disc)
 								ls := d1 - t1
 								lt := 2 * d0
 								ms := d1 + t1
@@ -871,8 +871,6 @@ shapes_compute_polygon :: proc(
 						non_next := non_curves_npi[next]
 
 						if curve_idx < len(curves_npi) && non == curves_npi[curve_idx].start {
-							j := curve_idx + 1
-							for ; j < len(curves_npi) && non_next != curves_npi[j].start; j += 1 {}
 							non_zero_resize_dynamic_array(&insert_ar, 0) or_return
 
 							if ok :=
@@ -896,24 +894,6 @@ shapes_compute_polygon :: proc(
 									) or_return
 								}
 							}
-							for e := curve_idx + 1; e < j; e += 1 {
-								non_zero_append(&insert_ar, curves_npi[e].start) or_return
-								if ok :=
-									   linalg_ex.PointInPolygon(curves_npi[e].ctl0, poly_pts) ==
-									   .Inside; invent_b ? !ok : ok {
-									non_zero_append(&insert_ar, curves_npi[e].ctl0) or_return
-								}
-								if curves_npi[e].type != .Quadratic {
-									if ok :=
-										   linalg_ex.PointInPolygon(
-											   curves_npi[e].ctl1,
-											   poly_pts,
-										   ) ==
-										   .Inside; invent_b ? !ok : ok {
-										non_zero_append(&insert_ar, curves_npi[e].ctl1) or_return
-									}
-								}
-							}
 
 							utils_private.non_zero_inject_at_elems(
 								non_curves_npi,
@@ -922,8 +902,7 @@ shapes_compute_polygon :: proc(
 							) or_return
 							poly_pts = non_curves_npi[:]
 
-							if j >= len(curves_npi) do break
-							curve_idx = j
+							curve_idx += 1
 							i = next + len(insert_ar)
 						} else {
 							i += 1
@@ -934,9 +913,11 @@ shapes_compute_polygon :: proc(
 				non_zero_resize_dynamic_array(&non_curves, len(non_curves2)) or_return
 				for npi in 0 ..< len(non_curves2) do non_curves[npi] = non_curves2[npi][:]
 
+				//fmt.println(non_curves[:])
 				indices, tri_err := triangulation.TrianguatePolygons(
 					non_curves[:],
 					context.temp_allocator,
+					auto_cast len(indList^),
 				)
 				if tri_err != nil {
 					switch e in tri_err {
@@ -955,7 +936,7 @@ shapes_compute_polygon :: proc(
 							shape_vertex2d {
 								pos = linalg.Vector2f32{vv.x, vv.y},
 								uvw = {0.0, 0.0, -100.0},
-								color = poly.nodes[i].color,
+								color = node.color,
 							},
 						) or_return
 					}
@@ -963,10 +944,9 @@ shapes_compute_polygon :: proc(
 
 				for c, i in curves2 {
 					for cc in c {
-						_Shapes_ComputeLine(vertList, indList, poly.nodes[i].color, cc) or_return
+						_Shapes_ComputeLine(vertList, indList, node.color, cc) or_return
 					}
 				}
-				for &idx in indList[len(indices):] do idx += auto_cast len(indices)
 			}
 		}
 		return

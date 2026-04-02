@@ -15,8 +15,7 @@ import "engine:utils_private/fixed_bcd"
 import "engine:utils_private"
 
 
-//use gpu shader std140 layout
-shape_vertex2d :: struct {
+shape_vertex2d :: struct #packed {
 	pos:   linalg.Vector2f32,
 	uvw:   linalg.Vector3f32,
 	color: linalg.Vector4f32,

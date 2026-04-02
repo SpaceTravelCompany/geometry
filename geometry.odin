@@ -15,10 +15,17 @@ import "engine:utils_private/fixed_bcd"
 import "engine:utils_private"
 
 
+shape_vertex_flag :: enum u8 {
+	CUBIC,
+	QUAD,
+	LINE,
+}
+
 shape_vertex2d :: struct #packed {
 	pos:   linalg.Vector2f32,
 	uvw:   linalg.Vector3f32,
 	color: linalg.Vector4f32,
+	flag:  shape_vertex_flag,
 }
 
 raw_shape :: struct {
@@ -212,10 +219,10 @@ GetCubicCurveType :: proc "contextless" (
 		D := 3.0 * d1 * d1 - 4.0 * d2 * d0 //33 + 36 + 1 = 70
 		discr := d0 * d0 * D //27 + 27 + 70 = 124
 
-		EP: T = linalg_ex.epsilon(T) * T(10.0)
+		EP: T = linalg_ex.epsilon(T)
 		if discr >= -EP && discr <= EP {
 			if d0 >= -EP && d0 <= EP && d1 >= -EP && d1 <= EP {
-				if d2 >= -EP && d2 <= EP {
+				if d2 == 0.0 {
 					type = .Line
 					return
 				}
@@ -225,7 +232,7 @@ GetCubicCurveType :: proc "contextless" (
 			type = .Cusp
 			return
 		}
-		if discr > EP {
+		if discr > 0.0 {
 			type = .Serpentine
 			return
 		}
@@ -253,58 +260,38 @@ _Shapes_ComputeLine :: proc(
 		curveType, d0, d1, d2 = GetCubicCurveType(pts.start, pts.ctl0, pts.ctl1, pts.end) or_return
 	} else if curveType == .Quadratic {
 		vlen: u32 = u32(len(vertList))
+		quad_sign := f32(1.0)
 		if linalg_ex.GetPolygonOrientation([][2]f32{pts.start, pts.ctl0, pts.end}) ==
 		   .CounterClockwise {
-			non_zero_append(
-				vertList,
-				shape_vertex2d {
-					uvw = {0.0, 0.0, -5.0},
-					pos = linalg.Vector2f32{pts.start.x, pts.start.y},
-					color = color,
-				}, //-5 check this is not cubic curve
-			)
-			non_zero_append(
-				vertList,
-				shape_vertex2d {
-					uvw = {-0.5, 0.0, -5.0},
-					pos = linalg.Vector2f32{pts.ctl0.x, pts.ctl0.y},
-					color = color,
-				},
-			)
-			non_zero_append(
-				vertList,
-				shape_vertex2d {
-					uvw = {-1.0, -1.0, -5.0},
-					pos = linalg.Vector2f32{pts.end.x, pts.end.y},
-					color = color,
-				},
-			)
-		} else {
-			non_zero_append(
-				vertList,
-				shape_vertex2d {
-					uvw = {0.0, 0.0, -5.0},
-					pos = linalg.Vector2f32{pts.start.x, pts.start.y},
-					color = color,
-				},
-			)
-			non_zero_append(
-				vertList,
-				shape_vertex2d {
-					uvw = {0.5, 0.0, -5.0},
-					pos = linalg.Vector2f32{pts.ctl0.x, pts.ctl0.y},
-					color = color,
-				},
-			)
-			non_zero_append(
-				vertList,
-				shape_vertex2d {
-					uvw = {1.0, 1.0, -5.0},
-					pos = linalg.Vector2f32{pts.end.x, pts.end.y},
-					color = color,
-				},
-			)
+			quad_sign = -1.0
 		}
+		non_zero_append(
+			vertList,
+			shape_vertex2d {
+				uvw = {0.0, 0.0, quad_sign},
+				pos = linalg.Vector2f32{pts.start.x, pts.start.y},
+				color = color,
+				flag = .QUAD,
+			},
+		)
+		non_zero_append(
+			vertList,
+			shape_vertex2d {
+				uvw = {0.5, 0.0, quad_sign},
+				pos = linalg.Vector2f32{pts.ctl0.x, pts.ctl0.y},
+				color = color,
+				flag = .QUAD,
+			},
+		)
+		non_zero_append(
+			vertList,
+			shape_vertex2d {
+				uvw = {1.0, 1.0, quad_sign},
+				pos = linalg.Vector2f32{pts.end.x, pts.end.y},
+				color = color,
+				flag = .QUAD,
+			},
+		)
 		non_zero_append(indList, vlen, vlen + 1, vlen + 2)
 		return nil
 	}
@@ -382,9 +369,7 @@ _Shapes_ComputeLine :: proc(
 			},
 		}
 
-		reverse =
-			(d0 > 0 && F[1][0] < math.F32_EPSILON * 5.0) ||
-			(d0 < 0 && F[1][0] > -math.F32_EPSILON * 5.0)
+		reverse = (d0 > 0 && F[1][0] < 0.0) || (d0 < 0 && F[1][0] > 0.0)
 	case .Cusp:
 		ls := d2
 		lt := 3.0 * d1
@@ -397,8 +382,8 @@ _Shapes_ComputeLine :: proc(
 		}
 	case .Quadratic:
 		F = {
-			{{}, {}, {}},
-			{1.0 / 3.0, {}, 1.0 / 3.0},
+			{0.0, 0.0, 0.0},
+			{1.0 / 3.0, 0.0, 1.0 / 3.0},
 			{2.0 / 3.0, 1.0 / 3.0, 2.0 / 3.0},
 			{1.0, 1.0, 1.0},
 		}
@@ -616,7 +601,7 @@ shapes_compute_polygon :: proc(
 					curve_struct_float(f32) {
 						start = p1_,
 						ctl0 = p2_,
-						end = cur.end,
+						end = src.end,
 						type = .Quadratic,
 					},
 				) or_return
@@ -634,10 +619,48 @@ shapes_compute_polygon :: proc(
 						start = p2_,
 						ctl0 = p3_,
 						ctl1 = p4_,
-						end = cur.end,
+						end = src.end,
 						type = .Unknown,
 					},
 				) or_return
+			}
+			return
+		}
+
+		InsertCurveEndpointsIntoPolygonBoundary :: proc(
+			non_curves_npi: ^[dynamic][2]f32,
+			curves_npi: [dynamic]curve_struct_float(f32),
+			is_closed: bool,
+		) -> (
+			err: shape_error = nil,
+		) {
+			curve_idx := 0
+			i := 0
+			for i < len(non_curves_npi) && curve_idx < len(curves_npi) {
+				non := non_curves_npi[i]
+
+				next: int
+				if is_closed {
+					next = (i + 1) % len(non_curves_npi)
+				} else {
+					if i + 1 >= len(non_curves_npi) do break
+					next = i + 1
+				}
+
+				if non == curves_npi[curve_idx].start {
+					if non_curves_npi[next] != curves_npi[curve_idx].end {
+						utils_private.non_zero_inject_at_elem(
+							non_curves_npi,
+							next,
+							curves_npi[curve_idx].end,
+						) or_return
+					}
+
+					curve_idx += 1
+					i = next
+				} else {
+					i += 1
+				}
 			}
 			return
 		}
@@ -710,25 +733,20 @@ shapes_compute_polygon :: proc(
 							) or_return
 							if curveType == .Loop {
 								disc := 4 * d0 * d2 - 3 * d1 * d1
-								// Due to float error, disc can be a tiny negative even for Loop.
-								t1: f32
-								if disc <= 0 {
-									if disc > -math.F32_EPSILON do disc = 0.0
-									else do continue
-									t1 = 0.0
-								} else {
-									t1 = math.sqrt_f32(disc)
-								}
+								t1 := math.sqrt_f32(disc)
 								ls := d1 - t1
 								lt := 2 * d0
 								ms := d1 + t1
 								mt := lt
 
+								ql := ls / lt
+								qm := ms / mt
+
 								subdiv_at: f32
-								if lt > 0 ? (0 < ls && ls < lt) : (0 > ls && ls > lt) {
-									subdiv_at = ls / lt
-								} else if mt > 0 ? (0 < ms && ms < mt) : (0 > ms && ms > mt) {
-									subdiv_at = ms / mt
+								if 0.0 < ql && ql < 1.0 {
+									subdiv_at = ql
+								} else if 0.0 < qm && qm < 1.0 {
+									subdiv_at = qm
 								} else {
 									continue
 								}
@@ -852,6 +870,11 @@ shapes_compute_polygon :: proc(
 				for npi in 0 ..< len(node.pts) {
 					non_curves_npi := &non_curves2[npi]
 					curves_npi := curves2[npi]
+					InsertCurveEndpointsIntoPolygonBoundary(
+						non_curves_npi,
+						curves_npi,
+						node.is_closed,
+					) or_return
 					curve_idx := 0
 					poly_pts := non_curves_npi[:]
 					orient := linalg_ex.GetPolygonOrientation(poly_pts)
@@ -869,7 +892,9 @@ shapes_compute_polygon :: proc(
 						}
 						non_next := non_curves_npi[next]
 
-						if curve_idx < len(curves_npi) && non == curves_npi[curve_idx].start {
+						if curve_idx < len(curves_npi) &&
+						   non == curves_npi[curve_idx].start &&
+						   non_next == curves_npi[curve_idx].end {
 							non_zero_resize_dynamic_array(&insert_ar, 0) or_return
 
 							if ok :=
@@ -934,7 +959,7 @@ shapes_compute_polygon :: proc(
 							vertList,
 							shape_vertex2d {
 								pos = linalg.Vector2f32{vv.x, vv.y},
-								uvw = {0.0, 0.0, -100.0},
+								flag = .LINE,
 								color = node.color,
 							},
 						) or_return
@@ -982,4 +1007,3 @@ poly_transform_matrix :: proc "contextless" (inout_poly: ^shapes, F: linalg.Matr
 		}
 	}
 }
-

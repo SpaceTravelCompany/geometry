@@ -32,17 +32,17 @@ Trianguate_Error :: union #shared_nil {
 }
 
 @(private = "file")
-Context :: struct($T: typeid) where intrinsics.type_is_float(T) {
-	all_verts:            [dynamic]^Vertex(T),
-	loc_min_stack:        [dynamic]^Vertex(T),
-	horz_edge_stack:      [dynamic]^Edge(T),
-	all_edges:            [dynamic]^Edge(T),
-	all_tris:             [dynamic]^Triangle(T),
-	pendingDelaunayStack: [dynamic]^Edge(T),
+Context :: struct {
+	all_verts:            [dynamic]^Vertex,
+	loc_min_stack:        [dynamic]^Vertex,
+	horz_edge_stack:      [dynamic]^Edge,
+	all_edges:            [dynamic]^Edge,
+	all_tris:             [dynamic]^Triangle,
+	pendingDelaunayStack: [dynamic]^Edge,
 	indices:              [dynamic]u32,
-	polys:                [][][2]T,
-	lowermostVertex:      ^Vertex(T),
-	firstActive:          ^Edge(T),
+	polys:                [][][2]f64,
+	lowermostVertex:      ^Vertex,
+	firstActive:          ^Edge,
 }
 
 
@@ -61,36 +61,36 @@ EdgeContainsResult :: enum u8 {
 }
 
 @(private = "file")
-Vertex :: struct($T: typeid) where intrinsics.type_is_float(T) {
-	p:       [2]T,
-	e:       [dynamic]^Edge(T),
+Vertex :: struct {
+	p:       [2]f64,
+	e:       [dynamic]^Edge,
 	innerLM: bool,
 	idx:     u32,
 }
 
 @(private = "file")
-Edge :: struct($T: typeid) where intrinsics.type_is_float(T) {
-	vL:       ^Vertex(T),
-	vR:       ^Vertex(T),
-	vB:       ^Vertex(T),
-	vT:       ^Vertex(T),
-	triA:     ^Triangle(T),
-	triB:     ^Triangle(T),
-	nextE:    ^Edge(T),
-	prevE:    ^Edge(T),
+Edge :: struct {
+	vL:       ^Vertex,
+	vR:       ^Vertex,
+	vB:       ^Vertex,
+	vT:       ^Vertex,
+	triA:     ^Triangle,
+	triB:     ^Triangle,
+	nextE:    ^Edge,
+	prevE:    ^Edge,
 	kind:     EdgeKind,
 	isActive: bool,
 }
 
 @(private = "file")
-Triangle :: struct($T: typeid) where intrinsics.type_is_float(T) {
-	edges: [3]^Edge(T),
+Triangle :: struct {
+	edges: [3]^Edge,
 }
 
 @(private = "file")
-HorizontalBetween :: proc(ctx: ^Context($T), v1, v2: ^Vertex(T)) -> ^Edge(T) {
+HorizontalBetween :: proc(ctx: ^Context, v1, v2: ^Vertex) -> ^Edge {
 	y := v1.p.y
-	l, r: T
+	l, r: f64
 	if v1.p.x > v2.p.x {
 		l = v2.p.x
 		r = v1.p.x
@@ -115,7 +115,7 @@ HorizontalBetween :: proc(ctx: ^Context($T), v1, v2: ^Vertex(T)) -> ^Edge(T) {
 
 // Precondition: ctx.all_edges must be sorted ascending on edge.vL.p.x
 @(private = "file")
-FixupEdgeIntersects :: proc(ctx: ^Context($T)) -> (err: Trianguate_Error) {
+FixupEdgeIntersects :: proc(ctx: ^Context) -> (err: Trianguate_Error) {
 	for i1 in 0 ..< len(ctx.all_edges) {
 		e1 := ctx.all_edges[i1]
 		for i2 in i1 + 1 ..< len(ctx.all_edges) {
@@ -135,9 +135,9 @@ FixupEdgeIntersects :: proc(ctx: ^Context($T)) -> (err: Trianguate_Error) {
 }
 
 @(private = "file")
-triangle_vertices :: proc "contextless" (tri: ^Triangle($T)) -> [3]^Vertex(T) {
+triangle_vertices :: proc "contextless" (tri: ^Triangle) -> [3]^Vertex {
 	e0, e1 := tri.edges[0], tri.edges[1]
-	vs: [3]^Vertex(T)
+	vs: [3]^Vertex
 	vs[0] = e0.vL
 	vs[1] = e0.vR
 	if e1.vL == vs[0] || e1.vL == vs[1] do vs[2] = e1.vR
@@ -147,15 +147,15 @@ triangle_vertices :: proc "contextless" (tri: ^Triangle($T)) -> [3]^Vertex(T) {
 
 @(private = "file")
 DoTriangulateLeft :: proc(
-	ctx: ^Context($T),
-	edge: ^Edge(T),
-	pivot: ^Vertex(T),
-	minY: T,
+	ctx: ^Context,
+	edge: ^Edge,
+	pivot: ^Vertex,
+	minY: f64,
 ) -> (
 	err: Trianguate_Error,
 ) {
-	vAlt: ^Vertex(T) = nil
-	eAlt: ^Edge(T) = nil
+	vAlt: ^Vertex = nil
+	eAlt: ^Edge = nil
 	v := edge.vB == pivot ? edge.vT : edge.vB
 
 	for e in pivot.e {
@@ -197,15 +197,15 @@ DoTriangulateLeft :: proc(
 
 @(private = "file")
 DoTriangulateRight :: proc(
-	ctx: ^Context($T),
-	edge: ^Edge(T),
-	pivot: ^Vertex(T),
-	minY: T,
+	ctx: ^Context,
+	edge: ^Edge,
+	pivot: ^Vertex,
+	minY: f64,
 ) -> (
 	err: Trianguate_Error,
 ) {
-	vAlt: ^Vertex(T) = nil
-	eAlt: ^Edge(T) = nil
+	vAlt: ^Vertex = nil
+	eAlt: ^Edge = nil
 	v := edge.vB == pivot ? edge.vT : edge.vB
 
 	for e in pivot.e {
@@ -248,13 +248,13 @@ DoTriangulateRight :: proc(
 }
 
 @(private = "file")
-ForceLegal :: proc(ctx: ^Context($T), edge: ^Edge(T)) -> (err: Trianguate_Error) {
+ForceLegal :: proc(ctx: ^Context, edge: ^Edge) -> (err: Trianguate_Error) {
 	if edge.triA == nil || edge.triB == nil do return
 
-	vertA: ^Vertex(T) = nil
-	vertB: ^Vertex(T) = nil
-	edgesA: [3]^Edge(T) = {nil, nil, nil}
-	edgesB: [3]^Edge(T) = {nil, nil, nil}
+	vertA: ^Vertex = nil
+	vertB: ^Vertex = nil
+	edgesA: [3]^Edge = {nil, nil, nil}
+	edgesB: [3]^Edge = {nil, nil, nil}
 
 	for i in 0 ..< 3 {
 		if edge.triA.edges[i] == edge do continue
@@ -341,10 +341,10 @@ ForceLegal :: proc(ctx: ^Context($T), edge: ^Edge(T)) -> (err: Trianguate_Error)
 
 @(private = "file")
 CreateInnerLocMinLooseEdge :: proc(
-	ctx: ^Context($T),
-	vAbove: ^Vertex(T),
+	ctx: ^Context,
+	vAbove: ^Vertex,
 ) -> (
-	ed: ^Edge(T),
+	ed: ^Edge,
 	err: Trianguate_Error,
 ) {
 	if ctx.firstActive == nil do return nil, .FIRST_ACTIVE_MISSING
@@ -353,8 +353,8 @@ CreateInnerLocMinLooseEdge :: proc(
 	yAbove := vAbove.p.y
 
 	e := ctx.firstActive
-	eBelow: ^Edge(T) = nil
-	bestD: T = -1.0
+	eBelow: ^Edge = nil
+	bestD: f64 = -1.0
 
 	for e != nil {
 		in_range :=
@@ -376,7 +376,7 @@ CreateInnerLocMinLooseEdge :: proc(
 
 	if eBelow == nil do return nil, .EBELLOW_MISSING
 
-	vBest: ^Vertex(T) = eBelow.vT.p.y <= yAbove ? eBelow.vB : eBelow.vT
+	vBest: ^Vertex = eBelow.vT.p.y <= yAbove ? eBelow.vB : eBelow.vT
 	xBest := vBest.p.x
 	yBest := vBest.p.y
 
@@ -417,7 +417,7 @@ CreateInnerLocMinLooseEdge :: proc(
 
 
 @(private = "file")
-MergeDupOrCollinearVertices :: proc(ctx: ^Context($T)) -> (err: Trianguate_Error) {
+MergeDupOrCollinearVertices :: proc(ctx: ^Context) -> (err: Trianguate_Error) {
 	// note: this procedure may add new edges and change the
 	// number of edges connected with a given vertex, but it
 	// won't add or delete vertices (so it's safe to use iterators)
@@ -472,7 +472,7 @@ MergeDupOrCollinearVertices :: proc(ctx: ^Context($T)) -> (err: Trianguate_Error
 
 // Squared distance between two points (same role as Clipper2 DistSqr on path vertices).
 @(private = "file")
-vertex_pair_dist_sqr :: proc "contextless" (a, b: [2]$T) -> T where intrinsics.type_is_float(T) {
+vertex_pair_dist_sqr :: proc "contextless" (a, b: [2]f64) -> f64 {
 	dx := a.x - b.x
 	dy := a.y - b.y
 	return dx * dx + dy * dy
@@ -480,7 +480,7 @@ vertex_pair_dist_sqr :: proc "contextless" (a, b: [2]$T) -> T where intrinsics.t
 
 
 @(private = "file")
-AddPath :: proc(ctx: ^Context($T), pts: [][2]T, base_idx: u32) -> (err: Trianguate_Error) {
+AddPath :: proc(ctx: ^Context, pts: [][2]f64, base_idx: u32) -> (err: Trianguate_Error) {
 	i0 := 0
 	if !FindLocMinIdx(pts, &i0) do return
 
@@ -582,18 +582,13 @@ AddPath :: proc(ctx: ^Context($T), pts: [][2]T, base_idx: u32) -> (err: Triangua
 	}
 	MakeEdge(ctx, v0, vPrev, .descend) or_return
 
-	// Ignore path if not a polygon, or a 3-vertex path that is a very tiny triangle
-	// (Clipper2: each edge length squared <= 1 in integer coords; here <= 1 in T units).
+	// Ignore path if not a polygon
 	len_fin := len(ctx.all_verts) - vert_cnt
 	ignore_path := len_fin < 3
 	if !ignore_path && len_fin == 3 {
 		p0 := ctx.all_verts[vert_cnt + 0].p
 		p1 := ctx.all_verts[vert_cnt + 1].p
 		p2 := ctx.all_verts[vert_cnt + 2].p
-		ignore_path =
-			vertex_pair_dist_sqr(p0, p1) <= 1.0 ||
-			vertex_pair_dist_sqr(p1, p2) <= 1.0 ||
-			vertex_pair_dist_sqr(p2, p0) <= 1.0
 	}
 	if ignore_path {
 		for j := vert_cnt; j < len(ctx.all_verts); j += 1 {
@@ -605,7 +600,7 @@ AddPath :: proc(ctx: ^Context($T), pts: [][2]T, base_idx: u32) -> (err: Triangua
 }
 
 @(private = "file")
-AddPaths :: proc(ctx: ^Context($T)) -> (err: Trianguate_Error) {
+AddPaths :: proc(ctx: ^Context) -> (err: Trianguate_Error) {
 	total_vert_count := 0
 	for p in ctx.polys {
 		total_vert_count += len(p)
@@ -625,7 +620,7 @@ AddPaths :: proc(ctx: ^Context($T)) -> (err: Trianguate_Error) {
 }
 
 @(private = "file")
-FindLocMinIdx :: proc "contextless" (pts: [][2]$T, in_out_idx: ^int) -> bool {
+FindLocMinIdx :: proc "contextless" (pts: [][2]f64, in_out_idx: ^int) -> bool {
 	if len(pts) < 3 do return false
 
 	i0 := in_out_idx^
@@ -646,13 +641,13 @@ FindLocMinIdx :: proc "contextless" (pts: [][2]$T, in_out_idx: ^int) -> bool {
 
 @(private = "file")
 CreateTriangle :: proc(
-	ctx: ^Context($T),
-	e1, e2, e3: ^Edge(T),
+	ctx: ^Context,
+	e1, e2, e3: ^Edge,
 ) -> (
-	res: ^Triangle(T),
+	res: ^Triangle,
 	err: Trianguate_Error,
 ) {
-	res = new(Triangle(T), context.temp_allocator) or_return
+	res = new(Triangle, context.temp_allocator) or_return
 	res.edges = {e1, e2, e3}
 	non_zero_append(&ctx.all_tris, res) or_return
 	// nb: only expire loose edges when both sides of these edges have triangles.
@@ -672,14 +667,14 @@ CreateTriangle :: proc(
 }
 
 @(private = "file")
-EdgeContains :: proc "contextless" (edge: ^Edge($T), v: ^Vertex(T)) -> EdgeContainsResult {
+EdgeContains :: proc "contextless" (edge: ^Edge, v: ^Vertex) -> EdgeContainsResult {
 	if edge.vL == v do return .left
 	if edge.vR == v do return .right
 	return .neither
 }
 
 @(private = "file")
-RemoveEdgeFromVertex :: proc(vert: ^Vertex($T), edge: ^Edge(T)) -> (err: Trianguate_Error) {
+RemoveEdgeFromVertex :: proc(vert: ^Vertex, edge: ^Edge) -> (err: Trianguate_Error) {
 	for e, i in vert.e {
 		if e == edge {
 			ordered_remove(&vert.e, i)
@@ -690,24 +685,24 @@ RemoveEdgeFromVertex :: proc(vert: ^Vertex($T), edge: ^Edge(T)) -> (err: Triangu
 }
 
 @(private = "file")
-IsHorizontal :: proc "contextless" (e: ^Edge($T)) -> bool {
+IsHorizontal :: proc "contextless" (e: ^Edge) -> bool {
 	return(
-		e.vB.p.y <= e.vT.p.y + linalg_ex.epsilon(T) &&
-		e.vB.p.y >= e.vT.p.y - linalg_ex.epsilon(T) \
+		e.vB.p.y <= e.vT.p.y + linalg_ex.epsilon(f64) &&
+		e.vB.p.y >= e.vT.p.y - linalg_ex.epsilon(f64) \
 	)
 }
 
 @(private = "file")
 MakeEdge :: proc(
-	ctx: ^Context($T),
-	v1, v2: ^Vertex(T),
+	ctx: ^Context,
+	v1, v2: ^Vertex,
 	kind: EdgeKind,
 ) -> (
-	res: ^Edge(T),
+	res: ^Edge,
 	err: Trianguate_Error,
 ) {
 	if len(ctx.all_edges) >= int(max(u32)) do return nil, .TOO_MANY_EDGES
-	non_zero_append(&ctx.all_edges, new(Edge(T), context.temp_allocator) or_return) or_return
+	non_zero_append(&ctx.all_edges, new(Edge, context.temp_allocator) or_return) or_return
 
 	ed := ctx.all_edges[len(ctx.all_edges) - 1]
 	if v1.p.y >= v2.p.y {
@@ -733,7 +728,7 @@ MakeEdge :: proc(
 }
 
 @(private = "file")
-SetEdgeToActive :: proc "contextless" (ctx: ^Context($T), edge: ^Edge(T)) {
+SetEdgeToActive :: proc "contextless" (ctx: ^Context, edge: ^Edge) {
 	// nb: on occassions this method can get called twice for a given edge
 	// This is because, in the Triangulate() method where vertex 'edges'
 	// arrays are being parsed, edges can can be removed from the array
@@ -750,7 +745,7 @@ SetEdgeToActive :: proc "contextless" (ctx: ^Context($T), edge: ^Edge(T)) {
 }
 
 @(private = "file")
-RemoveEdgeFromActives :: proc(ctx: ^Context($T), edge: ^Edge(T)) -> (err: Trianguate_Error) {
+RemoveEdgeFromActives :: proc(ctx: ^Context, edge: ^Edge) -> (err: Trianguate_Error) {
 	RemoveEdgeFromVertex(edge.vB, edge) or_return
 	RemoveEdgeFromVertex(edge.vT, edge) or_return
 
@@ -766,7 +761,7 @@ RemoveEdgeFromActives :: proc(ctx: ^Context($T), edge: ^Edge(T)) -> (err: Triang
 }
 
 @(private = "file")
-SplitEdge :: proc(ctx: ^Context($T), longE, shortE: ^Edge(T)) -> (err: Trianguate_Error) {
+SplitEdge :: proc(ctx: ^Context, longE, shortE: ^Edge) -> (err: Trianguate_Error) {
 	oldT := longE.vT
 	newT := shortE.vT
 	RemoveEdgeFromVertex(oldT, longE) or_return
@@ -781,15 +776,9 @@ SplitEdge :: proc(ctx: ^Context($T), longE, shortE: ^Edge(T)) -> (err: Trianguat
 }
 
 @(private = "file")
-RemoveIntersection :: proc(
-	ctx: ^Context($T),
-	e1: ^Edge(T),
-	e2: ^Edge(T),
-) -> (
-	err: Trianguate_Error,
-) {
-	v: ^Vertex(T) = e1.vL
-	tmpE: ^Edge(T) = e2
+RemoveIntersection :: proc(ctx: ^Context, e1: ^Edge, e2: ^Edge) -> (err: Trianguate_Error) {
+	v: ^Vertex = e1.vL
+	tmpE: ^Edge = e2
 
 	d, d_ := linalg_ex.ShortestLength2Line(e1.vL.p, e2.vL.p, e2.vR.p)
 	d2, d2_ := linalg_ex.ShortestLength2Line(e1.vR.p, e2.vL.p, e2.vR.p)
@@ -811,7 +800,9 @@ RemoveIntersection :: proc(
 		tmpE = e1
 		v = e2.vR
 	}
-	if d / d_ > 1.0 do return .PATHS_INTERSECTS
+	if d / d_ > 1.0 {
+		return .PATHS_INTERSECTS
+	}
 
 	v2 := tmpE.vT
 	RemoveEdgeFromVertex(v2, tmpE) or_return
@@ -827,53 +818,41 @@ RemoveIntersection :: proc(
 }
 
 @(private = "file")
-GetLocMinAngleCheck :: proc(v: ^Vertex($T)) -> bool {
-	// Original (atan2): return GetAngle(des.vT.p, v.p, asc.vT.p) <= 0.
+GetLocMinAngleCheck :: proc(v: ^Vertex) -> bool {
 	asc, des: int
 	if v.e[0].kind == .ascend {asc = 0; des = 1} else {des = 0; asc = 1}
-	// Check whether the local-minimum angle is <= 0: sign of 2D cross product cp = (b - a) x (b - c).
-	a := v.e[des].vT.p
-	b := v.p
-	c := v.e[asc].vT.p
-
-	abx := b.x - a.x
-	aby := b.y - a.y
-	bcx := b.x - c.x
-	bcy := b.y - c.y
-
-	cp := abx * bcy - aby * bcx
-	return cp <= linalg_ex.epsilon(T)
+	return linalg_ex.GetAngle(v.e[des].vT.p, v.p, v.e[asc].vT.p) <= 0.0
 }
 
 @(private = "file")
-EdgeCompleted :: proc "contextless" (e: ^Edge($T)) -> bool {
+EdgeCompleted :: proc "contextless" (e: ^Edge) -> bool {
 	if e.triA == nil do return false
 	if e.triB != nil do return true
 	return e.kind != .loose
 }
 
 @(private = "file")
-IsLooseEdge :: proc "contextless" (e: ^Edge($T)) -> bool {
+IsLooseEdge :: proc "contextless" (e: ^Edge) -> bool {
 	return e.kind == .loose
 }
 
 @(private = "file")
-IsLeftEdge :: proc "contextless" (e: ^Edge($T)) -> bool {
+IsLeftEdge :: proc "contextless" (e: ^Edge) -> bool {
 	return e.kind == .ascend
 }
 
 @(private = "file")
-IsRightEdge :: proc "contextless" (e: ^Edge($T)) -> bool {
+IsRightEdge :: proc "contextless" (e: ^Edge) -> bool {
 	return e.kind == .descend
 }
 
 @(private = "file")
 FindLinkingEdge :: proc "contextless" (
-	vert1: ^Vertex($T),
-	vert2: ^Vertex(T),
+	vert1: ^Vertex,
+	vert2: ^Vertex,
 	prefer_ascending: bool,
-) -> ^Edge(T) {
-	res: ^Edge(T) = nil
+) -> ^Edge {
+	res: ^Edge = nil
 	for e in vert1.e {
 		if e.vL == vert2 || e.vR == vert2 {
 			if e.kind == .loose || (e.kind == .ascend) == prefer_ascending do return e
@@ -884,9 +863,9 @@ FindLinkingEdge :: proc "contextless" (
 }
 
 @(private = "file")
-MakeVertex :: proc(p: [2]$T, idx: u32) -> (res: ^Vertex(T), err: Trianguate_Error) {
-	res = new_clone(Vertex(T){p = p, innerLM = false}, context.temp_allocator) or_return
-	res.e = make([dynamic]^Edge(T), context.temp_allocator) or_return
+MakeVertex :: proc(p: [2]f64, idx: u32) -> (res: ^Vertex, err: Trianguate_Error) {
+	res = new_clone(Vertex{p = p, innerLM = false}, context.temp_allocator) or_return
+	res.e = make([dynamic]^Edge, context.temp_allocator) or_return
 	res.idx = idx
 	non_zero_reserve(&res.e, 2) or_return
 	return
@@ -900,21 +879,29 @@ TrianguatePolygons :: proc(
 	indices: []u32,
 	err: Trianguate_Error,
 ) where intrinsics.type_is_float(T) {
-	ctx := Context(T) {
-		all_verts            = make([dynamic]^Vertex(T), context.temp_allocator) or_return,
-		all_tris             = make([dynamic]^Triangle(T), context.temp_allocator) or_return,
-		all_edges            = make([dynamic]^Edge(T), context.temp_allocator) or_return,
-		pendingDelaunayStack = make([dynamic]^Edge(T), context.temp_allocator) or_return,
-		loc_min_stack        = make([dynamic]^Vertex(T), context.temp_allocator) or_return,
-		horz_edge_stack      = make([dynamic]^Edge(T), context.temp_allocator) or_return,
-		polys                = poly,
+	poly64 := make([][][2]f64, len(poly), context.temp_allocator) or_return
+	for p, i in poly {
+		poly64[i] = make([][2]f64, len(p), context.temp_allocator) or_return
+		for pp, j in p {
+			poly64[i][j] = [2]f64{f64(pp.x), f64(pp.y)}
+		}
+	}
+
+	ctx := Context {
+		all_verts            = make([dynamic]^Vertex, context.temp_allocator) or_return,
+		all_tris             = make([dynamic]^Triangle, context.temp_allocator) or_return,
+		all_edges            = make([dynamic]^Edge, context.temp_allocator) or_return,
+		pendingDelaunayStack = make([dynamic]^Edge, context.temp_allocator) or_return,
+		loc_min_stack        = make([dynamic]^Vertex, context.temp_allocator) or_return,
+		horz_edge_stack      = make([dynamic]^Edge, context.temp_allocator) or_return,
+		polys                = poly64,
 	}
 	non_zero_reserve(&ctx.all_edges, len(poly)) or_return
 
 	AddPaths(&ctx) or_return
 
 	if ctx.lowermostVertex.innerLM {
-		lm: ^Vertex(T)
+		lm: ^Vertex
 		for len(ctx.loc_min_stack) > 0 {
 			lm = ctx.loc_min_stack[len(ctx.loc_min_stack) - 1]
 			lm.innerLM = !lm.innerLM
@@ -929,18 +916,18 @@ TrianguatePolygons :: proc(
 		clear(&ctx.loc_min_stack)
 	}
 
-	slice.sort_by(ctx.all_edges[:], proc(a, b: ^Edge(T)) -> bool {
+	slice.sort_by(ctx.all_edges[:], proc(a, b: ^Edge) -> bool {
 		return a.vL.p.x < b.vL.p.x
 	})
 	FixupEdgeIntersects(&ctx) or_return
 
-	slice.sort_by(ctx.all_verts[:], proc(a, b: ^Vertex(T)) -> bool {
+	slice.sort_by(ctx.all_verts[:], proc(a, b: ^Vertex) -> bool {
 		if a.p.y == b.p.y do return a.p.x < b.p.x
 		return a.p.y > b.p.y
 	})
 	MergeDupOrCollinearVertices(&ctx) or_return
 
-	currY: T = ctx.all_verts[0].p.y
+	currY: f64 = ctx.all_verts[0].p.y
 	for &v in ctx.all_verts {
 		if len(v.e) == 0 do continue
 
@@ -1054,4 +1041,3 @@ TrianguatePolygons :: proc(
 	mem.copy_non_overlapping(raw_data(indices), raw_data(idx_buf[:]), size_of(u32) * len(idx_buf))
 	return
 }
-

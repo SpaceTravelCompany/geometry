@@ -21,7 +21,7 @@ shape_vertex_flag :: enum u8 {
 	LINE,
 }
 
-shape_vertex2d :: struct #packed {
+shape_vertex2d :: struct {
 	pos:   linalg.Vector2f32,
 	uvw:   linalg.Vector3f32,
 	color: linalg.Vector4f32,
@@ -626,41 +626,103 @@ shapes_compute_polygon :: proc(
 			}
 			return
 		}
+		CurveChordOverlaps :: proc(
+			src: curve_struct_float(f32),
+			cur: curve_struct_float(f32),
+		) -> bool {
+			if cur.type == .Line || src.type == .Line do return false
 
-		InsertCurveEndpointsIntoPolygonBoundary :: proc(
-			non_curves_npi: ^[dynamic][2]f32,
-			curves_npi: [dynamic]curve_struct_float(f32),
+			k1, _ := linalg_ex.LinesIntersect2(src.start, src.end, cur.start, cur.ctl0, true)
+			if k1 == .intersect do return true
+
+			k2, _ := linalg_ex.LinesIntersect2(
+				src.start,
+				src.end,
+				cur.type == .Quadratic ? cur.ctl0 : cur.ctl1,
+				cur.end,
+				true,
+			)
+			return k2 == .intersect
+		}
+
+		BuildContourCurves :: proc(
+			curves_npi: ^[dynamic]curve_struct_float(f32),
+			pts: []linalg.Vector2f32,
+			curve_flags: []bool,
 			is_closed: bool,
 		) -> (
 			err: shape_error = nil,
 		) {
-			curve_idx := 0
+			if len(pts) == 0 do return
+
+			last := len(pts) - 1
 			i := 0
-			for i < len(non_curves_npi) && curve_idx < len(curves_npi) {
-				non := non_curves_npi[i]
+			for {
+				if !is_closed && i >= last do break
 
-				next: int
-				if is_closed {
-					next = (i + 1) % len(non_curves_npi)
-				} else {
-					if i + 1 >= len(non_curves_npi) do break
-					next = i + 1
-				}
+				next := is_closed ? (i + 1) % len(pts) : i + 1
+				if next >= len(pts) do break
 
-				if non == curves_npi[curve_idx].start {
-					if non_curves_npi[next] != curves_npi[curve_idx].end {
-						utils_private.non_zero_inject_at_elem(
-							non_curves_npi,
-							next,
-							curves_npi[curve_idx].end,
+				if next < len(curve_flags) && curve_flags[next] {
+					next2 := is_closed ? (next + 1) % len(pts) : next + 1
+					if next2 >= len(pts) do break
+
+					if next2 < len(curve_flags) && curve_flags[next2] {
+						next3 := is_closed ? (next2 + 1) % len(pts) : next2 + 1
+						if next3 >= len(pts) do break
+
+						non_zero_append(
+							curves_npi,
+							curve_struct_float(f32) {
+								start = pts[i],
+								ctl0 = pts[next],
+								ctl1 = pts[next2],
+								end = pts[next3],
+								type = .Unknown,
+							},
 						) or_return
+						i = next3
+					} else {
+						non_zero_append(
+							curves_npi,
+							curve_struct_float(f32) {
+								start = pts[i],
+								ctl0 = pts[next],
+								end = pts[next2],
+								type = .Quadratic,
+							},
+						) or_return
+						i = next2
 					}
-
-					curve_idx += 1
-					i = next
 				} else {
-					i += 1
+					non_zero_append(
+						curves_npi,
+						curve_struct_float(f32){start = pts[i], end = pts[next], type = .Line},
+					) or_return
+					i = next
 				}
+
+				if is_closed && i == 0 do break
+			}
+			return
+		}
+
+		RebuildPolygonBoundaryFromCurves :: proc(
+			non_curves_npi: ^[dynamic][2]f32,
+			curves_npi: []curve_struct_float(f32),
+			is_closed: bool,
+		) -> (
+			err: shape_error = nil,
+		) {
+			non_zero_resize_dynamic_array(non_curves_npi, 0) or_return
+			if len(curves_npi) == 0 do return
+
+			non_zero_append(non_curves_npi, curves_npi[0].start) or_return
+			for c, i in curves_npi {
+				if is_closed && i == len(curves_npi) - 1 && c.end == curves_npi[0].start {
+					continue
+				}
+				non_zero_append(non_curves_npi, c.end) or_return
 			}
 			return
 		}
@@ -684,39 +746,11 @@ shapes_compute_polygon :: proc(
 				}
 
 				for np, npi in node.pts {
-					for i := 0; i < len(np); i += 1 {
-						pt := np[i]
-						if node.is_curves != nil &&
-						   npi < len(node.is_curves) &&
-						   i < len(node.is_curves[npi]) &&
-						   node.is_curves[npi][i] {
-							if i + 1 < len(node.is_curves[npi]) && node.is_curves[npi][i + 1] {
-								non_zero_append(
-									&curves2[npi],
-									curve_struct_float(f32) {
-										start = np[i - 1],
-										ctl0 = pt,
-										ctl1 = np[i + 1],
-										end = np[(i + 2) % len(np)],
-										type = .Unknown,
-									},
-								) or_return
-								i += 1
-							} else {
-								non_zero_append(
-									&curves2[npi],
-									curve_struct_float(f32) {
-										start = np[i - 1],
-										ctl0 = pt,
-										end = np[(i + 1) % len(np)],
-										type = .Quadratic,
-									},
-								) or_return
-							}
-						} else {
-							non_zero_append(&non_curves2[npi], pt) or_return
-						}
+					curve_flags: []bool = nil
+					if node.is_curves != nil && npi < len(node.is_curves) {
+						curve_flags = node.is_curves[npi]
 					}
+					BuildContourCurves(&curves2[npi], np, curve_flags, node.is_closed) or_return
 				}
 
 				// Loop subdivision (float)
@@ -724,7 +758,7 @@ shapes_compute_polygon :: proc(
 					curves_npi := &curves2[npi]
 					for i := 0; i < len(curves_npi); i += 1 {
 						c := curves_npi[i]
-						if c.type != .Quadratic {
+						if c.type != .Quadratic && c.type != .Line {
 							curveType, d0, d1, d2 := GetCubicCurveType(
 								c.start,
 								c.ctl0,
@@ -763,173 +797,152 @@ shapes_compute_polygon :: proc(
 						}
 					}
 				}
+				skipA := make([dynamic]bool, context.temp_allocator) or_return
+				skipB := make([dynamic]bool, context.temp_allocator) or_return
 
 				// Overlap check (float)
-				overlap_skip2: [][dynamic]bool = utils_private.make_non_zeroed_slice(
-					[][dynamic]bool,
-					len(curves2),
-					context.temp_allocator,
-				) or_return
-				for &ov in overlap_skip2 do ov = make([dynamic]bool, context.temp_allocator) or_return
+				for npi_a in 0 ..< len(curves2) {
+					curves_a := &curves2[npi_a]
 
-				for npi in 0 ..< len(curves2) {
-					curves_n := &curves2[npi]
-					skip_n := &overlap_skip2[npi]
-					non_zero_resize(skip_n, len(curves_n)) or_return
+					for npi_b := 0; npi_b < len(curves2); npi_b += 1 {
+						curves_b := &curves2[npi_b]
 
-					for i := 0; i < len(curves_n); i += 1 {
-						for j := i + 1; j < len(curves_n); j += 1 {
-							if skip_n[i] || skip_n[j] do continue
-							cur := curves_n[i]
-							cur2 := curves_n[j]
+						if npi_a != npi_b {
+							for i := 0; i < len(curves_a); i += 1 {
+								for j := 0; j < len(curves_b); j += 1 {
+									if i == j do continue
+									src := curves_b[j]
+									cur := curves_a[i]
+									if cur.type == .Line || src.type == .Line do continue
 
-							k1, ip1 := linalg_ex.LinesIntersect2(
-								cur2.start,
-								cur2.end,
-								cur.start,
-								cur.ctl0,
-								true,
-							)
-							if k1 == .intersect {
-								_, t := linalg_ex.PointInLine(ip1, cur2.start, cur2.end)
-								non_zero_resize(skip_n, len(skip_n) + 1) or_return
-								skip_n[i], skip_n[j], skip_n[j + 1] = true, true, true
+									if CurveChordOverlaps(src, cur) {
+										_, _, _ = SubdivCurveAndInjectAt(
+											curves_b,
+											j + 1,
+											&curves_b[j],
+											src,
+											0.5,
+										) or_return
 
-								j += 1
-								mid, c0, c1 := SubdivCurveAndInjectAt(
-									curves_n,
-									j,
-									&cur2,
-									cur2,
-									t,
-								) or_return
-
-								// opp
-								k2, ip2 := linalg_ex.LinesIntersect2(
-									mid,
-									cur2.end,
-									cur.type == .Quadratic ? cur.ctl0 : cur.ctl1,
-									cur.end,
-									true,
-								)
-								if k2 != .intersect do continue
-								non_zero_resize(skip_n, len(skip_n) + 1) or_return
-								_, t2 := linalg_ex.PointInLine(ip2, mid, cur2.end)
-
-								if cur2.type == .Quadratic {
-									skip_n[j + 1] = true
-									SubdivCurveAndInjectAt(
-										curves_n,
-										j + 1,
-										&curves_n[j],
-										curve_struct_float(f32) {
-											start = mid,
-											ctl0 = c0,
-											end = cur2.end,
-											type = .Quadratic,
-										},
-										t2,
-									) or_return
-									j += 1
-								} else {
-									SubdivCurveAndInjectAt(
-										curves_n,
-										j + 1,
-										&curves_n[j],
-										curve_struct_float(f32) {
-											start = mid,
-											ctl0 = c0,
-											ctl1 = c1,
-											end = cur2.end,
-											type = .Unknown,
-										},
-										t2,
-									) or_return
+										if CurveChordOverlaps(curves_b[j], cur) ||
+										   CurveChordOverlaps(curves_b[j + 1], cur) {
+											_, _, _ = SubdivCurveAndInjectAt(
+												curves_a,
+												i + 1,
+												&curves_a[i],
+												cur,
+												0.5,
+											) or_return
+											i += 1
+										}
+										j += 1
+									}
 								}
-							} else {
-								k2, ip2 := linalg_ex.LinesIntersect2(
-									cur2.start,
-									cur2.end,
-									cur.type == .Quadratic ? cur.ctl0 : cur.ctl1,
-									cur.end,
-									true,
-								)
-								if k2 != .intersect do continue
-								non_zero_resize(skip_n, len(skip_n) + 1) or_return
-								skip_n[i], skip_n[j], skip_n[j + 1] = true, true, true
-								j += 1
+							}
+						} else {
+							for i := 0; i < len(curves_a); i += 1 {
+								for j := 0; j < len(curves_a); j += 1 {
+									if i == j do continue
+									src := curves_a[j]
+									cur := curves_a[i]
+									if cur.type == .Line || src.type == .Line do continue
 
-								_, t := linalg_ex.PointInLine(ip2, cur2.start, cur2.end)
-								SubdivCurveAndInjectAt(curves_n, j, &cur2, cur2, t) or_return
+									if CurveChordOverlaps(src, cur) {
+										_, _, _ = SubdivCurveAndInjectAt(
+											curves_a,
+											j + 1,
+											&curves_a[j],
+											src,
+											0.5,
+										) or_return
+										if j < i do i += 1
+
+										if CurveChordOverlaps(curves_a[j], cur) ||
+										   CurveChordOverlaps(curves_a[j + 1], cur) {
+											_, _, _ = SubdivCurveAndInjectAt(
+												curves_a,
+												i + 1,
+												&curves_a[i],
+												cur,
+												0.5,
+											) or_return
+											if i < j do j += 1
+											i += 1
+										}
+										j += 1
+									}
+								}
 							}
 						}
 					}
+				}
+
+				for npi in 0 ..< len(node.pts) {
+					RebuildPolygonBoundaryFromCurves(
+						&non_curves2[npi],
+						curves2[npi][:],
+						node.is_closed,
+					) or_return
 				}
 
 				// Insert curve control points into polygon boundaries (float)
 				for npi in 0 ..< len(node.pts) {
 					non_curves_npi := &non_curves2[npi]
 					curves_npi := curves2[npi]
-					InsertCurveEndpointsIntoPolygonBoundary(
-						non_curves_npi,
-						curves_npi,
-						node.is_closed,
-					) or_return
-					curve_idx := 0
 					poly_pts := non_curves_npi[:]
-					orient := linalg_ex.GetPolygonOrientation(poly_pts)
-					invent_b := orient != .CounterClockwise
-
-					i := 0
-					for i < len(non_curves_npi) {
-						non := non_curves_npi[i]
-						next: int
-						if node.is_closed {
-							next = (i + 1) % len(non_curves_npi)
-						} else {
-							if i + 1 >= len(non_curves_npi) do break
-							next = i + 1
+					opp_poly_pts: [][2]f32 = nil
+					for &pts in non_curves2 {
+						if &pts == &non_curves2[npi] do continue
+						if linalg_ex.PointInPolygon(poly_pts[0], pts[:]) == .Inside {
+							opp_poly_pts = pts[:]
+							break
 						}
-						non_next := non_curves_npi[next]
-
-						if curve_idx < len(curves_npi) &&
-						   non == curves_npi[curve_idx].start &&
-						   non_next == curves_npi[curve_idx].end {
+					}
+					for c in curves_npi {
+						if c.type != .Line {
 							non_zero_resize_dynamic_array(&insert_ar, 0) or_return
 
-							if ok :=
-								   linalg_ex.PointInPolygon(
-									   curves_npi[curve_idx].ctl0,
-									   poly_pts,
-								   ) ==
-								   .Inside; invent_b ? !ok : ok {
-								non_zero_append(&insert_ar, curves_npi[curve_idx].ctl0) or_return
+							if linalg_ex.PointInPolygon(c.ctl0, poly_pts) == .Inside {
+								non_zero_append(&insert_ar, c.ctl0) or_return
+							} else if opp_poly_pts != nil &&
+							   linalg_ex.PointInPolygon(c.ctl0, opp_poly_pts) == .Inside {
+								non_zero_append(&insert_ar, c.ctl0) or_return
 							}
-							if curves_npi[curve_idx].type != .Quadratic {
-								if ok :=
-									   linalg_ex.PointInPolygon(
-										   curves_npi[curve_idx].ctl1,
-										   poly_pts,
-									   ) ==
-									   .Inside; invent_b ? !ok : ok {
-									non_zero_append(
-										&insert_ar,
-										curves_npi[curve_idx].ctl1,
-									) or_return
+							if c.type != .Quadratic {
+								if linalg_ex.PointInPolygon(c.ctl1, poly_pts) == .Inside {
+									non_zero_append(&insert_ar, c.ctl1) or_return
+								} else if opp_poly_pts != nil &&
+								   linalg_ex.PointInPolygon(c.ctl1, opp_poly_pts) == .Inside {
+									non_zero_append(&insert_ar, c.ctl1) or_return
 								}
 							}
 
-							utils_private.non_zero_inject_at_elems(
-								non_curves_npi,
-								next,
-								..insert_ar[:],
-							) or_return
-							poly_pts = non_curves_npi[:]
+							if len(insert_ar) > 0 {
+								insert_idx := -1
+								for idx := 0; idx < len(non_curves_npi); idx += 1 {
+									next := idx + 1
+									if node.is_closed {
+										next %= len(non_curves_npi)
+									} else if next >= len(non_curves_npi) {
+										break
+									}
 
-							curve_idx += 1
-							i = next + len(insert_ar)
-						} else {
-							i += 1
+									if non_curves_npi[idx] == c.start &&
+									   non_curves_npi[next] == c.end {
+										insert_idx = next
+										break
+									}
+								}
+								if insert_idx < 0 {
+									continue
+								}
+								utils_private.non_zero_inject_at_elems(
+									non_curves_npi,
+									insert_idx,
+									..insert_ar[:],
+								) or_return
+								poly_pts = non_curves_npi[:]
+							}
 						}
 					}
 				}
@@ -937,7 +950,6 @@ shapes_compute_polygon :: proc(
 				non_zero_resize_dynamic_array(&non_curves, len(non_curves2)) or_return
 				for npi in 0 ..< len(non_curves2) do non_curves[npi] = non_curves2[npi][:]
 
-				//fmt.println(non_curves[:])
 				indices, tri_err := triangulation.TrianguatePolygons(
 					non_curves[:],
 					context.temp_allocator,

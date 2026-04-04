@@ -670,10 +670,10 @@ LinesIntersect2 :: proc "contextless" (
 	intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
 	intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
 	if check_is_touching {
-		same_a_b1 := NumEqE(a1.x, b1.x) && NumEqE(a1.y, b1.y)
-		same_a_b2 := NumEqE(a1.x, b2.x) && NumEqE(a1.y, b2.y)
-		same_a2_b1 := NumEqE(a2.x, b1.x) && NumEqE(a2.y, b1.y)
-		same_a2_b2 := NumEqE(a2.x, b2.x) && NumEqE(a2.y, b2.y)
+		same_a_b1 := NumEq(a1.x, b1.x) && NumEq(a1.y, b1.y)
+		same_a_b2 := NumEq(a1.x, b2.x) && NumEq(a1.y, b2.y)
+		same_a2_b1 := NumEq(a2.x, b1.x) && NumEq(a2.y, b1.y)
+		same_a2_b2 := NumEq(a2.x, b2.x) && NumEq(a2.y, b2.y)
 		if same_a_b1 || same_a_b2 do return .none, a1
 		else if same_a2_b1 || same_a2_b2 do return .none, a2
 	}
@@ -712,10 +712,10 @@ LinesIntersect3 :: proc "contextless" (
 ) -> IntersectKind where intrinsics.type_is_float(T) ||
 	intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
 	intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
-	same_a1_b1 := NumEqE(a1.x, b1.x) && NumEqE(a1.y, b1.y)
-	same_a2_b1 := NumEqE(a2.x, b1.x) && NumEqE(a2.y, b1.y)
-	same_a1_b2 := NumEqE(a1.x, b2.x) && NumEqE(a1.y, b2.y)
-	same_a2_b2 := NumEqE(a2.x, b2.x) && NumEqE(a2.y, b2.y)
+	same_a1_b1 := NumEq(a1.x, b1.x) && NumEq(a1.y, b1.y)
+	same_a2_b1 := NumEq(a2.x, b1.x) && NumEq(a2.y, b1.y)
+	same_a1_b2 := NumEq(a1.x, b2.x) && NumEq(a1.y, b2.y)
+	same_a2_b2 := NumEq(a2.x, b2.x) && NumEq(a2.y, b2.y)
 	if check_is_touching && (same_a1_b1 || same_a2_b1 || same_a1_b2 || same_a2_b2) do return .none
 
 	zero := NumConst(0, T)
@@ -1079,4 +1079,3 @@ GetAngle :: proc(a, b, c: [2]$T) -> T where intrinsics.type_is_float(T) {
 	cp := abx * bcy - aby * bcx
 	return math.atan2(cp, dp) //range between -Pi and Pi
 }
-

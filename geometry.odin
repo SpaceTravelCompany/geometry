@@ -1101,8 +1101,8 @@ shapes_compute_polygon :: proc(
 					poly_pts := non_curves_npi[:]
 					opp_poly_pts: [][2]f32 = nil
 					if linalg_ex.GetPolygonOrientation(poly_pts) == .Clockwise {
-						for &pts in non_curves2 {
-							if &pts == &non_curves2[npi] do continue
+						for &pts, idx in non_curves2 {
+							if idx == npi do continue
 							if linalg_ex.PointInPolygon(poly_pts[0], pts[:]) == .Inside {
 								opp_poly_pts = pts[:]
 								break
@@ -1113,17 +1113,20 @@ shapes_compute_polygon :: proc(
 						if c.type != .Line {
 							non_zero_resize_fixed_capacity_dynamic_array(&insert_ar, 0)
 
-							if linalg_ex.PointInPolygon(c.ctl0, poly_pts) == .Inside {
-								append_fixed_capacity_elem(&insert_ar, c.ctl0)
-							} else if opp_poly_pts != nil &&
-							   linalg_ex.PointInPolygon(c.ctl0, opp_poly_pts) == .Inside {
+							if opp_poly_pts != nil {
+								if linalg_ex.PointInPolygon(c.ctl0, opp_poly_pts) == .Inside {
+									append_fixed_capacity_elem(&insert_ar, c.ctl0)
+								}
+							} else if linalg_ex.PointInPolygon(c.ctl0, poly_pts) == .Inside {
 								append_fixed_capacity_elem(&insert_ar, c.ctl0)
 							}
+
 							if c.type != .Quadratic {
-								if linalg_ex.PointInPolygon(c.ctl1, poly_pts) == .Inside {
-									append_fixed_capacity_elem(&insert_ar, c.ctl1)
-								} else if opp_poly_pts != nil &&
-								   linalg_ex.PointInPolygon(c.ctl1, opp_poly_pts) == .Inside {
+								if opp_poly_pts != nil {
+									if linalg_ex.PointInPolygon(c.ctl1, opp_poly_pts) == .Inside {
+										append_fixed_capacity_elem(&insert_ar, c.ctl1)
+									}
+								} else if linalg_ex.PointInPolygon(c.ctl1, poly_pts) == .Inside {
 									append_fixed_capacity_elem(&insert_ar, c.ctl1)
 								}
 							}

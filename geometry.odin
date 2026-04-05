@@ -548,6 +548,328 @@ _Shapes_ComputeLine :: proc(
 	return nil
 }
 
+@(private = "file")
+SubdivCurveAndInjectAt :: proc(
+	curves_n: ^[dynamic]curve_struct_float(f32),
+	insert_idx: int,
+	cur: ^curve_struct_float(f32),
+	src: curve_struct_float(f32),
+	t: f32,
+) -> (
+	mid: [2]f32,
+	c0: [2]f32,
+	c1: [2]f32,
+	err: shape_error = nil,
+) {
+	if src.type == .Quadratic {
+		p0, p1_, p2_ := linalg_ex.SubdivQuadraticBezier([3][2]f32{src.start, src.ctl0, src.end}, t)
+		cur.ctl0, cur.end = p0, p1_
+		mid, c0 = p1_, p2_
+		utils_private.non_zero_inject_at_elem(
+			curves_n,
+			insert_idx,
+			curve_struct_float(f32){start = p1_, ctl0 = p2_, end = src.end, type = .Quadratic},
+		) or_return
+	} else {
+		p0, p1_, p2_, p3_, p4_ := linalg_ex.SubdivCubicBezier(
+			[4][2]f32{src.start, src.ctl0, src.ctl1, src.end},
+			t,
+		)
+		cur.ctl0, cur.ctl1, cur.end = p0, p1_, p2_
+		mid, c0, c1 = p2_, p3_, p4_
+		utils_private.non_zero_inject_at_elem(
+			curves_n,
+			insert_idx,
+			curve_struct_float(f32) {
+				start = p2_,
+				ctl0 = p3_,
+				ctl1 = p4_,
+				end = src.end,
+				type = .Unknown,
+			},
+		) or_return
+	}
+	return
+}
+
+@(private = "file")
+SubdivCurveAt :: proc "contextless" (
+	src: curve_struct_float(f32),
+	t: f32,
+) -> (
+	left, right: curve_struct_float(f32),
+) {
+	if src.type == .Quadratic {
+		p0, p1_, p2_ := linalg_ex.SubdivQuadraticBezier([3][2]f32{src.start, src.ctl0, src.end}, t)
+		left = curve_struct_float(f32) {
+			start = src.start,
+			ctl0  = p0,
+			end   = p1_,
+			type  = .Quadratic,
+		}
+		right = curve_struct_float(f32) {
+			start = p1_,
+			ctl0  = p2_,
+			end   = src.end,
+			type  = .Quadratic,
+		}
+	} else {
+		p0, p1_, p2_, p3_, p4_ := linalg_ex.SubdivCubicBezier(
+			[4][2]f32{src.start, src.ctl0, src.ctl1, src.end},
+			t,
+		)
+		left = curve_struct_float(f32) {
+			start = src.start,
+			ctl0  = p0,
+			ctl1  = p1_,
+			end   = p2_,
+			type  = .Unknown,
+		}
+		right = curve_struct_float(f32) {
+			start = p2_,
+			ctl0  = p3_,
+			ctl1  = p4_,
+			end   = src.end,
+			type  = .Unknown,
+		}
+	}
+	return
+}
+
+@(private = "file")
+CurveChordOverlaps :: proc(src: curve_struct_float(f32), cur: curve_struct_float(f32)) -> bool {
+	if src.type == .Line && cur.type == .Line do return false
+
+	if src.type == .Line || cur.type == .Line {
+		// curve-vs-line: use curve chord (start-end) vs line (start-end)
+		k, _ := linalg_ex.LinesIntersect2(src.start, src.end, cur.start, cur.end, true)
+		return k == .intersect
+	}
+
+	k1, _ := linalg_ex.LinesIntersect2(src.start, src.end, cur.start, cur.ctl0, true)
+	if k1 == .intersect do return true
+
+	k2, _ := linalg_ex.LinesIntersect2(
+		src.start,
+		src.end,
+		cur.type == .Quadratic ? cur.ctl0 : cur.ctl1,
+		cur.end,
+		true,
+	)
+	return k2 == .intersect
+}
+
+@(private = "file")
+CurveChordOverlapsAny :: proc(
+	srcs: []curve_struct_float(f32),
+	curs: []curve_struct_float(f32),
+) -> bool {
+	for src in srcs {
+		for cur in curs {
+			if CurveChordOverlaps(src, cur) do return true
+		}
+	}
+	return false
+}
+
+@(private = "file")
+SubdivCurveSegmentsAtHalf :: proc "contextless" (
+	srcs: []curve_struct_float(f32),
+	dst: []curve_struct_float(f32),
+) {
+	// caller guarantees len(dst) == len(srcs) * 2
+	for src, idx in srcs {
+		a, b := SubdivCurveAt(src, 0.5)
+		dst[2 * idx] = a
+		dst[2 * idx + 1] = b
+	}
+	return
+}
+
+@(private = "file")
+InjectSubdivCurveSegments :: proc(
+	curves_n: ^[dynamic]curve_struct_float(f32),
+	split_flags_n: ^[dynamic]bool,
+	at_idx: int,
+	segs: []curve_struct_float(f32),
+) -> (
+	added: int,
+	err: shape_error = nil,
+) {
+	if len(segs) == 0 do return
+
+	curves_n[at_idx] = segs[0]
+	split_flags_n[at_idx] = true
+	if len(segs) > 1 {
+		utils_private.non_zero_inject_at_elems(curves_n, at_idx + 1, ..segs[1:]) or_return
+		for k := 1; k < len(segs); k += 1 {
+			utils_private.non_zero_inject_at_elem(split_flags_n, at_idx + k, true) or_return
+		}
+	}
+	added = len(segs) - 1
+	return
+}
+
+@(private = "file")
+ProcessCurveOverlapPair :: proc(
+	curves_a: ^[dynamic]curve_struct_float(f32),
+	split_flags_a: ^[dynamic]bool,
+	i: int,
+	curves_b: ^[dynamic]curve_struct_float(f32),
+	split_flags_b: ^[dynamic]bool,
+	j: int,
+	same_contour: bool,
+) -> (
+	cur_added: int,
+	src_added: int,
+	overlapped: bool,
+	err: shape_error = nil,
+) {
+	src := curves_b[j]
+	cur := curves_a[i]
+
+	src_is_line := src.type == .Line
+	cur_is_line := cur.type == .Line
+	if src_is_line && cur_is_line do return
+	if !CurveChordOverlaps(src, cur) do return
+	overlapped = true
+
+	// curve-vs-line: split only the curve side.
+	if src_is_line || cur_is_line {
+		if src_is_line {
+			cur_half0, cur_half1 := SubdivCurveAt(cur, 0.5)
+			cur_segs2 := [2]curve_struct_float(f32){cur_half0, cur_half1}
+			cur_segs4: [4]curve_struct_float(f32)
+			cur_segs8: [8]curve_struct_float(f32)
+			cur_segs: []curve_struct_float(f32) = cur_segs2[:]
+			line_probe := [1]curve_struct_float(f32){src}
+
+			if CurveChordOverlapsAny(line_probe[:], cur_segs) {
+				SubdivCurveSegmentsAtHalf(cur_segs, cur_segs4[:])
+				cur_segs = cur_segs4[:]
+				if CurveChordOverlapsAny(line_probe[:], cur_segs) {
+					SubdivCurveSegmentsAtHalf(cur_segs, cur_segs8[:])
+					cur_segs = cur_segs8[:]
+				}
+			}
+			cur_added = InjectSubdivCurveSegments(curves_a, split_flags_a, i, cur_segs) or_return
+		} else {
+			src_half0, src_half1 := SubdivCurveAt(src, 0.5)
+			src_segs2 := [2]curve_struct_float(f32){src_half0, src_half1}
+			src_segs4: [4]curve_struct_float(f32)
+			src_segs8: [8]curve_struct_float(f32)
+			src_segs: []curve_struct_float(f32) = src_segs2[:]
+			line_probe := [1]curve_struct_float(f32){cur}
+
+			if CurveChordOverlapsAny(src_segs, line_probe[:]) {
+				SubdivCurveSegmentsAtHalf(src_segs, src_segs4[:])
+				src_segs = src_segs4[:]
+				if CurveChordOverlapsAny(src_segs, line_probe[:]) {
+					SubdivCurveSegmentsAtHalf(src_segs, src_segs8[:])
+					src_segs = src_segs8[:]
+				}
+			}
+
+			if same_contour {
+				src_added = InjectSubdivCurveSegments(
+					curves_a,
+					split_flags_a,
+					j,
+					src_segs,
+				) or_return
+			} else {
+				src_added = InjectSubdivCurveSegments(
+					curves_b,
+					split_flags_b,
+					j,
+					src_segs,
+				) or_return
+			}
+		}
+		return
+	}
+
+	src_half0, src_half1 := SubdivCurveAt(src, 0.5)
+	cur_half0, cur_half1 := SubdivCurveAt(cur, 0.5)
+	src_segs2 := [2]curve_struct_float(f32){src_half0, src_half1}
+	cur_segs2 := [2]curve_struct_float(f32){cur_half0, cur_half1}
+	cur_segs1 := [1]curve_struct_float(f32){cur}
+	src_segs4: [4]curve_struct_float(f32)
+	src_segs8: [8]curve_struct_float(f32)
+	cur_segs4: [4]curve_struct_float(f32)
+	cur_segs8: [8]curve_struct_float(f32)
+	src_segs: []curve_struct_float(f32) = src_segs2[:]
+	cur_segs: []curve_struct_float(f32) = cur_segs1[:]
+
+	// refine one side at a time:
+	// src(2) -> cur(2) -> src(4) -> cur(4) -> src(8) -> cur(8)
+	if CurveChordOverlapsAny(src_segs, cur_segs) {
+		cur_segs = cur_segs2[:]
+
+		if CurveChordOverlapsAny(src_segs, cur_segs) {
+			SubdivCurveSegmentsAtHalf(src_segs, src_segs4[:])
+			src_segs = src_segs4[:]
+
+			if CurveChordOverlapsAny(src_segs, cur_segs) {
+				SubdivCurveSegmentsAtHalf(cur_segs, cur_segs4[:])
+				cur_segs = cur_segs4[:]
+
+				if CurveChordOverlapsAny(src_segs, cur_segs) {
+					SubdivCurveSegmentsAtHalf(src_segs, src_segs8[:])
+					src_segs = src_segs8[:]
+
+					if CurveChordOverlapsAny(src_segs, cur_segs) {
+						SubdivCurveSegmentsAtHalf(cur_segs, cur_segs8[:])
+						cur_segs = cur_segs8[:]
+					}
+				}
+			}
+		}
+	}
+
+	if same_contour {
+		if len(src_segs) > 1 && len(cur_segs) > 1 {
+			if j > i {
+				src_added = InjectSubdivCurveSegments(
+					curves_a,
+					split_flags_a,
+					j,
+					src_segs,
+				) or_return
+				cur_added = InjectSubdivCurveSegments(
+					curves_a,
+					split_flags_a,
+					i,
+					cur_segs,
+				) or_return
+			} else {
+				cur_added = InjectSubdivCurveSegments(
+					curves_a,
+					split_flags_a,
+					i,
+					cur_segs,
+				) or_return
+				src_added = InjectSubdivCurveSegments(
+					curves_a,
+					split_flags_a,
+					j,
+					src_segs,
+				) or_return
+			}
+		} else if len(src_segs) > 1 {
+			src_added = InjectSubdivCurveSegments(curves_a, split_flags_a, j, src_segs) or_return
+		} else if len(cur_segs) > 1 {
+			cur_added = InjectSubdivCurveSegments(curves_a, split_flags_a, i, cur_segs) or_return
+		}
+	} else {
+		src_added = InjectSubdivCurveSegments(curves_b, split_flags_b, j, src_segs) or_return
+		if len(cur_segs) > 1 {
+			cur_added = InjectSubdivCurveSegments(curves_a, split_flags_a, i, cur_segs) or_return
+		}
+	}
+	return
+}
+
 shapes_compute_polygon :: proc(
 	poly: shapes,
 	allocator := context.allocator,
@@ -574,175 +896,26 @@ shapes_compute_polygon :: proc(
 			[dynamic][dynamic]curve_struct_float(f32),
 			context.temp_allocator,
 		)
-		insert_ar := make([dynamic][2]f32, context.temp_allocator)
-
-		SubdivCurveAndInjectAt :: proc(
-			curves_n: ^[dynamic]curve_struct_float(f32),
-			insert_idx: int,
-			cur: ^curve_struct_float(f32),
-			src: curve_struct_float(f32),
-			t: f32,
-		) -> (
-			mid: [2]f32,
-			c0: [2]f32,
-			c1: [2]f32,
-			err: shape_error = nil,
-		) {
-			if src.type == .Quadratic {
-				p0, p1_, p2_ := linalg_ex.SubdivQuadraticBezier(
-					[3][2]f32{src.start, src.ctl0, src.end},
-					t,
-				)
-				cur.ctl0, cur.end = p0, p1_
-				mid, c0 = p1_, p2_
-				utils_private.non_zero_inject_at_elem(
-					curves_n,
-					insert_idx,
-					curve_struct_float(f32) {
-						start = p1_,
-						ctl0 = p2_,
-						end = src.end,
-						type = .Quadratic,
-					},
-				) or_return
-			} else {
-				p0, p1_, p2_, p3_, p4_ := linalg_ex.SubdivCubicBezier(
-					[4][2]f32{src.start, src.ctl0, src.ctl1, src.end},
-					t,
-				)
-				cur.ctl0, cur.ctl1, cur.end = p0, p1_, p2_
-				mid, c0, c1 = p2_, p3_, p4_
-				utils_private.non_zero_inject_at_elem(
-					curves_n,
-					insert_idx,
-					curve_struct_float(f32) {
-						start = p2_,
-						ctl0 = p3_,
-						ctl1 = p4_,
-						end = src.end,
-						type = .Unknown,
-					},
-				) or_return
-			}
-			return
-		}
-		CurveChordOverlaps :: proc(
-			src: curve_struct_float(f32),
-			cur: curve_struct_float(f32),
-		) -> bool {
-			if cur.type == .Line || src.type == .Line do return false
-
-			k1, _ := linalg_ex.LinesIntersect2(src.start, src.end, cur.start, cur.ctl0, true)
-			if k1 == .intersect do return true
-
-			k2, _ := linalg_ex.LinesIntersect2(
-				src.start,
-				src.end,
-				cur.type == .Quadratic ? cur.ctl0 : cur.ctl1,
-				cur.end,
-				true,
-			)
-			return k2 == .intersect
-		}
-
-		BuildContourCurves :: proc(
-			curves_npi: ^[dynamic]curve_struct_float(f32),
-			pts: []linalg.Vector2f32,
-			curve_flags: []bool,
-			is_closed: bool,
-		) -> (
-			err: shape_error = nil,
-		) {
-			if len(pts) == 0 do return
-
-			last := len(pts) - 1
-			i := 0
-			for {
-				if !is_closed && i >= last do break
-
-				next := is_closed ? (i + 1) % len(pts) : i + 1
-				if next >= len(pts) do break
-
-				if next < len(curve_flags) && curve_flags[next] {
-					next2 := is_closed ? (next + 1) % len(pts) : next + 1
-					if next2 >= len(pts) do break
-
-					if next2 < len(curve_flags) && curve_flags[next2] {
-						next3 := is_closed ? (next2 + 1) % len(pts) : next2 + 1
-						if next3 >= len(pts) do break
-
-						non_zero_append(
-							curves_npi,
-							curve_struct_float(f32) {
-								start = pts[i],
-								ctl0 = pts[next],
-								ctl1 = pts[next2],
-								end = pts[next3],
-								type = .Unknown,
-							},
-						) or_return
-						i = next3
-					} else {
-						non_zero_append(
-							curves_npi,
-							curve_struct_float(f32) {
-								start = pts[i],
-								ctl0 = pts[next],
-								end = pts[next2],
-								type = .Quadratic,
-							},
-						) or_return
-						i = next2
-					}
-				} else {
-					non_zero_append(
-						curves_npi,
-						curve_struct_float(f32){start = pts[i], end = pts[next], type = .Line},
-					) or_return
-					i = next
-				}
-
-				if is_closed && i == 0 do break
-			}
-			return
-		}
-
-		RebuildPolygonBoundaryFromCurves :: proc(
-			non_curves_npi: ^[dynamic][2]f32,
-			curves_npi: []curve_struct_float(f32),
-			is_closed: bool,
-		) -> (
-			err: shape_error = nil,
-		) {
-			non_zero_resize_dynamic_array(non_curves_npi, 0) or_return
-			if len(curves_npi) == 0 do return
-
-			non_zero_append(non_curves_npi, curves_npi[0].start) or_return
-			for c, i in curves_npi {
-				if is_closed && i == len(curves_npi) - 1 && c.end == curves_npi[0].start {
-					continue
-				}
-				non_zero_append(non_curves_npi, c.end) or_return
-			}
-			return
-		}
+		overlap_skip2: [dynamic][dynamic]bool = make(
+			[dynamic][dynamic]bool,
+			context.temp_allocator,
+		)
+		insert_ar: [dynamic; 2][2]f32
 
 		for node, nidx in poly.nodes {
 			if node.color.a > 0 {
 				non_zero_resize_dynamic_array(&non_curves2, len(node.pts)) or_return
 				non_zero_resize_dynamic_array(&curves2, len(node.pts)) or_return
+				non_zero_resize_dynamic_array(&overlap_skip2, len(node.pts)) or_return
 
 				for i in 0 ..< len(node.pts) {
-					if non_curves2[i] == nil {
-						non_curves2[i] = make([dynamic][2]f32, context.temp_allocator) or_return
-						curves2[i] = make(
-							[dynamic]curve_struct_float(f32),
-							context.temp_allocator,
-						) or_return
-					} else {
-						non_zero_resize_dynamic_array(&non_curves2[i], 0) or_return
-						non_zero_resize_dynamic_array(&curves2[i], 0) or_return
-					}
+					if non_curves2[i] == nil do non_curves2[i] = make([dynamic][2]f32, context.temp_allocator) or_return
+					if curves2[i] == nil do curves2[i] = make([dynamic]curve_struct_float(f32), context.temp_allocator) or_return
+					if overlap_skip2[i] == nil do overlap_skip2[i] = make([dynamic]bool, context.temp_allocator) or_return
+
+					non_zero_resize_dynamic_array(&non_curves2[i], 0) or_return
+					non_zero_resize_dynamic_array(&curves2[i], 0) or_return
+					non_zero_resize_dynamic_array(&overlap_skip2[i], 0) or_return
 				}
 
 				for np, npi in node.pts {
@@ -750,7 +923,62 @@ shapes_compute_polygon :: proc(
 					if node.is_curves != nil && npi < len(node.is_curves) {
 						curve_flags = node.is_curves[npi]
 					}
-					BuildContourCurves(&curves2[npi], np, curve_flags, node.is_closed) or_return
+
+					if len(np) == 0 do continue
+
+					last := len(np) - 1
+					i := 0
+					for {
+						if !node.is_closed && i >= last do break
+
+						next := node.is_closed ? (i + 1) % len(np) : i + 1
+						if next >= len(np) do break
+
+						if next < len(curve_flags) && curve_flags[next] {
+							next2 := node.is_closed ? (next + 1) % len(np) : next + 1
+							if next2 >= len(np) do break
+
+							if next2 < len(curve_flags) && curve_flags[next2] {
+								next3 := node.is_closed ? (next2 + 1) % len(np) : next2 + 1
+								if next3 >= len(np) do break
+
+								non_zero_append(
+									&curves2[npi],
+									curve_struct_float(f32) {
+										start = np[i],
+										ctl0 = np[next],
+										ctl1 = np[next2],
+										end = np[next3],
+										type = .Unknown,
+									},
+								) or_return
+								i = next3
+							} else {
+								non_zero_append(
+									&curves2[npi],
+									curve_struct_float(f32) {
+										start = np[i],
+										ctl0 = np[next],
+										end = np[next2],
+										type = .Quadratic,
+									},
+								) or_return
+								i = next2
+							}
+						} else {
+							non_zero_append(
+								&curves2[npi],
+								curve_struct_float(f32) {
+									start = np[i],
+									end = np[next],
+									type = .Line,
+								},
+							) or_return
+							i = next
+						}
+
+						if node.is_closed && i == 0 do break
+					}
 				}
 
 				// Loop subdivision (float)
@@ -797,92 +1025,73 @@ shapes_compute_polygon :: proc(
 						}
 					}
 				}
-				skipA := make([dynamic]bool, context.temp_allocator) or_return
-				skipB := make([dynamic]bool, context.temp_allocator) or_return
+
+				for npi in 0 ..< len(curves2) {
+					skip_npi := &overlap_skip2[npi]
+					resize_dynamic_array(skip_npi, len(curves2[npi])) or_return // false by default
+				}
 
 				// Overlap check (float)
+				// Scan all contour pairs (both directions). Skip logic handles repeat work.
 				for npi_a in 0 ..< len(curves2) {
 					curves_a := &curves2[npi_a]
+					skip_a := &overlap_skip2[npi_a]
 
 					for npi_b := 0; npi_b < len(curves2); npi_b += 1 {
 						curves_b := &curves2[npi_b]
+						skip_b := &overlap_skip2[npi_b]
+						same_contour := npi_a == npi_b
 
-						if npi_a != npi_b {
-							for i := 0; i < len(curves_a); i += 1 {
-								for j := 0; j < len(curves_b); j += 1 {
-									if i == j do continue
-									src := curves_b[j]
-									cur := curves_a[i]
-									if cur.type == .Line || src.type == .Line do continue
+						for i := 0; i < len(curves_a); i += 1 {
+							if skip_a[i] do continue
 
-									if CurveChordOverlaps(src, cur) {
-										_, _, _ = SubdivCurveAndInjectAt(
-											curves_b,
-											j + 1,
-											&curves_b[j],
-											src,
-											0.5,
-										) or_return
+							for j := 0; j < len(curves_b); j += 1 {
+								if i >= len(curves_a) do break
+								if skip_a[i] do break
+								if skip_b[j] do continue
+								if same_contour && i == j do continue
 
-										if CurveChordOverlaps(curves_b[j], cur) ||
-										   CurveChordOverlaps(curves_b[j + 1], cur) {
-											_, _, _ = SubdivCurveAndInjectAt(
-												curves_a,
-												i + 1,
-												&curves_a[i],
-												cur,
-												0.5,
-											) or_return
-											i += 1
-										}
-										j += 1
-									}
+								orig_i, orig_j := i, j
+								cur_added, src_added, overlapped := ProcessCurveOverlapPair(
+									curves_a,
+									skip_a,
+									i,
+									curves_b,
+									skip_b,
+									j,
+									same_contour,
+								) or_return
+								if !overlapped do continue
+
+								if same_contour {
+									if src_added > 0 && orig_j < orig_i do i += src_added
+									if cur_added > 0 && orig_i < orig_j do j += cur_added
 								}
-							}
-						} else {
-							for i := 0; i < len(curves_a); i += 1 {
-								for j := 0; j < len(curves_a); j += 1 {
-									if i == j do continue
-									src := curves_a[j]
-									cur := curves_a[i]
-									if cur.type == .Line || src.type == .Line do continue
 
-									if CurveChordOverlaps(src, cur) {
-										_, _, _ = SubdivCurveAndInjectAt(
-											curves_a,
-											j + 1,
-											&curves_a[j],
-											src,
-											0.5,
-										) or_return
-										if j < i do i += 1
-
-										if CurveChordOverlaps(curves_a[j], cur) ||
-										   CurveChordOverlaps(curves_a[j + 1], cur) {
-											_, _, _ = SubdivCurveAndInjectAt(
-												curves_a,
-												i + 1,
-												&curves_a[i],
-												cur,
-												0.5,
-											) or_return
-											if i < j do j += 1
-											i += 1
-										}
-										j += 1
-									}
-								}
+								if cur_added > 0 do i += cur_added
+								if src_added > 0 do j += src_added
+								if i >= len(curves_a) do break
 							}
 						}
 					}
 				}
 
 				for npi in 0 ..< len(node.pts) {
-					RebuildPolygonBoundaryFromCurves(
-						&non_curves2[npi],
-						curves2[npi][:],
-						node.is_closed,
-					) or_return
+					non_curves_npi := &non_curves2[npi]
+					curves_npi := curves2[npi][:]
+
+					non_zero_resize_dynamic_array(non_curves_npi, 0) or_return
+					if len(curves_npi) == 0 do continue
+
+					non_zero_append(non_curves_npi, curves_npi[0].start) or_return
+					for c, i in curves_npi {
+						if node.is_closed &&
+						   i == len(curves_npi) - 1 &&
+						   c.end == curves_npi[0].start {
+							continue
+						}
+						non_zero_append(non_curves_npi, c.end) or_return
+					}
 				}
 
 				// Insert curve control points into polygon boundaries (float)
@@ -891,29 +1100,31 @@ shapes_compute_polygon :: proc(
 					curves_npi := curves2[npi]
 					poly_pts := non_curves_npi[:]
 					opp_poly_pts: [][2]f32 = nil
-					for &pts in non_curves2 {
-						if &pts == &non_curves2[npi] do continue
-						if linalg_ex.PointInPolygon(poly_pts[0], pts[:]) == .Inside {
-							opp_poly_pts = pts[:]
-							break
+					if linalg_ex.GetPolygonOrientation(poly_pts) == .Clockwise {
+						for &pts in non_curves2 {
+							if &pts == &non_curves2[npi] do continue
+							if linalg_ex.PointInPolygon(poly_pts[0], pts[:]) == .Inside {
+								opp_poly_pts = pts[:]
+								break
+							}
 						}
 					}
 					for c in curves_npi {
 						if c.type != .Line {
-							non_zero_resize_dynamic_array(&insert_ar, 0) or_return
+							non_zero_resize_fixed_capacity_dynamic_array(&insert_ar, 0)
 
 							if linalg_ex.PointInPolygon(c.ctl0, poly_pts) == .Inside {
-								non_zero_append(&insert_ar, c.ctl0) or_return
+								append_fixed_capacity_elem(&insert_ar, c.ctl0)
 							} else if opp_poly_pts != nil &&
 							   linalg_ex.PointInPolygon(c.ctl0, opp_poly_pts) == .Inside {
-								non_zero_append(&insert_ar, c.ctl0) or_return
+								append_fixed_capacity_elem(&insert_ar, c.ctl0)
 							}
 							if c.type != .Quadratic {
 								if linalg_ex.PointInPolygon(c.ctl1, poly_pts) == .Inside {
-									non_zero_append(&insert_ar, c.ctl1) or_return
+									append_fixed_capacity_elem(&insert_ar, c.ctl1)
 								} else if opp_poly_pts != nil &&
 								   linalg_ex.PointInPolygon(c.ctl1, opp_poly_pts) == .Inside {
-									non_zero_append(&insert_ar, c.ctl1) or_return
+									append_fixed_capacity_elem(&insert_ar, c.ctl1)
 								}
 							}
 

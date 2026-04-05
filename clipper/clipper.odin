@@ -1,3 +1,4 @@
+//!incomplete
 package clipper
 
 import "../linalg_ex"
@@ -805,4 +806,3 @@ BooleanOpCurve :: proc(
 	res_open = FromFixedPaths(T, res_open_fixed, allocator) or_return
 	return
 }
-

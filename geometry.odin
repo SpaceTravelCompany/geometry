@@ -135,110 +135,60 @@ GetCubicCurveType :: proc "contextless" (
 	d1: T,
 	d2: T,
 	err: shape_error = nil,
-) where intrinsics.type_is_float(T) ||
-	intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
+) where intrinsics.type_is_float(T) {
 	if start == control0 && control0 == control1 && control1 == end {
 		err = .IsPointNotLine
 		return
 	}
+	start: [2]f64 = [2]f64{f64(start.x), f64(start.y)}
+	control0: [2]f64 = [2]f64{f64(control0.x), f64(control0.y)}
+	control1: [2]f64 = [2]f64{f64(control1.x), f64(control1.y)}
+	end: [2]f64 = [2]f64{f64(end.x), f64(end.y)}
 
-	when intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
-		cross_1 := [3]T {
-			fixed_bcd.sub(end.y, control1.y),
-			fixed_bcd.sub(control1.x, end.x),
-			fixed_bcd.sub(fixed_bcd.mul(end.x, control1.y), fixed_bcd.mul(end.y, control1.x)),
-		}
-		cross_2 := [3]T {
-			fixed_bcd.sub(start.y, end.y),
-			fixed_bcd.sub(end.x, start.x),
-			fixed_bcd.sub(fixed_bcd.mul(start.x, end.y), fixed_bcd.mul(start.y, end.x)),
-		}
-		cross_3 := [3]T {
-			fixed_bcd.sub(control0.y, start.y),
-			fixed_bcd.sub(start.x, control0.x),
-			fixed_bcd.sub(fixed_bcd.mul(control0.x, start.y), fixed_bcd.mul(control0.y, start.x)),
-		}
-		a1 := fixed_bcd.add(
-			fixed_bcd.add(fixed_bcd.mul(start.x, cross_1.x), fixed_bcd.mul(start.y, cross_1.y)),
-			cross_1.z,
-		)
-		a2 := fixed_bcd.add(
-			fixed_bcd.mul(control0.x, cross_2.x),
-			fixed_bcd.add(fixed_bcd.mul(control0.y, cross_2.y), cross_2.z),
-		)
-		a3 := fixed_bcd.add(
-			fixed_bcd.mul(control1.x, cross_3.x),
-			fixed_bcd.add(fixed_bcd.mul(control1.y, cross_3.y), cross_3.z),
-		)
-		d0 = T {
-			i = a1.i - 2 * a2.i + 3 * a3.i,
-		}
-		d1 = T {
-			i = -a2.i + 3 * a3.i,
-		}
-		d2 = T {
-			i = 3 * a3.i,
-		}
-		D := T {
-			i = 3 * fixed_bcd.mul(d1, d1).i - 4 * fixed_bcd.mul(d2, d0).i,
-		}
-		discr := fixed_bcd.mul(fixed_bcd.mul(d0, d0), D)
-		if discr.i == 0 {
-			if d0.i == 0 && d1.i == 0 {
-				if d2.i == 0 do type = .Line
-				else do type = .Quadratic
+	cross_1 := [3]f64 {
+		end.y - control1.y,
+		control1.x - end.x,
+		end.x * control1.y - end.y * control1.x,
+	}
+	cross_2 := [3]f64{start.y - end.y, end.x - start.x, start.x * end.y - start.y * end.x}
+	cross_3 := [3]f64 {
+		control0.y - start.y,
+		start.x - control0.x,
+		control0.x * start.y - control0.y * start.x,
+	}
+
+	a1 := start.x * cross_1.x + start.y * cross_1.y + cross_1.z //9
+	a2 := control0.x * cross_2.x + control0.y * cross_2.y + cross_2.z //7
+	a3 := control1.x * cross_3.x + control1.y * cross_3.y + cross_3.z //7
+
+	d0_: f64 = a1 - 2.0 * a2 + 3.0 * a3 //27
+	d1_: f64 = -a2 + 3.0 * a3 //16
+	d2_: f64 = 3.0 * a3 //8
+
+	D := 3.0 * d1_ * d1_ - 4.0 * d2_ * d0_ //33 + 36 + 1 = 70
+	discr := d0_ * d0_ * D //27 + 27 + 70 = 124
+
+	EP: f64 = linalg_ex.epsilon(f64)
+	d0 = T(d0_)
+	d1 = T(d1_)
+	d2 = T(d2_)
+	if discr >= -EP && discr <= EP {
+		if d0_ == 0.0 && d1_ == 0.0 {
+			if d2_ == 0.0 {
+				type = .Line
 				return
 			}
-			type = .Cusp
+			type = .Quadratic
 			return
 		}
-		if discr.i > 0 do type = .Serpentine
-		else do type = .Loop
-		return
-	} else { 	// float
-		cross_1 := [3]T {
-			end.y - control1.y,
-			control1.x - end.x,
-			end.x * control1.y - end.y * control1.x,
-		}
-		cross_2 := [3]T{start.y - end.y, end.x - start.x, start.x * end.y - start.y * end.x}
-		cross_3 := [3]T {
-			control0.y - start.y,
-			start.x - control0.x,
-			control0.x * start.y - control0.y * start.x,
-		}
-
-		a1 := start.x * cross_1.x + start.y * cross_1.y + cross_1.z //9
-		a2 := control0.x * cross_2.x + control0.y * cross_2.y + cross_2.z //7
-		a3 := control1.x * cross_3.x + control1.y * cross_3.y + cross_3.z //7
-
-		d0 = a1 - 2.0 * a2 + 3.0 * a3 //27
-		d1 = -a2 + 3.0 * a3 //16
-		d2 = 3.0 * a3 //8
-
-		D := 3.0 * d1 * d1 - 4.0 * d2 * d0 //33 + 36 + 1 = 70
-		discr := d0 * d0 * D //27 + 27 + 70 = 124
-
-		EP: T = linalg_ex.epsilon(T)
-		if discr >= -EP && discr <= EP {
-			if d0 >= -EP && d0 <= EP && d1 >= -EP && d1 <= EP {
-				if d2 == 0.0 {
-					type = .Line
-					return
-				}
-				type = .Quadratic
-				return
-			}
-			type = .Cusp
-			return
-		}
-		if discr > 0.0 {
-			type = .Serpentine
-			return
-		}
-		type = .Loop
+		type = .Cusp
 		return
 	}
+	if discr > 0.0 {
+		type = .Serpentine
+		return
+	}
+	type = .Loop
 	return
 }
 
@@ -338,14 +288,11 @@ _Shapes_ComputeLine :: proc(
 
 		if d0 < 0 do reverse = true
 	case .Loop:
-		t1 := math.sqrt_f32(4 * d0 * d2 - 3 * d1 * d1)
+		t1: f32 = math.sqrt_f32(4 * d0 * d2 - 3 * d1 * d1)
 		ls := d1 - t1
 		lt := 2 * d0
 		ms := d1 + t1
 		mt := lt
-
-		ql := ls / lt
-		qm := ms / mt
 
 		ltMinusLs := lt - ls
 		mtMinusMs := mt - ms
@@ -478,7 +425,7 @@ _Shapes_ComputeLine :: proc(
 			}
 		}
 
-		b := linalg_ex.LinesIntersect3(vts[0], vts[2], vts[1], vts[3])
+		b := linalg_ex.LinesIntersect3(vts[0], vts[2], vts[1], vts[3], true)
 		if b == .intersect {
 			if linalg.vector_length2(vts[2] - vts[0]) < linalg.vector_length2(vts[3] - vts[1]) {
 				non_zero_append(
@@ -503,7 +450,7 @@ _Shapes_ComputeLine :: proc(
 			}
 			return nil
 		}
-		b = linalg_ex.LinesIntersect3(vts[0], vts[3], vts[1], vts[2])
+		b = linalg_ex.LinesIntersect3(vts[0], vts[3], vts[1], vts[2], true)
 		if b == .intersect {
 			if linalg.vector_length2(vts[3] - vts[0]) < linalg.vector_length2(vts[2] - vts[1]) {
 				non_zero_append(indList, start, start + 1, start + 3, start, start + 3, start + 2)

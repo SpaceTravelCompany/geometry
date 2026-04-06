@@ -1,5 +1,6 @@
 package svg
 
+import ".."
 import "base:runtime"
 import "core:encoding/xml"
 import "core:math"
@@ -8,7 +9,6 @@ import "core:mem"
 import "core:strconv"
 import "core:strings"
 import pv "engine:clibs/plutovg"
-import "engine:geometry"
 import "engine:utils_private"
 
 __SVG_ERROR :: enum {

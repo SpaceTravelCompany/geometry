@@ -9,6 +9,7 @@ import "core:mem"
 import "core:strconv"
 import "core:strings"
 import pv "engine:clibs/plutovg"
+import "engine:geometry/linalg_ex"
 import "engine:utils_private"
 
 __SVG_ERROR :: enum {
@@ -162,6 +163,61 @@ _reset_contour :: proc(
 ) {
 	pts^ = make([dynamic]linalg.Vector2f32, arena)
 	curves^ = make([dynamic]bool, arena)
+}
+
+@(private)
+_reverse_contour_in_place :: proc(pts: []linalg.Vector2f32, curves: []bool) -> SVG_ERROR {
+	if len(pts) != len(curves) do return .INVALID_NODE
+	for i := 0; i < len(pts) / 2; i += 1 {
+		j := len(pts) - 1 - i
+		pts[i], pts[j] = pts[j], pts[i]
+		curves[i], curves[j] = curves[j], curves[i]
+	}
+	return nil
+}
+
+@(private)
+_is_hole_contour :: proc(idx: int, pts_out: [dynamic][]linalg.Vector2f32) -> bool {
+	if idx < 0 || idx >= len(pts_out) do return false
+	if len(pts_out[idx]) < 3 do return false
+
+	p := pts_out[idx][0]
+	inside_count := 0
+	for j in 0 ..< len(pts_out) {
+		if j == idx do continue
+		other := pts_out[j]
+		if len(other) < 3 do continue
+		if linalg_ex.PointInPolygon(p, other) != .Outside {
+			inside_count += 1
+		}
+	}
+	return inside_count % 2 == 1
+}
+
+@(private)
+_normalize_contour_winding :: proc(
+	pts_out: ^[dynamic][]linalg.Vector2f32,
+	curves_out: ^[dynamic][]bool,
+	arena: mem.Allocator,
+) -> SVG_ERROR {
+	if len(pts_out^) != len(curves_out^) do return .INVALID_NODE
+
+	for i in 0 ..< len(pts_out^) {
+		pts := pts_out^[i]
+		curves := curves_out^[i]
+		if len(pts) < 3 do continue
+		if len(pts) != len(curves) do return .INVALID_NODE
+
+		is_hole := _is_hole_contour(i, pts_out^)
+		orientation := linalg_ex.GetPolygonOrientation(pts)
+		need_reverse :=
+			(!is_hole && orientation != .CounterClockwise) ||
+			(is_hole && orientation != .Clockwise)
+		if need_reverse {
+			//_reverse_contour_in_place(pts, curves) or_return
+		}
+	}
+	return nil
 }
 
 @(private)
@@ -374,6 +430,7 @@ _path_element_to_shape_node :: proc(
 	pts: [dynamic][]linalg.Vector2f32 = make([dynamic][]linalg.Vector2f32, arena)
 	curves: [dynamic][]bool = make([dynamic][]bool, arena)
 	_path_to_closed_contours(path, &pts, &curves, arena) or_return
+	_normalize_contour_winding(&pts, &curves, arena) or_return
 	if len(pts) == 0 do return
 
 	node = geometry.shape_node {

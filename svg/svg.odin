@@ -249,7 +249,7 @@ _path_to_closed_contours :: proc(
 			_finalize_contour(
 				&current_pts,
 				&current_curves,
-				false,
+				true,
 				pts_out,
 				curves_out,
 				arena,
@@ -284,7 +284,8 @@ _path_to_closed_contours :: proc(
 		}
 	}
 
-	_finalize_contour(&current_pts, &current_curves, false, pts_out, curves_out, arena) or_return
+	// Trailing subpath can be open in source data, but fill semantics still close it.
+	_finalize_contour(&current_pts, &current_curves, true, pts_out, curves_out, arena) or_return
 	return nil
 }
 

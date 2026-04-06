@@ -98,7 +98,7 @@ RoundRectLineInit :: proc "contextless" (
 	half_width := (_rect.right - _rect.left) / 2.0
 	dh := _rect.bottom - _rect.top
 	if dh < 0 do dh = -dh
-	half_height := dh * half
+	half_height := dh * half_width
 	if r > half_width do r = half_width
 	if r > half_height do r = half_height
 
@@ -275,4 +275,3 @@ EllipseCubicInit_Fixed :: proc "contextless" (
 		{fixed.sub(cx, rx), fixed.add(cy, tty)},
 	}, [12]bool{false, true, true, false, true, true, false, true, true, false, true, true}
 }
-

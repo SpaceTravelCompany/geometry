@@ -21,7 +21,7 @@ layout(location = 0) out vec4 outColor;
 //     float gy = uv.z * (2.0 * uv.x * dy.x - dy.y);
 
 //     float sd = q / sqrt(gx * gx + gy * gy);
-//     return 0.5 + sd;
+//     return clamp(0.5 + sd, 0.0, 1.0);
 // }
 
 // float aa_cubic(vec3 uv) {
@@ -34,17 +34,18 @@ layout(location = 0) out vec4 outColor;
 //     float gy = 3.0 * uv.x * uv.x * dy.x - dy.y * uv.z - uv.y * dy.z;
 
 //     float sd = c / sqrt(gx * gx + gy * gy);
-//     return 0.5 + sd;
+//     return clamp(0.5 + sd, 0.0, 1.0);
 // }
 float aa_quadratic(vec3 uv) {
     float q = uv.z * (uv.x * uv.x - uv.y);
-    return 0.5 + q / fwidth(q);
+    return clamp(0.5 + q / fwidth(q), 0.0, 1.0);
 }
 
 float aa_cubic(vec3 uv) {
     float c = uv.x * uv.x * uv.x - uv.y * uv.z;
-    return 0.5 + c / fwidth(c);
+    return clamp(0.5 + c / fwidth(c), 0.0, 1.0);
 }
+
 
 void main() {
     float alpha = 1.0;

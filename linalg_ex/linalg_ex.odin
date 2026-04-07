@@ -517,6 +517,7 @@ PointInVector :: proc "contextless" (
 	return NumEqE(res, zero), res
 }
 
+// > 0: left, < 0: right, == 0: on the line
 PointLineLeftOrRight :: #force_inline proc "contextless" (
 	p: [2]$T,
 	l0: [2]T,

@@ -11,8 +11,6 @@ import "core:slice"
 import "core:math/fixed"
 import utils "engine:utils_private"
 
-FixedDef :: fixed.Fixed(i64, 38)
-
 __Trianguate_Error :: enum {
 	TOO_MANY_EDGES,
 	NO_PATHS,

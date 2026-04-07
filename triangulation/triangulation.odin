@@ -684,10 +684,8 @@ RemoveEdgeFromVertex :: proc(vert: ^Vertex, edge: ^Edge) -> (err: Trianguate_Err
 
 @(private = "file")
 IsHorizontal :: proc "contextless" (e: ^Edge) -> bool {
-	return(
-		e.vB.p.y <= e.vT.p.y + linalg_ex.epsilon(f64) &&
-		e.vB.p.y >= e.vT.p.y - linalg_ex.epsilon(f64) \
-	)
+	// e.vB.p.y <= e.vT.p.y + linalg_ex.epsilon(f64) && e.vB.p.y >= e.vT.p.y - linalg_ex.epsilon(f64)
+	return e.vB.p.y == e.vT.p.y
 }
 
 @(private = "file")

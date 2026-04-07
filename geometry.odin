@@ -34,7 +34,7 @@ raw_shape :: struct {
 }
 
 @(private)
-curve_type :: enum {
+curve_type :: enum u8 {
 	Line,
 	Unknown,
 	Serpentine,
@@ -73,11 +73,12 @@ shapes :: struct {
 // Same layout as curve_struct_fixed for floating-point coordinates (f16 / f32 / f64).
 @(private)
 curve_struct_float :: struct($F: typeid) where intrinsics.type_is_float(F) {
-	start: [2]F,
-	ctl0:  [2]F,
-	ctl1:  [2]F,
-	end:   [2]F,
-	type:  curve_type,
+	start:         [2]F,
+	ctl0:          [2]F,
+	ctl1:          [2]F,
+	end:           [2]F,
+	type:          curve_type,
+	curve_reverse: bool,
 }
 
 raw_shape_free :: proc(self: raw_shape, allocator := context.allocator) {
@@ -197,23 +198,26 @@ _Shapes_ComputeLine :: proc(
 	vertList: ^[dynamic]shape_vertex2d,
 	indList: ^[dynamic]u32,
 	color: linalg.Vector4f32,
-	pts: curve_struct_float(f32),
+	pts: ^curve_struct_float(f32), //inout
 ) -> shape_error {
 	curveType := pts.type
 	err: shape_error = nil
 	//loop_reverse := false
 	//if curveType == .LoopReverse do loop_reverse = true
 
+	pts.curve_reverse = false
 	reverse := false
 	d0, d1, d2: f32
 	if curveType != .Line && curveType != .Quadratic {
 		curveType, d0, d1, d2 = GetCubicCurveType(pts.start, pts.ctl0, pts.ctl1, pts.end) or_return
+		//pts.type = curveType
 	} else if curveType == .Quadratic {
 		vlen: u32 = u32(len(vertList))
 		quad_sign := f32(1.0)
 		if linalg_ex.GetPolygonOrientation([][2]f32{pts.start, pts.ctl0, pts.end}) ==
 		   .CounterClockwise {
 			quad_sign = -1.0
+			pts.curve_reverse = true
 		}
 		non_zero_append(
 			vertList,
@@ -343,6 +347,7 @@ _Shapes_ComputeLine :: proc(
 	}
 
 	//if loop_reverse do reverse = !reverse
+	pts.curve_reverse = reverse
 	if reverse {
 		F = reverseOrientation(F)
 	}
@@ -425,7 +430,7 @@ _Shapes_ComputeLine :: proc(
 			}
 		}
 
-		b := linalg_ex.LinesIntersect3(vts[0], vts[2], vts[1], vts[3], true)
+		b := linalg_ex.LinesIntersect3(vts[0], vts[2], vts[1], vts[3])
 		if b == .intersect {
 			if linalg.vector_length2(vts[2] - vts[0]) < linalg.vector_length2(vts[3] - vts[1]) {
 				non_zero_append(
@@ -450,7 +455,7 @@ _Shapes_ComputeLine :: proc(
 			}
 			return nil
 		}
-		b = linalg_ex.LinesIntersect3(vts[0], vts[3], vts[1], vts[2], true)
+		b = linalg_ex.LinesIntersect3(vts[0], vts[3], vts[1], vts[2])
 		if b == .intersect {
 			if linalg.vector_length2(vts[3] - vts[0]) < linalg.vector_length2(vts[2] - vts[1]) {
 				non_zero_append(indList, start, start + 1, start + 3, start, start + 3, start + 2)
@@ -490,7 +495,7 @@ _Shapes_ComputeLine :: proc(
 		}
 		return nil
 	}
-	appendLine(vertList, indList, color, pts, F) or_return
+	appendLine(vertList, indList, color, pts^, F) or_return
 
 	return nil
 }
@@ -1040,41 +1045,32 @@ shapes_compute_polygon :: proc(
 						non_zero_append(non_curves_npi, c.end) or_return
 					}
 				}
+				for c, i in curves2 {
+					for &cc in c {
+						_Shapes_ComputeLine(vertList, indList, node.color, &cc) or_return
+					}
+				}
 
 				// Insert curve control points into polygon boundaries (float)
 				for npi in 0 ..< len(node.pts) {
 					non_curves_npi := &non_curves2[npi]
 					curves_npi := curves2[npi]
 					poly_pts := non_curves_npi[:]
-					opp_poly_pts: [][2]f32 = nil
-					if linalg_ex.GetPolygonOrientation(poly_pts) == .Clockwise {
-						for &pts, idx in non_curves2 {
-							if idx == npi do continue
-							if linalg_ex.PointInPolygon(poly_pts[0], pts[:]) == .Inside {
-								opp_poly_pts = pts[:]
-								break
-							}
-						}
-					}
+
 					for c in curves_npi {
 						if c.type != .Line {
 							non_zero_resize_fixed_capacity_dynamic_array(&insert_ar, 0)
 
-							if opp_poly_pts != nil {
-								if linalg_ex.PointInPolygon(c.ctl0, opp_poly_pts) == .Inside {
+							if c.type != .Quadratic {
+								if linalg_ex.PointLineLeftOrRight(c.ctl0, c.start, c.end) > 0 {
 									append_fixed_capacity_elem(&insert_ar, c.ctl0)
 								}
-							} else if linalg_ex.PointInPolygon(c.ctl0, poly_pts) == .Inside {
-								append_fixed_capacity_elem(&insert_ar, c.ctl0)
-							}
-
-							if c.type != .Quadratic {
-								if opp_poly_pts != nil {
-									if linalg_ex.PointInPolygon(c.ctl1, opp_poly_pts) == .Inside {
-										append_fixed_capacity_elem(&insert_ar, c.ctl1)
-									}
-								} else if linalg_ex.PointInPolygon(c.ctl1, poly_pts) == .Inside {
+								if linalg_ex.PointLineLeftOrRight(c.ctl1, c.start, c.end) > 0 {
 									append_fixed_capacity_elem(&insert_ar, c.ctl1)
+								}
+							} else {
+								if linalg_ex.PointLineLeftOrRight(c.ctl0, c.start, c.end) > 0 {
+									append_fixed_capacity_elem(&insert_ar, c.ctl0)
 								}
 							}
 
@@ -1114,7 +1110,7 @@ shapes_compute_polygon :: proc(
 				indices, tri_err := triangulation.TrianguatePolygons(
 					non_curves[:],
 					context.temp_allocator,
-					auto_cast len(indList^),
+					auto_cast len(vertList^),
 				)
 				if tri_err != nil {
 					switch e in tri_err {
@@ -1136,12 +1132,6 @@ shapes_compute_polygon :: proc(
 								color = node.color,
 							},
 						) or_return
-					}
-				}
-
-				for c, i in curves2 {
-					for cc in c {
-						_Shapes_ComputeLine(vertList, indList, node.color, cc) or_return
 					}
 				}
 			}

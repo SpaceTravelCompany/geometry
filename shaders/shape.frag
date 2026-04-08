@@ -46,15 +46,21 @@ float aa_cubic(vec3 uv) {
     return clamp(0.5 + c / fwidth(c), 0.0, 1.0);
 }
 
+float aa_linear(float d) {
+    return clamp(0.5 + d / fwidth(d), 0.0, 1.0);
+}
 
 void main() {
     float alpha = 1.0;
 
-    if (inFlags == 2) { //not curve
-    } else if (inFlags == 1) { //not cubic curve
-        alpha = aa_quadratic(fragUv);
-    } else {
+   if (inFlags == 0) {
         alpha = aa_cubic(fragUv);
+    } else if (inFlags == 1) {
+        alpha = aa_quadratic(fragUv);
+    } else if (inFlags == 3) { // LINE_EDGE
+        alpha = aa_linear(fragUv.x);
+    } else {
+        alpha = 1.0; // interior fill triangle
     }
 
     if (alpha <= 0.0) discard;

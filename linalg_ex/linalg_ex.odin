@@ -625,6 +625,18 @@ GetPolygonOrientation :: proc "contextless" (
 	return NumGt(res, zero) ? .Clockwise : .CounterClockwise
 }
 
+PolygonSignedArea :: proc "contextless" (polygon: []linalg.Vector2f32) -> f32 {
+	n := len(polygon)
+	if n < 3 do return 0
+
+	area := f32(0)
+	for i in 0 ..< n {
+		j := (i + 1) % n
+		area += polygon[i].x * polygon[j].y - polygon[j].x * polygon[i].y
+	}
+	return area * 0.5
+}
+
 LineInPolygon :: proc "contextless" (
 	a: [2]$T,
 	b: [2]T,

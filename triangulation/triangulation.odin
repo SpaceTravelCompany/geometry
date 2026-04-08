@@ -11,8 +11,6 @@ import "core:slice"
 import "core:math/fixed"
 import utils "engine:utils_private"
 
-FixedDef :: fixed.Fixed(i64, 38)
-
 __Trianguate_Error :: enum {
 	TOO_MANY_EDGES,
 	NO_PATHS,
@@ -686,10 +684,8 @@ RemoveEdgeFromVertex :: proc(vert: ^Vertex, edge: ^Edge) -> (err: Trianguate_Err
 
 @(private = "file")
 IsHorizontal :: proc "contextless" (e: ^Edge) -> bool {
-	return(
-		e.vB.p.y <= e.vT.p.y + linalg_ex.epsilon(f64) &&
-		e.vB.p.y >= e.vT.p.y - linalg_ex.epsilon(f64) \
-	)
+	// e.vB.p.y <= e.vT.p.y + linalg_ex.epsilon(f64) && e.vB.p.y >= e.vT.p.y - linalg_ex.epsilon(f64)
+	return e.vB.p.y == e.vT.p.y
 }
 
 @(private = "file")

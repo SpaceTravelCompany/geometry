@@ -166,35 +166,6 @@ _reset_contour :: proc(
 }
 
 @(private)
-_reverse_contour_in_place :: proc(pts: []linalg.Vector2f32, curves: []bool) -> SVG_ERROR {
-	if len(pts) != len(curves) do return .INVALID_NODE
-	for i := 0; i < len(pts) / 2; i += 1 {
-		j := len(pts) - 1 - i
-		pts[i], pts[j] = pts[j], pts[i]
-		curves[i], curves[j] = curves[j], curves[i]
-	}
-	return nil
-}
-
-@(private)
-_is_hole_contour :: proc(idx: int, pts_out: [dynamic][]linalg.Vector2f32) -> bool {
-	if idx < 0 || idx >= len(pts_out) do return false
-	if len(pts_out[idx]) < 3 do return false
-
-	p := pts_out[idx][0]
-	inside_count := 0
-	for j in 0 ..< len(pts_out) {
-		if j == idx do continue
-		other := pts_out[j]
-		if len(other) < 3 do continue
-		if linalg_ex.PointInPolygon(p, other) != .Outside {
-			inside_count += 1
-		}
-	}
-	return inside_count % 2 == 1
-}
-
-@(private)
 _normalize_contour_winding :: proc(
 	pts_out: ^[dynamic][]linalg.Vector2f32,
 	curves_out: ^[dynamic][]bool,
@@ -208,13 +179,15 @@ _normalize_contour_winding :: proc(
 		if len(pts) < 3 do continue
 		if len(pts) != len(curves) do return .INVALID_NODE
 
-		is_hole := _is_hole_contour(i, pts_out^)
+		is_hole := geometry.IsHoleContour(i, pts_out^[:])
 		orientation := linalg_ex.GetPolygonOrientation(pts)
 		need_reverse :=
 			(!is_hole && orientation != .CounterClockwise) ||
 			(is_hole && orientation != .Clockwise)
 		if need_reverse {
-			//_reverse_contour_in_place(pts, curves) or_return
+			err: geometry.shape_error
+			pts_out^[i], curves_out^[i], err = geometry.ReverseShapeCloseCurve(pts, curves, arena)
+			if err != nil do return .INVALID_NODE
 		}
 	}
 	return nil

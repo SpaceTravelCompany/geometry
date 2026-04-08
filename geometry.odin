@@ -19,6 +19,7 @@ shape_vertex_flag :: enum u8 {
 	CUBIC,
 	QUAD,
 	LINE,
+	LINE_EDGE,
 }
 
 shape_vertex2d :: struct {
@@ -48,6 +49,12 @@ __shape_error :: enum {
 	IsPointNotLine,
 	EmptyPolygon,
 	EmptyColor,
+	Length_Mismatch,
+	Empty_Input,
+	First_Point_Is_Curve,
+	Consecutive_Anchor_Missing_Control,
+	Too_Many_Consecutive_Curves,
+	OverFlow,
 }
 
 shape_error :: union #shared_nil {
@@ -68,6 +75,182 @@ shape_node :: struct {
 
 shapes :: struct {
 	nodes: []shape_node,
+}
+
+@(private)
+FindParentContour :: proc(idx: int, pts_in: [][]linalg.Vector2f32) -> int {
+	if idx < 0 || idx >= len(pts_in) do return -1
+	if len(pts_in[idx]) < 3 do return -1
+
+	p := pts_in[idx][0]
+
+	parent_idx := -1
+	parent_area := f32(0)
+
+	for j in 0 ..< len(pts_in) {
+		if j == idx do continue
+
+		other := pts_in[j]
+		if len(other) < 3 do continue
+
+		if linalg_ex.PointInPolygon(p, other) == .Outside {
+			continue
+		}
+
+		// idx를 포함하는 contour 중 가장 작은 면적의 contour를 parent로 선택
+		area := abs(linalg_ex.PolygonSignedArea(other))
+
+		if parent_idx == -1 || area < parent_area {
+			parent_idx = j
+			parent_area = area
+		}
+	}
+
+	return parent_idx
+}
+
+IsHoleContour :: proc(idx: int, pts_in: [][]linalg.Vector2f32) -> bool {
+	if idx < 0 || idx >= len(pts_in) do return false
+	if len(pts_in[idx]) < 3 do return false
+
+	parent := FindParentContour(idx, pts_in)
+	if parent == -1 {
+		// parent가 없으면 최외곽 contour
+		return false
+	}
+
+	// parent가 outer면 나는 hole
+	// parent가 hole이면 나는 outer
+	return !IsHoleContour(parent, pts_in)
+}
+
+ReverseShapeCloseCurve :: proc(
+	pts: []linalg.Vector2f32,
+	is_curves: []bool,
+	allocator := context.allocator,
+) -> (
+	out_pts: []linalg.Vector2f32,
+	out_is_curves: []bool,
+	err: shape_error,
+) {
+	if len(pts) > int(max(u32)) || len(is_curves) > int(max(u32)) {
+		return nil, nil, .OverFlow
+	}
+
+	n := u32(len(pts))
+
+	if n != u32(len(is_curves)) {
+		return nil, nil, .Length_Mismatch
+	}
+	if n == 0 {
+		return nil, nil, .Empty_Input
+	}
+	if is_curves[0] {
+		return nil, nil, .First_Point_Is_Curve
+	}
+
+	anchor_indices := make([dynamic]u32, context.temp_allocator) or_return
+
+	for i in 0 ..< n {
+		if !is_curves[i] {
+			non_zero_append(&anchor_indices, i) or_return
+		}
+	}
+
+	if len(anchor_indices) == 0 {
+		return nil, nil, .First_Point_Is_Curve
+	}
+
+	// 각 anchor 사이 control 개수 검사
+	for a := 0; a < len(anchor_indices); a += 1 {
+		start := anchor_indices[a]
+		next := anchor_indices[(a + 1) % len(anchor_indices)]
+
+		curve_count := 0
+		i := (start + 1) % n
+		for i != next {
+			if !is_curves[i] {
+				return nil, nil, .Consecutive_Anchor_Missing_Control
+			}
+			curve_count += 1
+			i = (i + 1) % n
+		}
+
+		if curve_count == 0 {
+			return nil, nil, .Consecutive_Anchor_Missing_Control
+		}
+		if curve_count > 2 {
+			return nil, nil, .Too_Many_Consecutive_Curves
+		}
+	}
+
+	out_pts = utils_private.make_non_zeroed_slice([]linalg.Vector2f32, n, allocator) or_return
+	defer if err != nil do delete(out_pts, allocator)
+
+	out_is_curves = utils_private.make_non_zeroed_slice([]bool, n, allocator) or_return
+	defer if err != nil do delete(out_is_curves, allocator)
+
+	out_pts[0] = pts[0]
+	out_is_curves[0] = false
+	out_i: u32 = 1
+
+	m := len(anchor_indices)
+
+	// reverse된 순서대로 모든 세그먼트를 처리
+	// step=0: last -> first
+	// step=1: second_last -> last
+	// ...
+	// step=m-1: first -> second
+	for step := 0; step < m; step += 1 {
+		end_anchor_pos := (m - step) % m
+		start_anchor_pos := (end_anchor_pos - 1 + m) % m
+
+		a0 := anchor_indices[start_anchor_pos]
+		a1 := anchor_indices[end_anchor_pos]
+
+		controls := [2]u32{}
+		curve_count := 0
+
+		i := (a0 + 1) % n
+		for i != a1 {
+			controls[curve_count] = i
+			curve_count += 1
+			i = (i + 1) % n
+		}
+
+		switch curve_count {
+		case 1:
+			out_pts[out_i] = pts[controls[0]]
+			out_is_curves[out_i] = true
+			out_i += 1
+
+		case 2:
+			out_pts[out_i] = pts[controls[1]]
+			out_is_curves[out_i] = true
+			out_i += 1
+
+			out_pts[out_i] = pts[controls[0]]
+			out_is_curves[out_i] = true
+			out_i += 1
+
+		case:
+			return nil, nil, .Too_Many_Consecutive_Curves
+		}
+
+		// 마지막 세그먼트는 first anchor로 닫히므로
+		// anchor 0은 다시 쓰지 않음
+		if a0 != 0 {
+			out_pts[out_i] = pts[a0]
+			out_is_curves[out_i] = false
+			out_i += 1
+		}
+	}
+
+	if out_i != n {
+		return nil, nil, .EmptyPolygon
+	}
+
+	return out_pts, out_is_curves, nil
 }
 
 // Same layout as curve_struct_fixed for floating-point coordinates (f16 / f32 / f64).
@@ -1107,10 +1290,105 @@ shapes_compute_polygon :: proc(
 				non_zero_resize_dynamic_array(&non_curves, len(non_curves2)) or_return
 				for npi in 0 ..< len(non_curves2) do non_curves[npi] = non_curves2[npi][:]
 
+				contour_edge_count :: proc "contextless" (
+					contour: [][2]f32,
+					curves: []curve_struct_float(f32),
+				) -> (
+					edge_count: int,
+					is_closed: bool,
+				) {
+					n := len(contour)
+					if n < 2 do return
+					// non_curves build rule:
+					// closed contour => len(curves) == len(contour)
+					// open contour   => len(curves) == len(contour) - 1
+					is_closed = len(curves) == n
+					edge_count = n - 1
+					if is_closed do edge_count = n
+					return
+				}
+
+				append_line_triangle :: proc(
+					vertList: ^[dynamic]shape_vertex2d,
+					indList: ^[dynamic]u32,
+					color: linalg.Vector4f32,
+					p0, p1, p2: linalg.Vector2f32,
+					apply_edge_aa: bool,
+				) -> shape_error {
+					start := u32(len(vertList^))
+					flag: shape_vertex_flag = .LINE
+					uv0 := linalg.Vector3f32{0.0, 0.0, 0.0}
+					uv1 := linalg.Vector3f32{0.0, 0.0, 0.0}
+					uv2 := linalg.Vector3f32{0.0, 0.0, 0.0}
+
+					if apply_edge_aa {
+						flag = .LINE_EDGE
+						uv0.x = 0.0
+						uv1.x = 0.0
+						uv2.x = 1.0
+					}
+
+					non_zero_append(
+						vertList,
+						shape_vertex2d{pos = p0, uvw = uv0, color = color, flag = flag},
+						shape_vertex2d{pos = p1, uvw = uv1, color = color, flag = flag},
+						shape_vertex2d{pos = p2, uvw = uv2, color = color, flag = flag},
+					) or_return
+					non_zero_append(indList, start, start + 1, start + 2) or_return
+					return nil
+				}
+
+				flat_pts := make([dynamic]linalg.Vector2f32, context.temp_allocator) or_return
+				total_pts := 0
+				for contour in non_curves do total_pts += len(contour)
+				non_zero_reserve(&flat_pts, total_pts) or_return
+
+				boundary_edges: [][]bool = make(
+					[][]bool,
+					total_pts,
+					context.temp_allocator,
+				) or_return
+				for i := 0; i < total_pts; i += 1 {
+					boundary_edges[i] = make([]bool, total_pts, context.temp_allocator) or_return
+				}
+
+				base_idx: u32 = 0
+				for contour, npi in non_curves {
+					for p in contour {
+						non_zero_append(&flat_pts, linalg.Vector2f32{p.x, p.y}) or_return
+					}
+
+					curves_npi := curves2[npi][:]
+					edge_count, is_closed := contour_edge_count(contour, curves_npi)
+					if edge_count <= 0 {
+						base_idx += u32(len(contour))
+						continue
+					}
+
+					for c in curves_npi {
+						if c.type != .Line do continue
+
+						// mark all matching contour edges.
+						// This avoids misses when same coordinates appear at multiple indices.
+						for i := 0; i < edge_count; i += 1 {
+							next := i + 1
+							if is_closed && next == len(contour) do next = 0
+							if contour[i] != c.start || contour[next] != c.end do continue
+
+							a := int(base_idx) + i
+							b := int(base_idx) + next
+							if a == b do continue
+							boundary_edges[a][b] = true
+							boundary_edges[b][a] = true
+						}
+					}
+
+					base_idx += u32(len(contour))
+				}
+
 				indices, tri_err := triangulation.TrianguatePolygons(
 					non_curves[:],
 					context.temp_allocator,
-					auto_cast len(vertList^),
 				)
 				if tri_err != nil {
 					switch e in tri_err {
@@ -1120,19 +1398,181 @@ shapes_compute_polygon :: proc(
 						return e
 					}
 				}
-				non_zero_append(indList, ..indices) or_return
 
-				for v, i in non_curves {
-					for vv in v {
-						non_zero_append(
+				for t := 0; t + 2 < len(indices); t += 3 {
+					ia := indices[t]
+					ib := indices[t + 1]
+					ic := indices[t + 2]
+
+					pa := flat_pts[ia]
+					pb := flat_pts[ib]
+					pc := flat_pts[ic]
+
+					ab := boundary_edges[ia][ib]
+					bc := boundary_edges[ib][ic]
+					ca := boundary_edges[ic][ia]
+
+					boundary_count := 0
+					if ab do boundary_count += 1
+					if bc do boundary_count += 1
+					if ca do boundary_count += 1
+
+					if boundary_count == 0 {
+						append_line_triangle(
 							vertList,
-							shape_vertex2d {
-								pos = linalg.Vector2f32{vv.x, vv.y},
-								flag = .LINE,
-								color = node.color,
-							},
+							indList,
+							node.color,
+							pa,
+							pb,
+							pc,
+							false,
 						) or_return
+						continue
 					}
+
+					if boundary_count == 1 {
+						if ab {
+							append_line_triangle(
+								vertList,
+								indList,
+								node.color,
+								pa,
+								pb,
+								pc,
+								true,
+							) or_return
+						} else if bc {
+							append_line_triangle(
+								vertList,
+								indList,
+								node.color,
+								pb,
+								pc,
+								pa,
+								true,
+							) or_return
+						} else {
+							append_line_triangle(
+								vertList,
+								indList,
+								node.color,
+								pc,
+								pa,
+								pb,
+								true,
+							) or_return
+						}
+						continue
+					}
+
+					if boundary_count == 2 {
+						if ab && bc {
+							// shared vertex: b, split opposite edge a-c
+							mid := linalg.Vector2f32 {
+								(pa.x + pc.x) * 0.5,
+								(pa.y + pc.y) * 0.5,
+							}
+							append_line_triangle(
+								vertList,
+								indList,
+								node.color,
+								pa,
+								pb,
+								mid,
+								true,
+							) or_return
+							append_line_triangle(
+								vertList,
+								indList,
+								node.color,
+								pb,
+								pc,
+								mid,
+								true,
+							) or_return
+						} else if bc && ca {
+							// shared vertex: c, split opposite edge a-b
+							mid := linalg.Vector2f32 {
+								(pa.x + pb.x) * 0.5,
+								(pa.y + pb.y) * 0.5,
+							}
+							append_line_triangle(
+								vertList,
+								indList,
+								node.color,
+								pb,
+								pc,
+								mid,
+								true,
+							) or_return
+							append_line_triangle(
+								vertList,
+								indList,
+								node.color,
+								pc,
+								pa,
+								mid,
+								true,
+							) or_return
+						} else {
+							// shared vertex: a, split opposite edge b-c
+							mid := linalg.Vector2f32 {
+								(pb.x + pc.x) * 0.5,
+								(pb.y + pc.y) * 0.5,
+							}
+							append_line_triangle(
+								vertList,
+								indList,
+								node.color,
+								pc,
+								pa,
+								mid,
+								true,
+							) or_return
+							append_line_triangle(
+								vertList,
+								indList,
+								node.color,
+								pa,
+								pb,
+								mid,
+								true,
+							) or_return
+						}
+						continue
+					}
+
+					center := linalg.Vector2f32 {
+						(pa.x + pb.x + pc.x) / 3.0,
+						(pa.y + pb.y + pc.y) / 3.0,
+					}
+					append_line_triangle(
+						vertList,
+						indList,
+						node.color,
+						pa,
+						pb,
+						center,
+						ab,
+					) or_return
+					append_line_triangle(
+						vertList,
+						indList,
+						node.color,
+						pb,
+						pc,
+						center,
+						bc,
+					) or_return
+					append_line_triangle(
+						vertList,
+						indList,
+						node.color,
+						pc,
+						pa,
+						center,
+						ca,
+					) or_return
 				}
 			}
 		}

@@ -5,9 +5,9 @@ import "base:runtime"
 import "core:math"
 import "core:math/fixed"
 import "core:math/linalg"
-import "engine:utils_private/fixed_bcd"
+import "shared:utils_private/fixed_bcd"
 
-import "engine:utils_private"
+import "shared:utils_private"
 
 
 Recti32 :: Rect_(i32)

@@ -5,8 +5,8 @@ import "base:runtime"
 import "core:c"
 import "core:math/linalg"
 import "core:mem"
-import pv "engine:clibs/plutovg"
-import "engine:utils_private"
+import pv "shared:clibs/plutovg"
+import "shared:utils_private"
 
 __Rasterizer_Error :: enum {
 	INVALID_SIZE,

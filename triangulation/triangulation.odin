@@ -9,7 +9,7 @@ import "core:mem"
 import "core:slice"
 
 import "core:math/fixed"
-import utils "engine:utils_private"
+import utils "shared:utils_private"
 
 __Trianguate_Error :: enum {
 	TOO_MANY_EDGES,

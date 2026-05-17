@@ -5,7 +5,7 @@ import "base:intrinsics"
 import "core:fmt"
 import "core:math/fixed"
 import "core:testing"
-import "engine:utils_private"
+import "shared:utils_private"
 
 
 @(private)
@@ -293,4 +293,3 @@ test_custom :: proc(t: ^testing.T) {
 	testing.expect_value(t, len(res), 1)
 	testing.expect_value(t, len(res[0]), 10)
 }
-

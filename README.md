@@ -5,4 +5,4 @@ Licensed under [Boost Software License 1.0](https://www.boost.org/LICENSE_1_0.tx
 
 * clipper.odin incomplete.
 * rasterizer, svg uses [plutovg](https://github.com/sammycage/plutovg) binding.
-* refer to engine:[util_private](https://github.com/SpaceTravelCompany/utils_private), engine:[clibs](https://github.com/SpaceTravelCompany/clibs)
+* refer to shared:[util_private](https://github.com/SpaceTravelCompany/utils_private), shared:[clibs](https://github.com/SpaceTravelCompany/clibs)

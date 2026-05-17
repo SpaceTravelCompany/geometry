@@ -7,7 +7,7 @@ import "base:runtime"
 import "core:container/avl"
 import pq "core:container/priority_queue"
 import "core:math/fixed"
-import "engine:utils_private"
+import "shared:utils_private"
 
 FixedDef :: fixed.Fixed(i64, 38)
 

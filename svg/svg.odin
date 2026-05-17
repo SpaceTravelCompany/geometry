@@ -8,9 +8,9 @@ import "core:math/linalg"
 import "core:mem"
 import "core:strconv"
 import "core:strings"
-import pv "engine:clibs/plutovg"
-import "engine:geometry/linalg_ex"
-import "engine:utils_private"
+import pv "shared:clibs/plutovg"
+import "shared:geometry/linalg_ex"
+import "shared:utils_private"
 
 __SVG_ERROR :: enum {
 	NOT_INITIALIZED,

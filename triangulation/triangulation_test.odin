@@ -1,7 +1,7 @@
 package triangulation
 
 import "core:testing"
-import "engine:utils_private"
+import "shared:utils_private"
 
 
 @(private)
@@ -49,4 +49,3 @@ test_triangulation_2square :: proc(t: ^testing.T) {
 	testing.expect_value(t, err, nil)
 	testing.expect_value(t, len(indices), 12)
 }
-

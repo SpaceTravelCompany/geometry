@@ -10,9 +10,9 @@ import "core:math"
 import "core:math/linalg"
 import "core:mem"
 
-import "engine:utils_private/fixed_bcd"
+import "shared:utils_private/fixed_bcd"
 
-import "engine:utils_private"
+import "shared:utils_private"
 
 
 shape_vertex_flag :: enum u8 {

@@ -133,9 +133,12 @@ ReverseShapeCloseCurve :: proc(
 	out_is_curves: []bool,
 	err: shape_error,
 ) {
-	if len(pts) > int(max(u32)) || len(is_curves) > int(max(u32)) {
-		return nil, nil, .OverFlow
+	when size_of(int) > 4 { 	//only 64bits can overflow len(int) than max(u32)
+		if len(pts) > int(max(u32)) || len(is_curves) > int(max(u32)) {
+			return nil, nil, .OverFlow
+		}
 	}
+
 
 	n := u32(len(pts))
 
@@ -1468,10 +1471,7 @@ shapes_compute_polygon :: proc(
 					if boundary_count == 2 {
 						if ab && bc {
 							// shared vertex: b, split opposite edge a-c
-							mid := linalg.Vector2f32 {
-								(pa.x + pc.x) * 0.5,
-								(pa.y + pc.y) * 0.5,
-							}
+							mid := linalg.Vector2f32{(pa.x + pc.x) * 0.5, (pa.y + pc.y) * 0.5}
 							append_line_triangle(
 								vertList,
 								indList,
@@ -1492,10 +1492,7 @@ shapes_compute_polygon :: proc(
 							) or_return
 						} else if bc && ca {
 							// shared vertex: c, split opposite edge a-b
-							mid := linalg.Vector2f32 {
-								(pa.x + pb.x) * 0.5,
-								(pa.y + pb.y) * 0.5,
-							}
+							mid := linalg.Vector2f32{(pa.x + pb.x) * 0.5, (pa.y + pb.y) * 0.5}
 							append_line_triangle(
 								vertList,
 								indList,
@@ -1516,10 +1513,7 @@ shapes_compute_polygon :: proc(
 							) or_return
 						} else {
 							// shared vertex: a, split opposite edge b-c
-							mid := linalg.Vector2f32 {
-								(pb.x + pc.x) * 0.5,
-								(pb.y + pc.y) * 0.5,
-							}
+							mid := linalg.Vector2f32{(pb.x + pc.x) * 0.5, (pb.y + pc.y) * 0.5}
 							append_line_triangle(
 								vertList,
 								indList,

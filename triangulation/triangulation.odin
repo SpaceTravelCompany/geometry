@@ -697,7 +697,9 @@ MakeEdge :: proc(
 	res: ^Edge,
 	err: Trianguate_Error,
 ) {
-	if len(ctx.all_edges) >= int(max(u32)) do return nil, .TOO_MANY_EDGES
+	when size_of(int) > 4 { 	//only 64bits can overflow len(int) than max(u32)
+		if len(ctx.all_edges) >= int(max(u32)) do return nil, .TOO_MANY_EDGES
+	}
 	non_zero_append(&ctx.all_edges, new(Edge, context.temp_allocator) or_return) or_return
 
 	ed := ctx.all_edges[len(ctx.all_edges) - 1]

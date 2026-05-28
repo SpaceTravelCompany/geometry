@@ -22,11 +22,10 @@ shape_vertex_flag :: enum u8 {
 	LINE_EDGE,
 }
 
-shape_vertex2d :: struct {
+shape_vertex2d :: struct #align (16) {
 	pos:   linalg.Vector2f32,
-	uvw:   linalg.Vector3f32,
+	uvw:   linalg.Vector4f32, //마지막 w 는 flag
 	color: linalg.Vector4f32,
-	flag:  shape_vertex_flag,
 }
 
 raw_shape :: struct {
@@ -408,28 +407,25 @@ _Shapes_ComputeLine :: proc(
 		non_zero_append(
 			vertList,
 			shape_vertex2d {
-				uvw = {0.0, 0.0, quad_sign},
+				uvw = {0.0, 0.0, quad_sign, f32(shape_vertex_flag.QUAD)},
 				pos = linalg.Vector2f32{pts.start.x, pts.start.y},
 				color = color,
-				flag = .QUAD,
 			},
 		)
 		non_zero_append(
 			vertList,
 			shape_vertex2d {
-				uvw = {0.5, 0.0, quad_sign},
+				uvw = {0.5, 0.0, quad_sign, f32(shape_vertex_flag.QUAD)},
 				pos = linalg.Vector2f32{pts.ctl0.x, pts.ctl0.y},
 				color = color,
-				flag = .QUAD,
 			},
 		)
 		non_zero_append(
 			vertList,
 			shape_vertex2d {
-				uvw = {1.0, 1.0, quad_sign},
+				uvw = {1.0, 1.0, quad_sign, f32(shape_vertex_flag.QUAD)},
 				pos = linalg.Vector2f32{pts.end.x, pts.end.y},
 				color = color,
-				flag = .QUAD,
 			},
 		)
 		non_zero_append(indList, vlen, vlen + 1, vlen + 2)
@@ -548,19 +544,31 @@ _Shapes_ComputeLine :: proc(
 		start: u32 = u32(len(vertList))
 		non_zero_append(
 			vertList,
-			shape_vertex2d{uvw = {F[0][0], F[0][1], F[0][2]}, color = color},
+			shape_vertex2d {
+				uvw = {F[0][0], F[0][1], F[0][2], f32(shape_vertex_flag.CUBIC)},
+				color = color,
+			},
 		) or_return
 		non_zero_append(
 			vertList,
-			shape_vertex2d{uvw = {F[1][0], F[1][1], F[1][2]}, color = color},
+			shape_vertex2d {
+				uvw = {F[1][0], F[1][1], F[1][2], f32(shape_vertex_flag.CUBIC)},
+				color = color,
+			},
 		) or_return
 		non_zero_append(
 			vertList,
-			shape_vertex2d{uvw = {F[2][0], F[2][1], F[2][2]}, color = color},
+			shape_vertex2d {
+				uvw = {F[2][0], F[2][1], F[2][2], f32(shape_vertex_flag.CUBIC)},
+				color = color,
+			},
 		) or_return
 		non_zero_append(
 			vertList,
-			shape_vertex2d{uvw = {F[3][0], F[3][1], F[3][2]}, color = color},
+			shape_vertex2d {
+				uvw = {F[3][0], F[3][1], F[3][2], f32(shape_vertex_flag.CUBIC)},
+				color = color,
+			},
 		) or_return
 
 		vertList[start].pos = linalg.Vector2f32{pts.start.x, pts.start.y}
@@ -1319,23 +1327,24 @@ shapes_compute_polygon :: proc(
 					apply_edge_aa: bool,
 				) -> shape_error {
 					start := u32(len(vertList^))
-					flag: shape_vertex_flag = .LINE
-					uv0 := linalg.Vector3f32{0.0, 0.0, 0.0}
-					uv1 := linalg.Vector3f32{0.0, 0.0, 0.0}
-					uv2 := linalg.Vector3f32{0.0, 0.0, 0.0}
+					uv0 := linalg.Vector4f32{0.0, 0.0, 0.0, f32(shape_vertex_flag.LINE)}
+					uv1 := linalg.Vector4f32{0.0, 0.0, 0.0, f32(shape_vertex_flag.LINE)}
+					uv2 := linalg.Vector4f32{0.0, 0.0, 0.0, f32(shape_vertex_flag.LINE)}
 
 					if apply_edge_aa {
-						flag = .LINE_EDGE
 						uv0.x = 0.0
 						uv1.x = 0.0
 						uv2.x = 1.0
+						uv0.w = f32(shape_vertex_flag.LINE_EDGE)
+						uv1.w = f32(shape_vertex_flag.LINE_EDGE)
+						uv2.w = f32(shape_vertex_flag.LINE_EDGE)
 					}
 
 					non_zero_append(
 						vertList,
-						shape_vertex2d{pos = p0, uvw = uv0, color = color, flag = flag},
-						shape_vertex2d{pos = p1, uvw = uv1, color = color, flag = flag},
-						shape_vertex2d{pos = p2, uvw = uv2, color = color, flag = flag},
+						shape_vertex2d{pos = p0, uvw = uv0, color = color},
+						shape_vertex2d{pos = p1, uvw = uv1, color = color},
+						shape_vertex2d{pos = p2, uvw = uv2, color = color},
 					) or_return
 					non_zero_append(indList, start, start + 1, start + 2) or_return
 					return nil

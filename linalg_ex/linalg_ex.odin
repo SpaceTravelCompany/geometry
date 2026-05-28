@@ -35,8 +35,7 @@ PointInPolygonResult :: enum u8 {
 Rect_ :: struct(
 	$T: typeid
 ) where intrinsics.type_is_numeric(T) ||
-	intrinsics.type_is_specialization_of(T, fixed.Fixed)
-{
+	intrinsics.type_is_specialization_of(T, fixed.Fixed) {
 	left:   T,
 	right:  T,
 	top:    T,
@@ -771,8 +770,8 @@ NearestPointBetweenPointAndLine :: proc "contextless" (
 }
 
 Circle :: struct(T: typeid) where intrinsics.type_is_float(T) {
-	p:      [2]T,
-	radius: T,
+	p:           [2]T,
+	rect_radius: T,
 }
 
 Circlef32 :: Circle(f32)

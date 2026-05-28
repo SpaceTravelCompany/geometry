@@ -31,6 +31,7 @@ shape_vertex2d :: struct #align (16) {
 raw_shape :: struct {
 	vertices: []shape_vertex2d,
 	indices:  []u32,
+	rect:     linalg_ex.Rectf32,
 }
 
 @(private)
@@ -271,6 +272,26 @@ raw_shape_free :: proc(self: raw_shape, allocator := context.allocator) {
 	delete(self.indices, allocator)
 }
 
+raw_shape_compute_rect :: proc "contextless" (self: raw_shape) -> linalg_ex.Rectf32 {
+	if len(self.vertices) == 0 do return {}
+	left := self.vertices[0].pos.x
+	right := self.vertices[0].pos.x
+	bottom := self.vertices[0].pos.y
+	top := self.vertices[0].pos.y
+	for v in self.vertices[1:] {
+		left = min(left, v.pos.x)
+		right = max(right, v.pos.x)
+		bottom = min(bottom, v.pos.y)
+		top = max(top, v.pos.y)
+	}
+	return linalg_ex.Rect_Init(left, right, top, bottom)
+}
+
+raw_shape_update_rect :: proc(self: ^raw_shape) {
+	if self == nil do return
+	self.rect = raw_shape_compute_rect(self^)
+}
+
 raw_shape_clone :: proc(
 	self: ^raw_shape,
 	allocator := context.allocator,
@@ -307,6 +328,7 @@ raw_shape_clone :: proc(
 		&self.indices[0],
 		len(self.indices) * size_of(u32),
 	)
+	res.rect = self.rect
 	return
 }
 
@@ -1600,6 +1622,7 @@ shapes_compute_polygon :: proc(
 		raw_data(indList[:]),
 		len(indList) * size_of(u32),
 	)
+	raw_shape_update_rect(&res)
 	return
 }
 

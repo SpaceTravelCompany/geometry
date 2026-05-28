@@ -148,8 +148,6 @@ Area_MulMatrix :: proc(
 		return res2
 	case [][2]f32:
 		return __Poly_MulMatrix(n, _mat, allocator)
-	case ImageArea:
-		panic_contextless("ImageArea: Available only for ImageButton\n")
 	}
 	return {}
 }
@@ -816,12 +814,9 @@ xy_mirror_point :: #force_inline proc "contextless" (
 	}
 }
 
-ImageArea :: struct {}
-
 Area :: union($T: typeid) where intrinsics.type_is_numeric(T) {
 	Rect_(T),
 	[][2]T,
-	ImageArea, //Available only for ImageButton
 }
 
 Areaf32 :: Area(f32)
@@ -837,8 +832,6 @@ Area_PointIn :: #force_inline proc "contextless" (
 		return Rect_PointIn(a, pt)
 	case [][2]T:
 		return PointInPolygon(pt, a) != .Outside
-	case ImageArea:
-		panic_contextless("ImageArea: Available only for ImageButton\n")
 	}
 	return false
 }

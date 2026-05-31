@@ -2,6 +2,7 @@ package linalg_ex
 
 import "base:intrinsics"
 //import "core:fmt"
+import "core:math"
 import "core:math/fixed"
 import "core:math/linalg"
 import "core:testing"
@@ -13,6 +14,187 @@ BezierKind :: enum u8 {
 }
 
 MaxBezierIntersections :: 9
+
+@(private = "file")
+_root_eps :: #force_inline proc "contextless" ($T: typeid) -> T where intrinsics.type_is_float(T) {
+	when T == f64 {
+		return T(1e-12)
+	}
+	return T(1e-6)
+}
+
+@(private = "file")
+_add_unit_root :: proc "contextless" (roots: ^[4]$T, count: ^int, root: T) where intrinsics.type_is_float(T) {
+	eps := _root_eps(T)
+	if root < -eps || root > 1 + eps || count^ >= len(roots^) do return
+	r := math.clamp(root, T(0), T(1))
+	for i in 0 ..< count^ {
+		if math.abs(roots^[i] - r) <= eps do return
+	}
+	roots^[count^] = r
+	count^ += 1
+}
+
+@(private = "file")
+_solve_linear_unit :: proc "contextless" (roots: ^[4]$T, count: ^int, b, c: T) where intrinsics.type_is_float(T) {
+	eps := _root_eps(T)
+	if math.abs(b) <= eps do return
+	_add_unit_root(roots, count, -c / b)
+}
+
+@(private = "file")
+_solve_quadratic_unit :: proc "contextless" (roots: ^[4]$T, count: ^int, a, b, c: T) where intrinsics.type_is_float(T) {
+	eps := _root_eps(T)
+	if math.abs(a) <= eps {
+		_solve_linear_unit(roots, count, b, c)
+		return
+	}
+	disc := b * b - T(4) * a * c
+	if disc < -eps do return
+	if math.abs(disc) <= eps {
+		_add_unit_root(roots, count, -b / (T(2) * a))
+		return
+	}
+	s := math.sqrt(disc)
+	_add_unit_root(roots, count, (-b - s) / (T(2) * a))
+	_add_unit_root(roots, count, (-b + s) / (T(2) * a))
+}
+
+@(private = "file")
+_solve_cubic_unit :: proc "contextless" (roots: ^[4]$T, count: ^int, a, b, c, d: T) where intrinsics.type_is_float(T) {
+	eps := _root_eps(T)
+	if math.abs(a) <= eps {
+		_solve_quadratic_unit(roots, count, b, c, d)
+		return
+	}
+
+	aa := b / a
+	bb := c / a
+	cc := d / a
+	p := bb - aa * aa / T(3)
+	q := T(2) * aa * aa * aa / T(27) - aa * bb / T(3) + cc
+	disc := q * q / T(4) + p * p * p / T(27)
+	shift := aa / T(3)
+
+	if disc > eps {
+		s := math.sqrt(disc)
+		u := math.cbrt(-q / T(2) + s)
+		v := math.cbrt(-q / T(2) - s)
+		_add_unit_root(roots, count, u + v - shift)
+		return
+	}
+
+	if math.abs(disc) <= eps {
+		u := math.cbrt(-q / T(2))
+		_add_unit_root(roots, count, T(2) * u - shift)
+		_add_unit_root(roots, count, -u - shift)
+		return
+	}
+
+	if p >= 0 do return
+	r := T(2) * math.sqrt(-p / T(3))
+	arg := (T(3) * q / (T(2) * p)) * math.sqrt(-T(3) / p)
+	arg = math.clamp(arg, T(-1), T(1))
+	theta := math.acos(arg) / T(3)
+	tau := T(math.TAU)
+	for k in 0 ..< 3 {
+		_add_unit_root(roots, count, r * math.cos(theta - tau * T(k) / T(3)) - shift)
+	}
+}
+
+@(private = "file")
+_eval_any_bezier :: proc "contextless" (
+	kind: BezierKind,
+	pts: [4][2]$T,
+	t: T,
+) -> [2]T where intrinsics.type_is_float(T) {
+	if kind == .Line {
+		u := T(1) - t
+		return {pts[0].x * u + pts[1].x * t, pts[0].y * u + pts[1].y * t}
+	}
+	return EvalBezier(kind, pts, t)
+}
+
+@(private = "file")
+_line_t_for_point :: proc "contextless" (line: [4][2]$T, p: [2]T) -> T where intrinsics.type_is_float(T) {
+	dx := line[1].x - line[0].x
+	dy := line[1].y - line[0].y
+	den := dx * dx + dy * dy
+	if den <= _root_eps(T) do return T(0)
+	return ((p.x - line[0].x) * dx + (p.y - line[0].y) * dy) / den
+}
+
+@(private = "file")
+_add_line_curve_hit :: proc "contextless" (
+	line: [4][2]$T,
+	curve_kind: BezierKind,
+	curve: [4][2]T,
+	t_curve: T,
+	count: ^int,
+	ips: ^[MaxBezierIntersections][2]T,
+	t_line_out: ^[MaxBezierIntersections]T,
+	t_curve_out: ^[MaxBezierIntersections]T,
+) where intrinsics.type_is_float(T) {
+	if count^ >= MaxBezierIntersections do return
+	eps := _root_eps(T)
+	p := _eval_any_bezier(curve_kind, curve, math.clamp(t_curve, T(0), T(1)))
+	t_line := _line_t_for_point(line, p)
+	if t_line < -eps || t_line > 1 + eps do return
+	t_line = math.clamp(t_line, T(0), T(1))
+	t_curve_clamped := math.clamp(t_curve, T(0), T(1))
+	for i in 0 ..< count^ {
+		if math.abs(t_line_out^[i] - t_line) <= eps && math.abs(t_curve_out^[i] - t_curve_clamped) <= eps do return
+	}
+	ips^[count^] = p
+	t_line_out^[count^] = t_line
+	t_curve_out^[count^] = t_curve_clamped
+	count^ += 1
+}
+
+@(private = "file")
+_line_curve_intersections :: proc "contextless" (
+	line: [4][2]$T,
+	curve_kind: BezierKind,
+	curve: [4][2]T,
+) -> (
+	count: int,
+	ips: [MaxBezierIntersections][2]T,
+	t_line_out: [MaxBezierIntersections]T,
+	t_curve_out: [MaxBezierIntersections]T,
+) where intrinsics.type_is_float(T) {
+	dx := line[1].x - line[0].x
+	dy := line[1].y - line[0].y
+	if math.abs(dx) <= _root_eps(T) && math.abs(dy) <= _root_eps(T) do return
+
+	dist: [4]T
+	n := bezier_order(curve_kind) - 1
+	for i in 0 ..= n {
+		dist[i] = (curve[i].x - line[0].x) * dy - (curve[i].y - line[0].y) * dx
+	}
+
+	roots: [4]T
+	root_count := 0
+	switch curve_kind {
+	case .Line:
+		_solve_linear_unit(&roots, &root_count, dist[1] - dist[0], dist[0])
+	case .Quad:
+		a := dist[0] - T(2) * dist[1] + dist[2]
+		b := T(2) * (dist[1] - dist[0])
+		c := dist[0]
+		_solve_quadratic_unit(&roots, &root_count, a, b, c)
+	case .Cubic:
+		a := -dist[0] + T(3) * dist[1] - T(3) * dist[2] + dist[3]
+		b := T(3) * dist[0] - T(6) * dist[1] + T(3) * dist[2]
+		c := -T(3) * dist[0] + T(3) * dist[1]
+		d := dist[0]
+		_solve_cubic_unit(&roots, &root_count, a, b, c, d)
+	}
+
+	for i in 0 ..< root_count {
+		_add_line_curve_hit(line, curve_kind, curve, roots[i], &count, &ips, &t_line_out, &t_curve_out)
+	}
+	return
+}
 
 bezier_order :: #force_inline proc "contextless" (kind: BezierKind) -> int {
 	switch kind {
@@ -195,6 +377,16 @@ GetBezierIntersectPt :: proc "contextless" (
 	t_bs: [MaxBezierIntersections]T,
 ) where intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
 	intrinsics.type_is_float(T) {
+	when intrinsics.type_is_float(T) {
+		if kind_a == .Line {
+			return _line_curve_intersections(a_in, kind_b, b_in)
+		}
+		if kind_b == .Line {
+			count, ips, t_line, t_curve := _line_curve_intersections(b_in, kind_a, a_in)
+			return count, ips, t_curve, t_line
+		}
+	}
+
 	one :=
 		T(1) when intrinsics.type_is_float(T) else T {
 			i = 1 << intrinsics.type_polymorphic_record_parameter_value(T, 1),
@@ -477,6 +669,9 @@ EvalBezierTangent :: proc "contextless" (
 	three := NumConst(3, T)
 	six := NumConst(6, T)
 	switch kind {
+	case .Line:
+		p0, p1 := pts[0], pts[1]
+		return {NumSub(p1[0], p0[0]), NumSub(p1[1], p0[1])}
 	case .Quad:
 		p0, p1, p2 := pts[0], pts[1], pts[2]
 		return {

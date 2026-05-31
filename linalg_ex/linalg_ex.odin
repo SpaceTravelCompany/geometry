@@ -1084,3 +1084,17 @@ GetAngle :: proc(a, b, c: [2]$T) -> T where intrinsics.type_is_float(T) {
 	cp := abx * bcy - aby * bcx
 	return math.atan2(cp, dp) //range between -Pi and Pi
 }
+
+// Evaluate any Bezier segment (line, quad, cubic) at parameter t.
+eval_bezier_segment :: proc "contextless" (kind: BezierKind, pts: [4][2]$T, t: T) -> [2]T where intrinsics.type_is_float(T) {
+	switch kind {
+	case .Line:
+		u := 1 - t
+		return { u * pts[0].x + t * pts[1].x, u * pts[0].y + t * pts[1].y }
+	case .Quad:
+		return EvalBezier(kind, pts, t)
+	case .Cubic:
+		return EvalBezier(kind, pts, t)
+	}
+	return {}
+}

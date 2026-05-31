@@ -16,10 +16,9 @@ import "shared:utils_private"
 
 
 shape_vertex_flag :: enum u8 {
+	LINE,
 	CUBIC,
 	QUAD,
-	LINE,
-	LINE_EDGE,
 }
 
 shape_vertex2d :: struct #align (16) {
@@ -1323,106 +1322,10 @@ shapes_compute_polygon :: proc(
 				non_zero_resize_dynamic_array(&non_curves, len(non_curves2)) or_return
 				for npi in 0 ..< len(non_curves2) do non_curves[npi] = non_curves2[npi][:]
 
-				contour_edge_count :: proc "contextless" (
-					contour: [][2]f32,
-					curves: []curve_struct_float(f32),
-				) -> (
-					edge_count: int,
-					is_closed: bool,
-				) {
-					n := len(contour)
-					if n < 2 do return
-					// non_curves build rule:
-					// closed contour => len(curves) == len(contour)
-					// open contour   => len(curves) == len(contour) - 1
-					is_closed = len(curves) == n
-					edge_count = n - 1
-					if is_closed do edge_count = n
-					return
-				}
-
-				append_line_triangle :: proc(
-					vertList: ^[dynamic]shape_vertex2d,
-					indList: ^[dynamic]u32,
-					color: linalg.Vector4f32,
-					p0, p1, p2: linalg.Vector2f32,
-					apply_edge_aa: bool,
-				) -> shape_error {
-					start := u32(len(vertList^))
-					uv0 := linalg.Vector4f32{0.0, 0.0, 0.0, f32(shape_vertex_flag.LINE)}
-					uv1 := linalg.Vector4f32{0.0, 0.0, 0.0, f32(shape_vertex_flag.LINE)}
-					uv2 := linalg.Vector4f32{0.0, 0.0, 0.0, f32(shape_vertex_flag.LINE)}
-
-					if apply_edge_aa {
-						uv0.x = 0.0
-						uv1.x = 0.0
-						uv2.x = 1.0
-						uv0.w = f32(shape_vertex_flag.LINE_EDGE)
-						uv1.w = f32(shape_vertex_flag.LINE_EDGE)
-						uv2.w = f32(shape_vertex_flag.LINE_EDGE)
-					}
-
-					non_zero_append(
-						vertList,
-						shape_vertex2d{pos = p0, uvw = uv0, color = color},
-						shape_vertex2d{pos = p1, uvw = uv1, color = color},
-						shape_vertex2d{pos = p2, uvw = uv2, color = color},
-					) or_return
-					non_zero_append(indList, start, start + 1, start + 2) or_return
-					return nil
-				}
-
-				flat_pts := make([dynamic]linalg.Vector2f32, context.temp_allocator) or_return
-				total_pts := 0
-				for contour in non_curves do total_pts += len(contour)
-				non_zero_reserve(&flat_pts, total_pts) or_return
-
-				boundary_edges: [][]bool = make(
-					[][]bool,
-					total_pts,
-					context.temp_allocator,
-				) or_return
-				for i := 0; i < total_pts; i += 1 {
-					boundary_edges[i] = make([]bool, total_pts, context.temp_allocator) or_return
-				}
-
-				base_idx: u32 = 0
-				for contour, npi in non_curves {
-					for p in contour {
-						non_zero_append(&flat_pts, linalg.Vector2f32{p.x, p.y}) or_return
-					}
-
-					curves_npi := curves2[npi][:]
-					edge_count, is_closed := contour_edge_count(contour, curves_npi)
-					if edge_count <= 0 {
-						base_idx += u32(len(contour))
-						continue
-					}
-
-					for c in curves_npi {
-						if c.type != .Line do continue
-
-						// mark all matching contour edges.
-						// This avoids misses when same coordinates appear at multiple indices.
-						for i := 0; i < edge_count; i += 1 {
-							next := i + 1
-							if is_closed && next == len(contour) do next = 0
-							if contour[i] != c.start || contour[next] != c.end do continue
-
-							a := int(base_idx) + i
-							b := int(base_idx) + next
-							if a == b do continue
-							boundary_edges[a][b] = true
-							boundary_edges[b][a] = true
-						}
-					}
-
-					base_idx += u32(len(contour))
-				}
-
 				indices, tri_err := triangulation.TrianguatePolygons(
 					non_curves[:],
 					context.temp_allocator,
+					u32(len((vertList^))),
 				)
 				if tri_err != nil {
 					switch e in tri_err {
@@ -1433,172 +1336,15 @@ shapes_compute_polygon :: proc(
 					}
 				}
 
-				for t := 0; t + 2 < len(indices); t += 3 {
-					ia := indices[t]
-					ib := indices[t + 1]
-					ic := indices[t + 2]
-
-					pa := flat_pts[ia]
-					pb := flat_pts[ib]
-					pc := flat_pts[ic]
-
-					ab := boundary_edges[ia][ib]
-					bc := boundary_edges[ib][ic]
-					ca := boundary_edges[ic][ia]
-
-					boundary_count := 0
-					if ab do boundary_count += 1
-					if bc do boundary_count += 1
-					if ca do boundary_count += 1
-
-					if boundary_count == 0 {
-						append_line_triangle(
+				for n in non_curves {
+					for nn in n {
+						non_zero_append(
 							vertList,
-							indList,
-							node.color,
-							pa,
-							pb,
-							pc,
-							false,
+							shape_vertex2d{color = node.color, pos = nn},
 						) or_return
-						continue
 					}
-
-					if boundary_count == 1 {
-						if ab {
-							append_line_triangle(
-								vertList,
-								indList,
-								node.color,
-								pa,
-								pb,
-								pc,
-								true,
-							) or_return
-						} else if bc {
-							append_line_triangle(
-								vertList,
-								indList,
-								node.color,
-								pb,
-								pc,
-								pa,
-								true,
-							) or_return
-						} else {
-							append_line_triangle(
-								vertList,
-								indList,
-								node.color,
-								pc,
-								pa,
-								pb,
-								true,
-							) or_return
-						}
-						continue
-					}
-
-					if boundary_count == 2 {
-						if ab && bc {
-							// shared vertex: b, split opposite edge a-c
-							mid := linalg.Vector2f32{(pa.x + pc.x) * 0.5, (pa.y + pc.y) * 0.5}
-							append_line_triangle(
-								vertList,
-								indList,
-								node.color,
-								pa,
-								pb,
-								mid,
-								true,
-							) or_return
-							append_line_triangle(
-								vertList,
-								indList,
-								node.color,
-								pb,
-								pc,
-								mid,
-								true,
-							) or_return
-						} else if bc && ca {
-							// shared vertex: c, split opposite edge a-b
-							mid := linalg.Vector2f32{(pa.x + pb.x) * 0.5, (pa.y + pb.y) * 0.5}
-							append_line_triangle(
-								vertList,
-								indList,
-								node.color,
-								pb,
-								pc,
-								mid,
-								true,
-							) or_return
-							append_line_triangle(
-								vertList,
-								indList,
-								node.color,
-								pc,
-								pa,
-								mid,
-								true,
-							) or_return
-						} else {
-							// shared vertex: a, split opposite edge b-c
-							mid := linalg.Vector2f32{(pb.x + pc.x) * 0.5, (pb.y + pc.y) * 0.5}
-							append_line_triangle(
-								vertList,
-								indList,
-								node.color,
-								pc,
-								pa,
-								mid,
-								true,
-							) or_return
-							append_line_triangle(
-								vertList,
-								indList,
-								node.color,
-								pa,
-								pb,
-								mid,
-								true,
-							) or_return
-						}
-						continue
-					}
-
-					center := linalg.Vector2f32 {
-						(pa.x + pb.x + pc.x) / 3.0,
-						(pa.y + pb.y + pc.y) / 3.0,
-					}
-					append_line_triangle(
-						vertList,
-						indList,
-						node.color,
-						pa,
-						pb,
-						center,
-						ab,
-					) or_return
-					append_line_triangle(
-						vertList,
-						indList,
-						node.color,
-						pb,
-						pc,
-						center,
-						bc,
-					) or_return
-					append_line_triangle(
-						vertList,
-						indList,
-						node.color,
-						pc,
-						pa,
-						center,
-						ca,
-					) or_return
 				}
+				non_zero_append(indList, ..indices) or_return
 			}
 		}
 		return

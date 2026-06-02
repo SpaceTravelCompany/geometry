@@ -12,48 +12,48 @@ import pv "shared:clibs/plutovg"
 import "shared:geometry/linalg_ex"
 import "shared:utils_private"
 
-__SVG_ERROR :: enum {
+__SvgError :: enum {
 	NOT_INITIALIZED,
 	INVALID_NODE,
 	UNSUPPORTED_FEATURE,
 }
 
-SVG_ERROR :: union #shared_nil {
-	__SVG_ERROR,
+SvgError :: union #shared_nil {
+	__SvgError,
 	xml.Error,
 	runtime.Allocator_Error,
 }
 
-svg_parser :: struct {
-	arena_allocator: Maybe(mem.Allocator),
+SvgParser :: struct {
+	arenaAllocator: Maybe(mem.Allocator),
 	__arena:         mem.Dynamic_Arena,
-	shapes:          geometry.shapes,
+	shapes:          geometry.Shapes,
 }
 
 @(private)
-__path_attr :: struct {
+__PathAttr :: struct {
 	d:              Maybe(string),
 	fill:           Maybe(string),
-	fill_opacity:   Maybe(f32),
+	fillOpacity:   Maybe(f32),
 	stroke:         Maybe(string),
-	stroke_opacity: Maybe(f32),
-	stroke_width:   Maybe(f32),
+	strokeOpacity: Maybe(f32),
+	strokeWidth:   Maybe(f32),
 	transform:      Maybe(string),
 }
 
 _EPS: f32 : 0.0001
 
-deinit :: proc(self: ^svg_parser) {
+deinit :: proc(self: ^SvgParser) {
 	if self == nil do return
-	if self.arena_allocator != nil {
+	if self.arenaAllocator != nil {
 		mem.dynamic_arena_destroy(&self.__arena)
-		self.arena_allocator = nil
+		self.arenaAllocator = nil
 	}
 	self.shapes = {}
 }
 
 @(private)
-_is_none_value :: proc "contextless" (s: string) -> bool {
+_isNoneValue :: proc "contextless" (s: string) -> bool {
 	if len(s) != 4 do return false
 	return(
 		(s[0] == 'n' || s[0] == 'N') &&
@@ -65,12 +65,12 @@ _is_none_value :: proc "contextless" (s: string) -> bool {
 
 
 @(private)
-_to_geom_point :: proc "contextless" (p: pv.plutovg_point_t) -> linalg.Vector2f32 {
+_toGeomPoint :: proc "contextless" (p: pv.plutovg_point_t) -> linalg.Vector2f32 {
 	return linalg.Vector2f32{p.x, -p.y}
 }
 
 @(private)
-_parse_number_attr :: proc(value: string, out: ^Maybe(f32)) -> SVG_ERROR {
+_parseNumberAttr :: proc(value: string, out: ^Maybe(f32)) -> SvgError {
 	v := strings.trim_space(value)
 	f, ok := strconv.parse_f32(v)
 	if !ok do return .INVALID_NODE
@@ -79,20 +79,20 @@ _parse_number_attr :: proc(value: string, out: ^Maybe(f32)) -> SVG_ERROR {
 }
 
 @(private)
-_set_path_attr :: proc(key, value: string, out: ^__path_attr) -> SVG_ERROR {
+_setPathAttr :: proc(key, value: string, out: ^__PathAttr) -> SvgError {
 	switch key {
 	case "d":
 		out.d = value
 	case "fill":
 		out.fill = value
 	case "fill-opacity":
-		_parse_number_attr(value, &out.fill_opacity) or_return
+		_parseNumberAttr(value, &out.fillOpacity) or_return
 	case "stroke":
 		out.stroke = value
 	case "stroke-opacity":
-		_parse_number_attr(value, &out.stroke_opacity) or_return
+		_parseNumberAttr(value, &out.strokeOpacity) or_return
 	case "stroke-width":
-		_parse_number_attr(value, &out.stroke_width) or_return
+		_parseNumberAttr(value, &out.strokeWidth) or_return
 	case "transform":
 		out.transform = value
 	}
@@ -100,14 +100,14 @@ _set_path_attr :: proc(key, value: string, out: ^__path_attr) -> SVG_ERROR {
 }
 
 @(private)
-_parse_style_attr :: proc(style: string, out: ^__path_attr) -> SVG_ERROR {
+_parseStyleAttr :: proc(style: string, out: ^__PathAttr) -> SvgError {
 	i := 0
 	for i < len(style) {
-		decl_start := i
+		declStart := i
 		for i < len(style) && style[i] != ';' {
 			i += 1
 		}
-		decl := strings.trim_space(style[decl_start:i])
+		decl := strings.trim_space(style[declStart:i])
 		if i < len(style) && style[i] == ';' do i += 1
 		if len(decl) == 0 do continue
 
@@ -116,29 +116,29 @@ _parse_style_attr :: proc(style: string, out: ^__path_attr) -> SVG_ERROR {
 
 		key := strings.trim_space(decl[:colon])
 		value := strings.trim_space(decl[colon + 1:])
-		_set_path_attr(key, value, out) or_return
+		_setPathAttr(key, value, out) or_return
 	}
 	return nil
 }
 
 @(private)
-_parse_svg_color :: proc(
-	color_text: string,
+_parseSvgColor :: proc(
+	colorText: string,
 	opacity: Maybe(f32),
 ) -> (
 	color: linalg.Vector4f32,
 	ok: bool,
-	err: SVG_ERROR = nil,
+	err: SvgError = nil,
 ) {
-	value := strings.trim_space(color_text)
-	if len(value) == 0 || _is_none_value(value) {
+	value := strings.trim_space(colorText)
+	if len(value) == 0 || _isNoneValue(value) {
 		return
 	}
 
 	clr: pv.plutovg_color_t
-	consumed, parse_err := pv.plutovg_color_parse_string(&clr, value)
-	if parse_err != nil {
-		err = parse_err
+	consumed, parseErr := pv.plutovg_color_parse_string(&clr, value)
+	if parseErr != nil {
+		err = parseErr
 		return
 	}
 	if consumed == 0 {
@@ -156,7 +156,7 @@ _parse_svg_color :: proc(
 }
 
 @(private)
-_reset_contour :: proc(
+_resetContour :: proc(
 	pts: ^[dynamic]linalg.Vector2f32,
 	curves: ^[dynamic]bool,
 	arena: mem.Allocator,
@@ -166,27 +166,27 @@ _reset_contour :: proc(
 }
 
 @(private)
-_normalize_contour_winding :: proc(
-	pts_out: ^[dynamic][]linalg.Vector2f32,
-	curves_out: ^[dynamic][]bool,
+_normalizeContourWinding :: proc(
+	ptsOut: ^[dynamic][]linalg.Vector2f32,
+	curvesOut: ^[dynamic][]bool,
 	arena: mem.Allocator,
-) -> SVG_ERROR {
-	if len(pts_out^) != len(curves_out^) do return .INVALID_NODE
+) -> SvgError {
+	if len(ptsOut^) != len(curvesOut^) do return .INVALID_NODE
 
-	for i in 0 ..< len(pts_out^) {
-		pts := pts_out^[i]
-		curves := curves_out^[i]
+	for i in 0 ..< len(ptsOut^) {
+		pts := ptsOut^[i]
+		curves := curvesOut^[i]
 		if len(pts) < 3 do continue
 		if len(pts) != len(curves) do return .INVALID_NODE
 
-		is_hole := geometry.IsHoleContour(i, pts_out^[:])
+		isHole := geometry.IsHoleContour(i, ptsOut^[:])
 		orientation := linalg_ex.GetPolygonOrientation(pts)
-		need_reverse :=
-			(!is_hole && orientation != .CounterClockwise) ||
-			(is_hole && orientation != .Clockwise)
-		if need_reverse {
-			err: geometry.shape_error
-			pts_out^[i], curves_out^[i], err = geometry.ReverseShapeCloseCurve(pts, curves, arena)
+		needReverse :=
+			(!isHole && orientation != .CounterClockwise) ||
+			(isHole && orientation != .Clockwise)
+		if needReverse {
+			err: geometry.ShapeError
+			ptsOut^[i], curvesOut^[i], err = geometry.ReverseShapeCloseCurve(pts, curves, arena)
 			if err != nil do return .INVALID_NODE
 		}
 	}
@@ -194,37 +194,37 @@ _normalize_contour_winding :: proc(
 }
 
 @(private)
-_finalize_contour :: proc(
-	inout_pts: ^[dynamic]linalg.Vector2f32,
-	inout_curves: ^[dynamic]bool,
-	is_closed: bool,
-	pts_out: ^[dynamic][]linalg.Vector2f32,
-	curves_out: ^[dynamic][]bool,
+_finalizeContour :: proc(
+	inoutPts: ^[dynamic]linalg.Vector2f32,
+	inoutCurves: ^[dynamic]bool,
+	isClosed: bool,
+	ptsOut: ^[dynamic][]linalg.Vector2f32,
+	curvesOut: ^[dynamic][]bool,
 	arena: mem.Allocator,
-) -> SVG_ERROR {
-	if len(inout_pts^) == 0 {
-		_reset_contour(inout_pts, inout_curves, arena)
+) -> SvgError {
+	if len(inoutPts^) == 0 {
+		_resetContour(inoutPts, inoutCurves, arena)
 		return nil
 	}
-	if len(inout_pts^) != len(inout_curves^) {
+	if len(inoutPts^) != len(inoutCurves^) {
 		return .INVALID_NODE
 	}
 
 	//if same first and last point of a closed contour, remove the last point to avoid duplicate in geometry.shapes_compute_polygon.
-	if is_closed &&
-	   len(inout_pts^) > 1 &&
-	   !inout_curves^[len(inout_curves^) - 1] &&
-	   inout_pts^[len(inout_pts^) - 1] == inout_pts^[0] {
-		non_zero_resize_dynamic_array(inout_pts, len(inout_pts^) - 1) or_return
-		non_zero_resize_dynamic_array(inout_curves, len(inout_curves^) - 1) or_return
+	if isClosed &&
+	   len(inoutPts^) > 1 &&
+	   !inoutCurves^[len(inoutCurves^) - 1] &&
+	   inoutPts^[len(inoutPts^) - 1] == inoutPts^[0] {
+		non_zero_resize_dynamic_array(inoutPts, len(inoutPts^) - 1) or_return
+		non_zero_resize_dynamic_array(inoutCurves, len(inoutCurves^) - 1) or_return
 	}
 
 	// geometry.shapes_compute_polygon expects the first point flag to be non-curve.
 	// If needed, rotate contour start to the first non-curve point while preserving pairing.
-	if is_closed && len(inout_curves^) > 0 && inout_curves^[0] {
+	if isClosed && len(inoutCurves^) > 0 && inoutCurves^[0] {
 		start := -1
-		for i in 0 ..< len(inout_curves^) {
-			if !inout_curves^[i] {
+		for i in 0 ..< len(inoutCurves^) {
+			if !inoutCurves^[i] {
 				start = i
 				break
 			}
@@ -233,39 +233,39 @@ _finalize_contour :: proc(
 			return .INVALID_NODE
 		}
 		if start > 0 {
-			rot_pts: [dynamic]linalg.Vector2f32 = make([dynamic]linalg.Vector2f32, arena)
-			rot_curves: [dynamic]bool = make([dynamic]bool, arena)
-			non_zero_reserve(&rot_pts, len(inout_pts^)) or_return
-			non_zero_reserve(&rot_curves, len(inout_curves^)) or_return
-			for i in 0 ..< len(inout_pts^) {
-				src := (start + i) % len(inout_pts^)
-				non_zero_append(&rot_pts, inout_pts^[src]) or_return
-				non_zero_append(&rot_curves, inout_curves^[src]) or_return
+			rotPts: [dynamic]linalg.Vector2f32 = make([dynamic]linalg.Vector2f32, arena)
+			rotCurves: [dynamic]bool = make([dynamic]bool, arena)
+			non_zero_reserve(&rotPts, len(inoutPts^)) or_return
+			non_zero_reserve(&rotCurves, len(inoutCurves^)) or_return
+			for i in 0 ..< len(inoutPts^) {
+				src := (start + i) % len(inoutPts^)
+				non_zero_append(&rotPts, inoutPts^[src]) or_return
+				non_zero_append(&rotCurves, inoutCurves^[src]) or_return
 			}
-			inout_pts^ = rot_pts
-			inout_curves^ = rot_curves
+			inoutPts^ = rotPts
+			inoutCurves^ = rotCurves
 		}
 	}
 
-	if is_closed && len(inout_pts^) >= 2 {
-		non_zero_append(pts_out, inout_pts^[:]) or_return
-		non_zero_append(curves_out, inout_curves^[:]) or_return
+	if isClosed && len(inoutPts^) >= 2 {
+		non_zero_append(ptsOut, inoutPts^[:]) or_return
+		non_zero_append(curvesOut, inoutCurves^[:]) or_return
 	}
 
-	_reset_contour(inout_pts, inout_curves, arena)
+	_resetContour(inoutPts, inoutCurves, arena)
 	return nil
 }
 
 @(private)
-_path_to_closed_contours :: proc(
+_pathToClosedContours :: proc(
 	path: ^pv.plutovg_path_t,
-	pts_out: ^[dynamic][]linalg.Vector2f32,
-	curves_out: ^[dynamic][]bool,
+	ptsOut: ^[dynamic][]linalg.Vector2f32,
+	curvesOut: ^[dynamic][]bool,
 	arena: mem.Allocator,
-) -> SVG_ERROR {
-	current_pts: [dynamic]linalg.Vector2f32
-	current_curves: [dynamic]bool
-	_reset_contour(&current_pts, &current_curves, arena)
+) -> SvgError {
+	currentPts: [dynamic]linalg.Vector2f32
+	currentCurves: [dynamic]bool
+	_resetContour(&currentPts, &currentCurves, arena)
 
 	it: pv.plutovg_path_iterator_t
 	pv.plutovg_path_iterator_init(&it, path)
@@ -275,37 +275,37 @@ _path_to_closed_contours :: proc(
 
 		switch cmd {
 		case .PLUTOVG_PATH_COMMAND_MOVE_TO:
-			_finalize_contour(
-				&current_pts,
-				&current_curves,
+			_finalizeContour(
+				&currentPts,
+				&currentCurves,
 				true,
-				pts_out,
-				curves_out,
+				ptsOut,
+				curvesOut,
 				arena,
 			) or_return
-			non_zero_append(&current_pts, _to_geom_point(points[0])) or_return
-			non_zero_append(&current_curves, false) or_return
+			non_zero_append(&currentPts, _toGeomPoint(points[0])) or_return
+			non_zero_append(&currentCurves, false) or_return
 		case .PLUTOVG_PATH_COMMAND_LINE_TO:
-			if len(current_pts) == 0 do return .INVALID_NODE
-			non_zero_append(&current_pts, _to_geom_point(points[0])) or_return
-			non_zero_append(&current_curves, false) or_return
+			if len(currentPts) == 0 do return .INVALID_NODE
+			non_zero_append(&currentPts, _toGeomPoint(points[0])) or_return
+			non_zero_append(&currentCurves, false) or_return
 		case .PLUTOVG_PATH_COMMAND_CUBIC_TO:
-			if len(current_pts) == 0 do return .INVALID_NODE
+			if len(currentPts) == 0 do return .INVALID_NODE
 			non_zero_append(
-				&current_pts,
-				_to_geom_point(points[0]),
-				_to_geom_point(points[1]),
-				_to_geom_point(points[2]),
+				&currentPts,
+				_toGeomPoint(points[0]),
+				_toGeomPoint(points[1]),
+				_toGeomPoint(points[2]),
 			) or_return
-			non_zero_append(&current_curves, true, true, false) or_return
+			non_zero_append(&currentCurves, true, true, false) or_return
 		case .PLUTOVG_PATH_COMMAND_CLOSE:
-			if len(current_pts) == 0 do continue
-			_finalize_contour(
-				&current_pts,
-				&current_curves,
+			if len(currentPts) == 0 do continue
+			_finalizeContour(
+				&currentPts,
+				&currentCurves,
 				true,
-				pts_out,
-				curves_out,
+				ptsOut,
+				curvesOut,
 				arena,
 			) or_return
 		case:
@@ -314,53 +314,53 @@ _path_to_closed_contours :: proc(
 	}
 
 	// Trailing subpath can be open in source data, but fill semantics still close it.
-	_finalize_contour(&current_pts, &current_curves, true, pts_out, curves_out, arena) or_return
+	_finalizeContour(&currentPts, &currentCurves, true, ptsOut, curvesOut, arena) or_return
 	return nil
 }
 
 @(private)
-_path_element_to_shape_node :: proc(
+_pathElementToShapeNode :: proc(
 	e: ^xml.Element,
 	arena: mem.Allocator,
 ) -> (
-	node: geometry.shape_node,
+	node: geometry.ShapeNode,
 	ok: bool,
-	err: SVG_ERROR = nil,
+	err: SvgError = nil,
 ) {
-	attr := __path_attr{}
+	attr := __PathAttr{}
 	for a in e.attribs {
 		switch a.key {
 		case "style":
-			_parse_style_attr(a.val, &attr) or_return
+			_parseStyleAttr(a.val, &attr) or_return
 		case:
-			_set_path_attr(strings.trim_space(a.key), strings.trim_space(a.val), &attr) or_return
+			_setPathAttr(strings.trim_space(a.key), strings.trim_space(a.val), &attr) or_return
 		}
 	}
 
 	if attr.d == nil do return
 
-	fill_color := linalg.Vector4f32{0.0, 0.0, 0.0, 1.0}
-	has_fill := true
+	fillColor := linalg.Vector4f32{0.0, 0.0, 0.0, 1.0}
+	hasFill := true
 	if fill, has := attr.fill.?; has {
-		fill_color, has_fill, err = _parse_svg_color(fill, attr.fill_opacity)
+		fillColor, hasFill, err = _parseSvgColor(fill, attr.fillOpacity)
 		if err != nil do return
-	} else if a, has := attr.fill_opacity.?; has {
-		fill_color.w = math.clamp(a, 0.0, 1.0)
-		has_fill = fill_color.w > 0.0
+	} else if a, has := attr.fillOpacity.?; has {
+		fillColor.w = math.clamp(a, 0.0, 1.0)
+		hasFill = fillColor.w > 0.0
 	}
-	if !has_fill do return
+	if !hasFill do return
 
-	stroke_color := linalg.Vector4f32{}
-	has_stroke := false
+	strokeColor := linalg.Vector4f32{}
+	hasStroke := false
 	if stroke, has := attr.stroke.?; has {
-		stroke_color, has_stroke, err = _parse_svg_color(stroke, attr.stroke_opacity)
+		strokeColor, hasStroke, err = _parseSvgColor(stroke, attr.strokeOpacity)
 		if err != nil do return
 	}
-	stroke_width: f32 = 0.0
-	if has_stroke {
-		stroke_width = 1.0
-		if w, has := attr.stroke_width.?; has {
-			stroke_width = math.max(w, 0.0)
+	strokeWidth: f32 = 0.0
+	if hasStroke {
+		strokeWidth = 1.0
+		if w, has := attr.strokeWidth.?; has {
+			strokeWidth = math.max(w, 0.0)
 		}
 	}
 
@@ -373,12 +373,12 @@ _path_element_to_shape_node :: proc(
 
 	d := strings.trim_space(attr.d.?)
 	if len(d) == 0 do return
-	d_ok, d_err := pv.plutovg_path_parse_string(path, d)
-	if d_err != nil {
-		err = d_err
+	dOk, dErr := pv.plutovg_path_parse_string(path, d)
+	if dErr != nil {
+		err = dErr
 		return
 	}
-	if !d_ok {
+	if !dOk {
 		err = .INVALID_NODE
 		return
 	}
@@ -387,12 +387,12 @@ _path_element_to_shape_node :: proc(
 		t = strings.trim_space(t)
 		if len(t) > 0 {
 			m: pv.plutovg_matrix_t
-			t_ok, t_err := pv.plutovg_matrix_parse_string(&m, t)
-			if t_err != nil {
-				err = t_err
+			tOk, tErr := pv.plutovg_matrix_parse_string(&m, t)
+			if tErr != nil {
+				err = tErr
 				return
 			}
-			if !t_ok {
+			if !tOk {
 				err = .INVALID_NODE
 				return
 			}
@@ -402,33 +402,33 @@ _path_element_to_shape_node :: proc(
 
 	pts: [dynamic][]linalg.Vector2f32 = make([dynamic][]linalg.Vector2f32, arena)
 	curves: [dynamic][]bool = make([dynamic][]bool, arena)
-	_path_to_closed_contours(path, &pts, &curves, arena) or_return
-	_normalize_contour_winding(&pts, &curves, arena) or_return
+	_pathToClosedContours(path, &pts, &curves, arena) or_return
+	_normalizeContourWinding(&pts, &curves, arena) or_return
 	if len(pts) == 0 do return
 
-	node = geometry.shape_node {
+	node = geometry.ShapeNode {
 		pts          = pts[:],
-		is_curves    = curves[:],
-		color        = fill_color,
-		stroke_color = stroke_color,
-		thickness    = stroke_width,
-		is_closed    = true,
+		isCurves    = curves[:],
+		color        = fillColor,
+		strokeColor = strokeColor,
+		thickness    = strokeWidth,
+		isClosed    = true,
 	}
 	ok = true
 	return
 }
 
 @(private)
-_parse_svg_element :: proc(
-	xml_doc: ^xml.Document,
+_parseSvgElement :: proc(
+	xmlDoc: ^xml.Document,
 	idx: xml.Element_ID,
-	nodes: ^[dynamic]geometry.shape_node,
+	nodes: ^[dynamic]geometry.ShapeNode,
 	arena: mem.Allocator,
-) -> SVG_ERROR {
-	e := &xml_doc.elements[idx]
+) -> SvgError {
+	e := &xmlDoc.elements[idx]
 	if e.ident == "path" {
-		node, ok, path_err := _path_element_to_shape_node(e, arena)
-		if path_err != nil do return path_err
+		node, ok, pathErr := _pathElementToShapeNode(e, arena)
+		if pathErr != nil do return pathErr
 		if ok {
 			non_zero_append(nodes, node) or_return
 		}
@@ -437,21 +437,21 @@ _parse_svg_element :: proc(
 	for v in e.value {
 		switch value in v {
 		case xml.Element_ID:
-			_parse_svg_element(xml_doc, value, nodes, arena) or_return
+			_parseSvgElement(xmlDoc, value, nodes, arena) or_return
 		case string:
 		}
 	}
 	return nil
 }
 
-init_parse :: proc(
-	svg_data: []u8,
+initParse :: proc(
+	svgData: []u8,
 	allocator: mem.Allocator = context.allocator,
 ) -> (
-	parser: svg_parser,
-	err: SVG_ERROR = nil,
+	parser: SvgParser,
+	err: SvgError = nil,
 ) {
-	if len(svg_data) == 0 {
+	if len(svgData) == 0 {
 		err = .INVALID_NODE
 		return
 	}
@@ -459,22 +459,22 @@ init_parse :: proc(
 	parser = {}
 	mem.dynamic_arena_init(&parser.__arena, allocator, allocator)
 	arena := mem.dynamic_arena_allocator(&parser.__arena)
-	parser.arena_allocator = arena
+	parser.arenaAllocator = arena
 	defer if err != nil {
 		deinit(&parser)
 	}
 
-	xml_doc, xml_err := xml.parse(svg_data, allocator = context.temp_allocator)
-	if xml_err != nil {
-		err = xml_err
+	xmlDoc, xmlErr := xml.parse(svgData, allocator = context.temp_allocator)
+	if xmlErr != nil {
+		err = xmlErr
 		return
 	}
-	defer xml.destroy(xml_doc, context.temp_allocator)
+	defer xml.destroy(xmlDoc, context.temp_allocator)
 
-	nodes: [dynamic]geometry.shape_node = make([dynamic]geometry.shape_node, arena)
-	_parse_svg_element(xml_doc, 0, &nodes, arena) or_return
+	nodes: [dynamic]geometry.ShapeNode = make([dynamic]geometry.ShapeNode, arena)
+	_parseSvgElement(xmlDoc, 0, &nodes, arena) or_return
 
-	parser.shapes = geometry.shapes {
+	parser.shapes = geometry.Shapes {
 		nodes = nodes[:],
 	}
 	return

@@ -5,12 +5,12 @@ import "shared:utils_private"
 
 
 @(private)
-_make_square_path :: proc(
+_makeSquarePath :: proc(
 	x0, y0, size: f32,
 	invent := false,
 	allocator := context.allocator,
 ) -> [][2]f32 {
-	result := utils_private.make_non_zeroed_slice([][2]f32, 4, allocator)
+	result := utils_private.makeNonZeroedSlice([][2]f32, 4, allocator)
 	half := size * 0.5
 	if !invent {
 		result[0] = {x0 + half, y0 + half}
@@ -28,7 +28,7 @@ _make_square_path :: proc(
 
 
 @(test)
-test_triangulation_2square :: proc(t: ^testing.T) {
+testTriangulation2square :: proc(t: ^testing.T) {
 	x0: f32 = 2.0
 	y0: f32 = 0.0
 	size: f32 = 100.0
@@ -36,10 +36,10 @@ test_triangulation_2square :: proc(t: ^testing.T) {
 	y1: f32 = -25.0
 	size2: f32 = 50.0
 
-	square := _make_square_path(x0, y0, size)
+	square := _makeSquarePath(x0, y0, size)
 	defer delete(square)
 
-	square2 := _make_square_path(x1, y1, size2)
+	square2 := _makeSquarePath(x1, y1, size2)
 	defer delete(square2)
 
 	poly := [][][2]f32{square, square2}

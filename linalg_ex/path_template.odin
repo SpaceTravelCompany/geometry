@@ -10,7 +10,7 @@ CircleCubicInit :: proc "contextless" (
 	_r: T,
 ) -> (
 	pts: [12][2]T,
-	is_curves: [12]bool,
+	isCurves: [12]bool,
 ) where intrinsics.type_is_float(T) {
 	t :: 0.55228474983079332144
 	tt := t * _r
@@ -32,12 +32,12 @@ CircleCubicInit :: proc "contextless" (
 	}, [12]bool{false, true, true, false, true, true, false, true, true, false, true, true}
 }
 
-CircleCubicInit_Fixed :: proc "contextless" (
+CircleCubicInitFixed :: proc "contextless" (
 	_center: [2]$T/fixed.Fixed($Backing, $Fraction_Width),
 	_r: T,
 ) -> (
 	pts: [12][2]T,
-	is_curves: [12]bool,
+	isCurves: [12]bool,
 ) {
 	t: T
 	fixed.init_from_parts(
@@ -75,7 +75,7 @@ RectLineInit :: proc "contextless" (
 	}
 }
 
-RectLineInit_Fixed :: proc "contextless" (
+RectLineInitFixed :: proc "contextless" (
 	_rect: Rect_($T/fixed.Fixed($Backing, $Fraction_Width)),
 ) -> [4][2]T {
 	return [4][2]T {
@@ -91,16 +91,16 @@ RoundRectLineInit :: proc "contextless" (
 	_radius: T,
 ) -> (
 	pts: [16][2]T,
-	is_curves: [16]bool,
+	isCurves: [16]bool,
 ) where intrinsics.type_is_float(T) {
 	r := _radius
 
-	half_width := (_rect.right - _rect.left) / 2.0
+	halfWidth := (_rect.right - _rect.left) / 2.0
 	dh := _rect.bottom - _rect.top
 	if dh < 0 do dh = -dh
-	half_height := dh * half_width
-	if r > half_width do r = half_width
-	if r > half_height do r = half_height
+	halfHeight := dh * halfWidth
+	if r > halfWidth do r = halfWidth
+	if r > halfHeight do r = halfHeight
 
 	t :: 0.55228474983079332144
 	tt := t * r
@@ -156,24 +156,24 @@ RoundRectLineInit :: proc "contextless" (
 	}
 }
 
-RoundRectLineInit_Fixed :: proc "contextless" (
+RoundRectLineInitFixed :: proc "contextless" (
 	_rect: Rect_($F/fixed.Fixed($Backing, $Fraction_Width)),
 	_radius: F,
 ) -> (
 	pts: [16][2]F,
-	is_curves: [16]bool,
+	isCurves: [16]bool,
 ) {
 	two: F : F{i = 2 << Fraction_Width}
 
 	r := _radius
-	half_width := fixed.div(fixed.sub(_rect.right, _rect.left), two)
+	halfWidth := fixed.div(fixed.sub(_rect.right, _rect.left), two)
 	dh := fixed.sub(_rect.bottom, _rect.top)
 	if dh.i < 0 do dh = F {
 		i = -dh.i,
 	}
-	half_height := fixed.div(dh, two)
-	if fixed.sub(half_width, r).i < 0 do r = half_width
-	if fixed.sub(half_height, r).i < 0 do r = half_height
+	halfHeight := fixed.div(dh, two)
+	if fixed.sub(halfWidth, r).i < 0 do r = halfWidth
+	if fixed.sub(halfHeight, r).i < 0 do r = halfHeight
 
 	t: F
 	fixed.init_from_parts(
@@ -214,7 +214,7 @@ EllipseCubicInit :: proc "contextless" (
 	_rxy: [2]T,
 ) -> (
 	pts: [12][2]T,
-	is_curves: [12]bool,
+	isCurves: [12]bool,
 ) where intrinsics.type_is_float(T) {
 	t :: 0.55228474983079332144
 
@@ -240,12 +240,12 @@ EllipseCubicInit :: proc "contextless" (
 	}, [12]bool{false, true, true, false, true, true, false, true, true, false, true, true}
 }
 
-EllipseCubicInit_Fixed :: proc "contextless" (
+EllipseCubicInitFixed :: proc "contextless" (
 	_center: [2]$T/fixed.Fixed($Backing, $Fraction_Width),
 	_rxy: [2]T,
 ) -> (
 	pts: [12][2]T,
-	is_curves: [12]bool,
+	isCurves: [12]bool,
 ) {
 	t: T
 	fixed.init_from_parts(

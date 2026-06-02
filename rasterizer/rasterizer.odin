@@ -8,43 +8,43 @@ import "core:mem"
 import pv "shared:clibs/plutovg"
 import "shared:utils_private"
 
-__Rasterizer_Error :: enum {
+__RasterizerError :: enum {
 	INVALID_SIZE,
 	SURFACE_CREATE_FAILED,
 	CANVAS_CREATE_FAILED,
 }
 
-Rasterizer_Error :: union #shared_nil {
-	__Rasterizer_Error,
+RasterizerError :: union #shared_nil {
+	__RasterizerError,
 	runtime.Allocator_Error,
 }
 
-Pixel_Format :: enum u8 {
+PixelFormat :: enum u8 {
 	// Matches plutovg surface memory layout.
 	ARGB8_PREMULTIPLIED,
 }
 
-Rasterized_Pixels :: struct {
+RasterizedPixels :: struct {
 	width:     int,
 	height:    int,
 	stride:    int, // bytes per row
-	format:    Pixel_Format,
+	format:    PixelFormat,
 	pixels:    []u8,
 	allocator: runtime.Allocator,
 }
 
-rasterized_pixels_free :: proc(self: ^Rasterized_Pixels) {
+rasterizedPixelsFree :: proc(self: ^RasterizedPixels) {
 	if self == nil do return
 	if self.pixels != nil do delete(self.pixels, self.allocator)
 	self^ = {}
 }
 
 @(private = "file")
-_append_contour_path :: proc(
+_appendContourPath :: proc(
 	canvas: ^pv.plutovg_canvas_t,
 	pts: []linalg.Vector2f32,
-	curve_flags: []bool,
-	is_closed: bool,
+	curveFlags: []bool,
+	isClosed: bool,
 ) {
 	if canvas == nil || len(pts) == 0 do return
 
@@ -52,26 +52,26 @@ _append_contour_path :: proc(
 
 	last := len(pts) - 1
 	if last <= 0 {
-		if is_closed do pv.plutovg_canvas_close_path(canvas)
+		if isClosed do pv.plutovg_canvas_close_path(canvas)
 		return
 	}
 
 	i := 0
 	for {
-		if !is_closed && i >= last do break
+		if !isClosed && i >= last do break
 
 		next := i + 1
-		if is_closed do next = (i + 1) % len(pts)
+		if isClosed do next = (i + 1) % len(pts)
 		if next >= len(pts) do break
 
-		if next < len(curve_flags) && curve_flags[next] {
+		if next < len(curveFlags) && curveFlags[next] {
 			next2 := next + 1
-			if is_closed do next2 = (next + 1) % len(pts)
+			if isClosed do next2 = (next + 1) % len(pts)
 			if next2 >= len(pts) do break
 
-			if next2 < len(curve_flags) && curve_flags[next2] {
+			if next2 < len(curveFlags) && curveFlags[next2] {
 				next3 := next2 + 1
-				if is_closed do next3 = (next2 + 1) % len(pts)
+				if isClosed do next3 = (next2 + 1) % len(pts)
 				if next3 >= len(pts) do break
 
 				pv.plutovg_canvas_cubic_to(
@@ -99,19 +99,19 @@ _append_contour_path :: proc(
 			i = next
 		}
 
-		if is_closed && i == 0 do break
+		if isClosed && i == 0 do break
 	}
 
-	if is_closed do pv.plutovg_canvas_close_path(canvas)
+	if isClosed do pv.plutovg_canvas_close_path(canvas)
 }
 
-shapes_to_pixels :: proc(
-	src: geometry.shapes,
+shapesToPixels :: proc(
+	src: geometry.Shapes,
 	width, height: int,
 	allocator := context.allocator,
 ) -> (
-	out: Rasterized_Pixels,
-	err: Rasterizer_Error = nil,
+	out: RasterizedPixels,
+	err: RasterizerError = nil,
 ) {
 	if width <= 0 || height <= 0 {
 		err = .INVALID_SIZE
@@ -146,17 +146,17 @@ shapes_to_pixels :: proc(
 
 		pv.plutovg_canvas_new_path(canvas)
 		for contour, cidx in node.pts {
-			curve_flags: []bool = nil
-			if node.is_curves != nil && cidx < len(node.is_curves) {
-				curve_flags = node.is_curves[cidx]
+			curveFlags: []bool = nil
+			if node.isCurves != nil && cidx < len(node.isCurves) {
+				curveFlags = node.isCurves[cidx]
 			}
-			_append_contour_path(canvas, contour, curve_flags, node.is_closed)
+			_appendContourPath(canvas, contour, curveFlags, node.isClosed)
 		}
 
-		has_fill := node.color.w > 0.0
-		has_stroke := node.stroke_color.w > 0.0 && node.thickness > 0.0
+		hasFill := node.color.w > 0.0
+		hasStroke := node.strokeColor.w > 0.0 && node.thickness > 0.0
 
-		if has_fill {
+		if hasFill {
 			pv.plutovg_canvas_set_rgba(
 				canvas,
 				node.color.x,
@@ -164,20 +164,20 @@ shapes_to_pixels :: proc(
 				node.color.z,
 				node.color.w,
 			)
-			if has_stroke {
+			if hasStroke {
 				pv.plutovg_canvas_fill_preserve(canvas)
 			} else {
 				pv.plutovg_canvas_fill(canvas)
 			}
 		}
 
-		if has_stroke {
+		if hasStroke {
 			pv.plutovg_canvas_set_rgba(
 				canvas,
-				node.stroke_color.x,
-				node.stroke_color.y,
-				node.stroke_color.z,
-				node.stroke_color.w,
+				node.strokeColor.x,
+				node.strokeColor.y,
+				node.strokeColor.z,
+				node.strokeColor.w,
 			)
 			pv.plutovg_canvas_set_line_width(canvas, node.thickness)
 			pv.plutovg_canvas_stroke(canvas)
@@ -185,16 +185,16 @@ shapes_to_pixels :: proc(
 	}
 
 	stride := int(pv.plutovg_surface_get_stride(surface))
-	pixel_bytes := stride * height
-	if pixel_bytes < 0 {
+	pixelBytes := stride * height
+	if pixelBytes < 0 {
 		err = .INVALID_SIZE
 		return
 	}
 
-	pixels := utils_private.make_non_zeroed_slice([]u8, pixel_bytes, allocator) or_return
-	mem.copy_non_overlapping(raw_data(pixels), pv.plutovg_surface_get_data(surface), pixel_bytes)
+	pixels := utils_private.makeNonZeroedSlice([]u8, pixelBytes, allocator) or_return
+	mem.copy_non_overlapping(raw_data(pixels), pv.plutovg_surface_get_data(surface), pixelBytes)
 
-	out = Rasterized_Pixels {
+	out = RasterizedPixels {
 		width     = width,
 		height    = height,
 		stride    = stride,

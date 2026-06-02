@@ -43,7 +43,7 @@ Rect_ :: struct(
 }
 
 
-Rect_Init :: #force_inline proc "contextless" (left: $T, right: T, top: T, bottom: T) -> Rect_(T) {
+RectInit :: #force_inline proc "contextless" (left: $T, right: T, top: T, bottom: T) -> Rect_(T) {
 	res: Rect_(T)
 	res.left = left
 	res.right = right
@@ -52,7 +52,7 @@ Rect_Init :: #force_inline proc "contextless" (left: $T, right: T, top: T, botto
 	return res
 }
 
-Check_Rect :: #force_inline proc "contextless" (
+CheckRect :: #force_inline proc "contextless" (
 	_pts: [4][$N]$T,
 ) -> bool where N >= 2 && intrinsics.type_is_numeric(T) ||
 	intrinsics.type_is_specialization_of(T, fixed.Fixed) {
@@ -64,20 +64,20 @@ Check_Rect :: #force_inline proc "contextless" (
 	)
 }
 
-Rect_MulMatrix :: proc "contextless" (_r: Rectf32, _mat: linalg.Matrix4x4f32) -> (Rectf32, bool) {
-	tps := __Rect_MulMatrix(_r, _mat)
+RectMulMatrix :: proc "contextless" (_r: Rectf32, _mat: linalg.Matrix4x4f32) -> (Rectf32, bool) {
+	tps := __RectMulMatrix(_r, _mat)
 
-	if Check_Rect(tps) do return {}, false
+	if CheckRect(tps) do return {}, false
 
 	return Rectf32{left = tps[0].x, right = tps[3].x, top = tps[0].y, bottom = tps[3].y}, true
 }
-Rect_DivMatrix :: proc "contextless" (_r: Rectf32, _mat: linalg.Matrix4x4f32) -> (Rectf32, bool) {
+RectDivMatrix :: proc "contextless" (_r: Rectf32, _mat: linalg.Matrix4x4f32) -> (Rectf32, bool) {
 	// Apply inverse transform (Rectf32 / M == Rectf32 * inverse(M))
-	return Rect_MulMatrix(_r, linalg.inverse(_mat))
+	return RectMulMatrix(_r, linalg.inverse(_mat))
 }
 
 @(private)
-__Rect_MulMatrix :: proc "contextless" (
+__RectMulMatrix :: proc "contextless" (
 	_r: Rectf32,
 	_mat: linalg.Matrix4x4f32,
 ) -> [4]linalg.Vector4f32 {
@@ -125,41 +125,41 @@ Inputs:
 Returns:
 - Areaf32 multiplied by the matrix
 */
-Area_MulMatrix :: proc(
+AreaMulMatrix :: proc(
 	_a: Areaf32,
 	_mat: linalg.Matrix4x4f32,
 	allocator := context.allocator,
 ) -> Areaf32 {
 	switch &n in _a {
 	case Rectf32:
-		res := __Rect_MulMatrix(n, _mat)
-		if Check_Rect(res) {
-			min_x := min(res[0].x, res[3].x)
-			max_x := max(res[0].x, res[3].x)
-			min_y := min(res[0].y, res[3].y)
-			max_y := max(res[0].y, res[3].y)
-			return Rectf32{left = min_x, right = max_x, top = max_y, bottom = min_y}
+		res := __RectMulMatrix(n, _mat)
+		if CheckRect(res) {
+			minX := min(res[0].x, res[3].x)
+			maxX := max(res[0].x, res[3].x)
+			minY := min(res[0].y, res[3].y)
+			maxY := max(res[0].y, res[3].y)
+			return Rectf32{left = minX, right = maxX, top = maxY, bottom = minY}
 		}
-		res2 := utils_private.make_non_zeroed_slice([][2]f32, 4, allocator)
+		res2 := utils_private.makeNonZeroedSlice([][2]f32, 4, allocator)
 		res2[0] = res[0].xy
 		res2[1] = res[1].xy
 		res2[2] = res[3].xy
 		res2[3] = res[2].xy
 		return res2
 	case [][2]f32:
-		return __Poly_MulMatrix(n, _mat, allocator)
+		return __PolyMulMatrix(n, _mat, allocator)
 	}
 	return {}
 }
 
 @(private)
-__Poly_MulMatrix :: proc(
+__PolyMulMatrix :: proc(
 	_p: [][$N]f32,
 	_mat: linalg.Matrix4x4f32,
 	allocator := context.allocator,
 ) -> Areaf32 where N >=
 	2 {
-	res: [][2]f32 = utils_private.make_non_zeroed_slice([][2]f32, len(_p), allocator)
+	res: [][2]f32 = utils_private.makeNonZeroedSlice([][2]f32, len(_p), allocator)
 	for i in 0 ..< len(res) {
 		when N == 4 {
 			r := linalg.mul(_mat, _p[i])
@@ -175,13 +175,13 @@ __Poly_MulMatrix :: proc(
 	}
 	return res
 }
-Rect_LeftTop :: #force_inline proc "contextless" (_r: Rect_($T)) -> [2]T {
+RectLeftTop :: #force_inline proc "contextless" (_r: Rect_($T)) -> [2]T {
 	return [2]T{_r.left, _r.top}
 }
-Rect_RightBottom :: #force_inline proc "contextless" (_r: Rect_($T)) -> [2]T {
+RectRightBottom :: #force_inline proc "contextless" (_r: Rect_($T)) -> [2]T {
 	return [2]T{_r.right, _r.bottom}
 }
-Rect_And :: #force_inline proc "contextless" (
+RectAnd :: #force_inline proc "contextless" (
 	_r1: Rect_($T),
 	_r2: Rect_(T),
 ) -> Rect_(T) #no_bounds_check {
@@ -190,24 +190,24 @@ Rect_And :: #force_inline proc "contextless" (
 	res.right = NumMin(_r1.right, _r2.right)
 	if NumLt(res.right, res.left) do return {}
 
-	r1_top := NumMax(_r1.top, _r1.bottom)
-	r1_bottom := NumMin(_r1.top, _r1.bottom)
-	r2_top := NumMax(_r2.top, _r2.bottom)
-	r2_bottom := NumMin(_r2.top, _r2.bottom)
+	r1Top := NumMax(_r1.top, _r1.bottom)
+	r1Bottom := NumMin(_r1.top, _r1.bottom)
+	r2Top := NumMax(_r2.top, _r2.bottom)
+	r2Bottom := NumMin(_r2.top, _r2.bottom)
 
-	y_top := NumMin(r1_top, r2_top)
-	y_bottom := NumMax(r1_bottom, r2_bottom)
+	yTop := NumMin(r1Top, r2Top)
+	yBottom := NumMax(r1Bottom, r2Bottom)
 
 	if NumGe(_r1.top, _r1.bottom) {
-		res.top = y_top
-		res.bottom = y_bottom
+		res.top = yTop
+		res.bottom = yBottom
 	} else {
-		res.top = y_bottom
-		res.bottom = y_top
+		res.top = yBottom
+		res.bottom = yTop
 	}
 	return res
 }
-Rect_Or :: #force_inline proc "contextless" (
+RectOr :: #force_inline proc "contextless" (
 	_r1: Rect_($T),
 	_r2: Rect_(T),
 ) -> Rect_(T) #no_bounds_check {
@@ -215,25 +215,25 @@ Rect_Or :: #force_inline proc "contextless" (
 	res.left = NumMin(_r1.left, _r2.left)
 	res.right = NumMax(_r1.right, _r2.right)
 
-	r1_top := NumMax(_r1.top, _r1.bottom)
-	r1_bottom := NumMin(_r1.top, _r1.bottom)
-	r2_top := NumMax(_r2.top, _r2.bottom)
-	r2_bottom := NumMin(_r2.top, _r2.bottom)
+	r1Top := NumMax(_r1.top, _r1.bottom)
+	r1Bottom := NumMin(_r1.top, _r1.bottom)
+	r2Top := NumMax(_r2.top, _r2.bottom)
+	r2Bottom := NumMin(_r2.top, _r2.bottom)
 
-	y_top := NumMax(r1_top, r2_top)
-	y_bottom := NumMin(r1_bottom, r2_bottom)
+	yTop := NumMax(r1Top, r2Top)
+	yBottom := NumMin(r1Bottom, r2Bottom)
 
 	if NumGe(_r1.top, _r1.bottom) {
-		res.top = y_top
-		res.bottom = y_bottom
+		res.top = yTop
+		res.bottom = yBottom
 	} else {
-		res.top = y_bottom
-		res.bottom = y_top
+		res.top = yBottom
+		res.bottom = yTop
 	}
 
 	return res
 }
-Rect_PointIn :: #force_inline proc "contextless" (
+RectPointIn :: #force_inline proc "contextless" (
 	_r: Rect_($T),
 	p: [2]T,
 ) -> bool #no_bounds_check {
@@ -280,7 +280,7 @@ PolygonOverlapsPolygon :: proc "contextless" (
 	return false
 }
 
-Rect_Move :: #force_inline proc "contextless" (
+RectMove :: #force_inline proc "contextless" (
 	_r: Rect_($T),
 	p: [2]T,
 ) -> Rect_(T) #no_bounds_check {
@@ -364,21 +364,21 @@ PointInLine :: proc "contextless" (
 ) where intrinsics.type_is_float(T) ||
 	intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
 	intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
-	min_x := NumMin(l0.x, l1.x)
-	max_x := NumMax(l0.x, l1.x)
-	min_y := NumMin(l0.y, l1.y)
-	max_y := NumMax(l0.y, l1.y)
+	minX := NumMin(l0.x, l1.x)
+	maxX := NumMax(l0.x, l1.x)
+	minY := NumMin(l0.y, l1.y)
+	maxY := NumMax(l0.y, l1.y)
 	a := NumDiv(NumSub(l0.y, l1.y), NumSub(l0.x, l1.x))
 	b := NumSub(l0.y, NumMul(a, l0.x))
-	p_y := NumAdd(NumMul(a, p.x), b)
-	in_bbox := NumGe(p.x, min_x) && NumLe(p.x, max_x) && NumGe(p.y, min_y) && NumLe(p.y, max_y)
-	t := NumDiv(NumSub(p.x, min_x), NumSub(max_x, min_x))
+	pY := NumAdd(NumMul(a, p.x), b)
+	inBbox := NumGe(p.x, minX) && NumLe(p.x, maxX) && NumGe(p.y, minY) && NumLe(p.y, maxY)
+	t := NumDiv(NumSub(p.x, minX), NumSub(maxX, minX))
 
-	on_line := NumEqE(p.y, p_y)
-	return on_line && in_bbox, t
+	onLine := NumEqE(p.y, pY)
+	return onLine && inBbox, t
 }
 
-min_fixed :: proc "contextless" (
+minFixed :: proc "contextless" (
 	v0: $T,
 	v1: T,
 ) -> T where intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
@@ -386,7 +386,7 @@ min_fixed :: proc "contextless" (
 	return v0.i < v1.i ? v0 : v1
 }
 
-max_fixed :: proc "contextless" (
+maxFixed :: proc "contextless" (
 	v0: $T,
 	v1: T,
 ) -> T where intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
@@ -405,8 +405,8 @@ SubdivLine :: proc "contextless" (
 	when intrinsics.type_is_float(T) {
 		pt01 = linalg.lerp(pts[0], pts[1], subdiv)
 	} else {
-		subdiv2 := splat_2_fixed(subdiv)
-		pt01 = lerp_fixed(pts[0], pts[1], subdiv2)
+		subdiv2 := splat2Fixed(subdiv)
+		pt01 = lerpFixed(pts[0], pts[1], subdiv2)
 	}
 	return
 }
@@ -424,10 +424,10 @@ SubdivQuadraticBezier :: proc "contextless" (
 		pt2 = linalg.lerp(pts[1], pts[2], subdiv)
 		pt12 = linalg.lerp(pt1, pt2, subdiv)
 	} else {
-		subdiv2 := splat_2_fixed(subdiv)
-		pt1 = lerp_fixed(pts[0], pts[1], subdiv2)
-		pt2 = lerp_fixed(pts[1], pts[2], subdiv2)
-		pt12 = lerp_fixed(pt1, pt2, subdiv2)
+		subdiv2 := splat2Fixed(subdiv)
+		pt1 = lerpFixed(pts[0], pts[1], subdiv2)
+		pt2 = lerpFixed(pts[1], pts[2], subdiv2)
+		pt12 = lerpFixed(pt1, pt2, subdiv2)
 	}
 	return
 }
@@ -444,8 +444,8 @@ SubdivCubicBezier :: proc "contextless" (
 		subdiv2 := subdiv
 		lerp_ :: linalg.lerp
 	} else {
-		subdiv2 := splat_2_fixed(subdiv)
-		lerp_ :: lerp_fixed
+		subdiv2 := splat2Fixed(subdiv)
+		lerp_ :: lerpFixed
 	}
 	p01 := lerp_(pts[0], pts[1], subdiv2)
 	p12 := lerp_(pts[1], pts[2], subdiv2)
@@ -463,7 +463,7 @@ SubdivCubicBezier :: proc "contextless" (
 }
 
 // Fixed-point version of linalg.lerp: result = a + t*(b - a). t is typically in [0, 1].
-lerp_fixed :: proc "contextless" (
+lerpFixed :: proc "contextless" (
 	a, b, t: $T,
 ) -> T where intrinsics.type_is_specialization_of(intrinsics.type_elem_type(T), fixed.Fixed) ||
 	intrinsics.type_is_specialization_of(
@@ -473,7 +473,7 @@ lerp_fixed :: proc "contextless" (
 	when intrinsics.type_is_array(T) {
 		res: T
 		#unroll for i in 0 ..< len(T) {
-			res[i] = lerp_fixed(a[i], b[i], t[i])
+			res[i] = lerpFixed(a[i], b[i], t[i])
 		}
 		return res
 	} else {
@@ -558,14 +558,14 @@ PointInPolygon :: proc "contextless" (
 	return windingNumber != 0 ? .Inside : .Outside
 }
 
-vector_cross2_fixed :: #force_inline proc "contextless" (
+vectorCross2Fixed :: #force_inline proc "contextless" (
 	a, b: [2]$E,
 ) -> E where intrinsics.type_is_specialization_of(E, fixed.Fixed) ||
 	intrinsics.type_is_specialization_of(E, fixed_bcd.BCD) {
 	return NumSub(NumMul(a.x, b.y), NumMul(a.y, b.x))
 }
 
-vector_cross2_bcd :: #force_inline proc "contextless" (
+vectorCross2Bcd :: #force_inline proc "contextless" (
 	a, b: [2]$E,
 ) -> E where intrinsics.type_is_specialization_of(E, fixed_bcd.BCD) {
 	return fixed_bcd.sub(fixed_bcd.mul(a.x, b.y), fixed_bcd.mul(a.y, b.x))
@@ -589,18 +589,18 @@ CenterPointInPolygon :: proc "contextless" (
 		p /= math.splat_2(area)
 		return p
 	} else {
-		three_t := NumConst(3, T)
+		threeT := NumConst(3, T)
 		area: T = {}
 		p: [2]T = {}
 		for i in 0 ..< len(polygon) {
 			j := (i + 1) % len(polygon)
-			factor := vector_cross2_fixed(polygon[i], polygon[j])
+			factor := vectorCross2Fixed(polygon[i], polygon[j])
 			area = NumAdd(area, factor)
-			sum_pt := [2]T{NumAdd(polygon[i].x, polygon[j].x), NumAdd(polygon[i].y, polygon[j].y)}
-			p.x = NumAdd(p.x, NumMul(sum_pt.x, factor))
-			p.y = NumAdd(p.y, NumMul(sum_pt.y, factor))
+			sumPt := [2]T{NumAdd(polygon[i].x, polygon[j].x), NumAdd(polygon[i].y, polygon[j].y)}
+			p.x = NumAdd(p.x, NumMul(sumPt.x, factor))
+			p.y = NumAdd(p.y, NumMul(sumPt.y, factor))
 		}
-		area = NumMul(area, three_t)
+		area = NumMul(area, threeT)
 		p.x = NumDiv(p.x, area)
 		p.y = NumDiv(p.y, area)
 		return p
@@ -650,9 +650,9 @@ LineInPolygon :: proc "contextless" (
 		j := (i + 1) % len(polygon)
 		ok, res = LinesIntersect2(polygon[i], polygon[j], a, b)
 		if ok == .intersect {
-			same_a := NumEqE(a.x, res.x) && NumEqE(a.y, res.y)
-			same_b := NumEqE(b.x, res.x) && NumEqE(b.y, res.y)
-			if same_a || same_b do continue
+			sameA := NumEqE(a.x, res.x) && NumEqE(a.y, res.y)
+			sameB := NumEqE(b.x, res.x) && NumEqE(b.y, res.y)
+			if sameA || sameB do continue
 			return true
 		}
 	}
@@ -672,20 +672,20 @@ LinesIntersect2 :: proc "contextless" (
 	a2: [2]T,
 	b1: [2]T,
 	b2: [2]T,
-	check_is_touching: bool = false,
+	checkIsTouching: bool = false,
 ) -> (
 	IntersectKind,
 	[2]T,
 ) where intrinsics.type_is_float(T) ||
 	intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
 	intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
-	if check_is_touching {
-		same_a_b1 := NumEq(a1.x, b1.x) && NumEq(a1.y, b1.y)
-		same_a_b2 := NumEq(a1.x, b2.x) && NumEq(a1.y, b2.y)
-		same_a2_b1 := NumEq(a2.x, b1.x) && NumEq(a2.y, b1.y)
-		same_a2_b2 := NumEq(a2.x, b2.x) && NumEq(a2.y, b2.y)
-		if same_a_b1 || same_a_b2 do return .none, a1
-		else if same_a2_b1 || same_a2_b2 do return .none, a2
+	if checkIsTouching {
+		sameAB1 := NumEq(a1.x, b1.x) && NumEq(a1.y, b1.y)
+		sameAB2 := NumEq(a1.x, b2.x) && NumEq(a1.y, b2.y)
+		sameA2B1 := NumEq(a2.x, b1.x) && NumEq(a2.y, b1.y)
+		sameA2B2 := NumEq(a2.x, b2.x) && NumEq(a2.y, b2.y)
+		if sameAB1 || sameAB2 do return .none, a1
+		else if sameA2B1 || sameA2B2 do return .none, a2
 	}
 
 	zero := NumConst(0, T)
@@ -706,11 +706,11 @@ LinesIntersect2 :: proc "contextless" (
 		NumMul(NumSub(a2.y, a1.y), NumSub(a1.x, b1.x)),
 	)
 
-	res_den :=
+	resDen :=
 		NumGt(den, zero) ? (NumGe(ua, zero) && NumGe(ub, zero) && NumLe(ua, den) && NumLe(ub, den)) : (NumGe(ua, den) && NumGe(ub, den) && NumLe(ua, zero) && NumLe(ub, zero))
 
 	t := NumDiv(ua, den)
-	return res_den ? .intersect : .none, [2]T{NumAdd(a1.x, NumMul(t, NumSub(a2.x, a1.x))), NumAdd(a1.y, NumMul(t, NumSub(a2.y, a1.y)))}
+	return resDen ? .intersect : .none, [2]T{NumAdd(a1.x, NumMul(t, NumSub(a2.x, a1.x))), NumAdd(a1.y, NumMul(t, NumSub(a2.y, a1.y)))}
 }
 
 LinesIntersect3 :: proc "contextless" (
@@ -718,15 +718,15 @@ LinesIntersect3 :: proc "contextless" (
 	a2: [2]T,
 	b1: [2]T,
 	b2: [2]T,
-	check_is_touching: bool = false,
+	checkIsTouching: bool = false,
 ) -> IntersectKind where intrinsics.type_is_float(T) ||
 	intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
 	intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
-	same_a1_b1 := NumEq(a1.x, b1.x) && NumEq(a1.y, b1.y)
-	same_a2_b1 := NumEq(a2.x, b1.x) && NumEq(a2.y, b1.y)
-	same_a1_b2 := NumEq(a1.x, b2.x) && NumEq(a1.y, b2.y)
-	same_a2_b2 := NumEq(a2.x, b2.x) && NumEq(a2.y, b2.y)
-	if check_is_touching && (same_a1_b1 || same_a2_b1 || same_a1_b2 || same_a2_b2) do return .none
+	sameA1B1 := NumEq(a1.x, b1.x) && NumEq(a1.y, b1.y)
+	sameA2B1 := NumEq(a2.x, b1.x) && NumEq(a2.y, b1.y)
+	sameA1B2 := NumEq(a1.x, b2.x) && NumEq(a1.y, b2.y)
+	sameA2B2 := NumEq(a2.x, b2.x) && NumEq(a2.y, b2.y)
+	if checkIsTouching && (sameA1B1 || sameA2B1 || sameA1B2 || sameA2B2) do return .none
 
 	zero := NumConst(0, T)
 	den: T = NumSub(
@@ -742,9 +742,9 @@ LinesIntersect3 :: proc "contextless" (
 		NumMul(NumSub(a2.x, a1.x), NumSub(a1.y, b1.y)),
 		NumMul(NumSub(a2.y, a1.y), NumSub(a1.x, b1.x)),
 	)
-	res_den :=
+	resDen :=
 		NumGt(den, zero) ? (NumGe(ua, zero) && NumGe(ub, zero) && NumLe(ua, den) && NumLe(ub, den)) : (NumGe(ua, den) && NumGe(ub, den) && NumLe(ua, zero) && NumLe(ub, zero))
-	return res_den ? .intersect : .none
+	return resDen ? .intersect : .none
 }
 
 NearestPointBetweenPointAndLine :: proc "contextless" (
@@ -769,7 +769,7 @@ NearestPointBetweenPointAndLine :: proc "contextless" (
 
 Circle :: struct(T: typeid) where intrinsics.type_is_float(T) {
 	p:           [2]T,
-	rect_radius: T,
+	rectRadius: T,
 }
 
 Circlef32 :: Circle(f32)
@@ -784,7 +784,7 @@ OppPolyOrientation :: #force_inline proc "contextless" (ccw: PolyOrientation) ->
 	return ccw == .Clockwise ? .CounterClockwise : .Clockwise
 }
 
-xy_mirror_point :: #force_inline proc "contextless" (
+xyMirrorPoint :: #force_inline proc "contextless" (
 	pivot: [2]$T,
 	target: [2]T,
 ) -> [2]T where intrinsics.type_is_float(T) ||
@@ -798,19 +798,19 @@ xy_mirror_point :: #force_inline proc "contextless" (
 			add :: fixed.add
 			sub :: fixed.sub
 			mul :: fixed.mul
-			two_T :: T {
+			twoT :: T {
 				i = 2 << intrinsics.type_polymorphic_record_parameter_value(T, 1),
 			}
 		} else {
 			add :: fixed_bcd.add
 			sub :: fixed_bcd.sub
 			mul :: fixed_bcd.mul
-			two_T :: T {
+			twoT :: T {
 				i = 2 * fixed_bcd._SCALE_TABLE[intrinsics.type_polymorphic_record_parameter_value(T, 0) - 1],
 			}
 		}
 
-		return [2]T{sub(mul(two_T, pivot.x), target.x), sub(mul(two_T, pivot.y), target.y)}
+		return [2]T{sub(mul(twoT, pivot.x), target.x), sub(mul(twoT, pivot.y), target.y)}
 	}
 }
 
@@ -823,13 +823,13 @@ Areaf32 :: Area(f32)
 Areaf64 :: Area(f64)
 Areai32 :: Area(i32)
 
-Area_PointIn :: #force_inline proc "contextless" (
+AreaPointIn :: #force_inline proc "contextless" (
 	area: Area($T),
 	pt: [2]T,
 ) -> bool where intrinsics.type_is_numeric(T) {
 	switch a in area {
 	case Rect_(T):
-		return Rect_PointIn(a, pt)
+		return RectPointIn(a, pt)
 	case [][2]T:
 		return PointInPolygon(pt, a) != .Outside
 	}
@@ -854,11 +854,11 @@ ShortestLength2Line :: proc "contextless" (
 	dy := NumSub(l2.y, l1.y)
 	ax := NumSub(pt.x, l1.x)
 	ay := NumSub(pt.y, l1.y)
-	q_num := NumAdd(NumMul(ax, dx), NumMul(ay, dy))
+	qNum := NumAdd(NumMul(ax, dx), NumMul(ay, dy))
 	denom := NumAdd(NumMul(dx, dx), NumMul(dy, dy))
-	if NumLt(q_num, zero) {
+	if NumLt(qNum, zero) {
 		return NumAdd(NumMul(ax, ax), NumMul(ay, ay)), one
-	} else if NumGt(q_num, denom) {
+	} else if NumGt(qNum, denom) {
 		bx := NumSub(pt.x, l2.x)
 		by := NumSub(pt.y, l2.y)
 		return NumAdd(NumMul(bx, bx), NumMul(by, by)), one
@@ -870,7 +870,7 @@ ShortestLength2Line :: proc "contextless" (
 
 
 @(require_results)
-srtc_2d_matrix :: proc "contextless" (
+srtc2dMatrix :: proc "contextless" (
 	t: linalg.Vector3f32,
 	s: linalg.Vector2f32,
 	r: f32,
@@ -884,7 +884,7 @@ srtc_2d_matrix :: proc "contextless" (
 }
 
 @(require_results)
-srt_2d_matrix :: proc "contextless" (
+srt2dMatrix :: proc "contextless" (
 	t: linalg.Vector3f32,
 	s: linalg.Vector2f32,
 	r: f32,
@@ -896,7 +896,7 @@ srt_2d_matrix :: proc "contextless" (
 }
 
 @(require_results)
-st_2d_matrix :: proc "contextless" (
+st2dMatrix :: proc "contextless" (
 	t: linalg.Vector3f32,
 	s: linalg.Vector2f32,
 ) -> linalg.Matrix4x4f32 {
@@ -906,7 +906,7 @@ st_2d_matrix :: proc "contextless" (
 }
 
 @(require_results)
-rt_2d_matrix :: proc "contextless" (t: linalg.Vector3f32, r: f32) -> linalg.Matrix4x4f32 {
+rt2dMatrix :: proc "contextless" (t: linalg.Vector3f32, r: f32) -> linalg.Matrix4x4f32 {
 	translation := linalg.matrix4_translate(t)
 	rotation := linalg.matrix4_rotate_f32(r, linalg.Vector3f32{0.0, 0.0, 1.0})
 	return linalg.mul(translation, rotation)
@@ -914,13 +914,13 @@ rt_2d_matrix :: proc "contextless" (t: linalg.Vector3f32, r: f32) -> linalg.Matr
 
 
 @(require_results)
-t_2d_matrix :: proc "contextless" (t: linalg.Vector3f32) -> linalg.Matrix4x4f32 {
+t2dMatrix :: proc "contextless" (t: linalg.Vector3f32) -> linalg.Matrix4x4f32 {
 	translation := linalg.matrix4_translate(t)
 	return translation
 }
 
 @(require_results)
-src_2d_matrix :: proc "contextless" (
+src2dMatrix :: proc "contextless" (
 	s: linalg.Vector2f32,
 	r: f32,
 	cp: linalg.Vector2f32,
@@ -932,72 +932,72 @@ src_2d_matrix :: proc "contextless" (
 }
 
 @(require_results)
-sr_2d_matrix :: proc "contextless" (s: linalg.Vector2f32, r: f32) -> linalg.Matrix4x4f32 {
+sr2dMatrix :: proc "contextless" (s: linalg.Vector2f32, r: f32) -> linalg.Matrix4x4f32 {
 	rotation := linalg.matrix4_rotate_f32(r, linalg.Vector3f32{0.0, 0.0, 1.0})
 	scale := linalg.matrix4_scale(linalg.Vector3f32{s.x, s.y, 1.0})
 	return linalg.mul(rotation, scale)
 }
 
 @(require_results)
-s_2d_matrix :: proc "contextless" (s: linalg.Vector2f32) -> linalg.Matrix4x4f32 {
+s2dMatrix :: proc "contextless" (s: linalg.Vector2f32) -> linalg.Matrix4x4f32 {
 	scale := linalg.matrix4_scale(linalg.Vector3f32{s.x, s.y, 1.0})
 	return scale
 }
 
 @(require_results)
-r_2d_matrix :: proc "contextless" (r: f32) -> linalg.Matrix4x4f32 {
+r2dMatrix :: proc "contextless" (r: f32) -> linalg.Matrix4x4f32 {
 	rotation := linalg.matrix4_rotate_f32(r, linalg.Vector3f32{0.0, 0.0, 1.0})
 	return rotation
 }
 
 @(require_results)
-srt_2d_matrix2 :: proc "contextless" (
+srt2dMatrix2 :: proc "contextless" (
 	t: linalg.Vector3f32,
 	s: linalg.Vector2f32,
 	r: f32,
 	cp: linalg.Vector2f32,
 ) -> linalg.Matrix4x4f32 {
 	if cp != {0.0, 0.0} {
-		return srtc_2d_matrix(t, s, r, cp)
+		return srtc2dMatrix(t, s, r, cp)
 	}
 	if r != 0.0 {
 		if s != {1.0, 1.0} {
-			return srt_2d_matrix(t, s, r)
+			return srt2dMatrix(t, s, r)
 		} else {
-			return rt_2d_matrix(t, r)
+			return rt2dMatrix(t, r)
 		}
 	}
 	if s != {1.0, 1.0} {
-		return st_2d_matrix(t, s)
+		return st2dMatrix(t, s)
 	}
-	return t_2d_matrix(t)
+	return t2dMatrix(t)
 }
 
 @(require_results)
-sr_2d_matrix2 :: proc "contextless" (
+sr2dMatrix2 :: proc "contextless" (
 	s: linalg.Vector2f32,
 	r: f32,
 	cp: linalg.Vector2f32,
 ) -> Maybe(linalg.Matrix4x4f32) {
 	if cp != {0.0, 0.0} {
-		return src_2d_matrix(s, r, cp)
+		return src2dMatrix(s, r, cp)
 	}
 	if r != 0.0 {
 		if s != {1.0, 1.0} {
-			return sr_2d_matrix(s, r)
+			return sr2dMatrix(s, r)
 		} else {
-			return r_2d_matrix(r)
+			return r2dMatrix(r)
 		}
 	}
 	if s != {1.0, 1.0} {
-		return s_2d_matrix(s)
+		return s2dMatrix(s)
 	}
 	return nil
 }
 
 
 @(require_results)
-splat_2_fixed :: #force_inline proc "contextless" (
+splat2Fixed :: #force_inline proc "contextless" (
 	v: $T,
 ) -> [2]T where intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
 	intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
@@ -1086,7 +1086,7 @@ GetAngle :: proc(a, b, c: [2]$T) -> T where intrinsics.type_is_float(T) {
 }
 
 // Evaluate any Bezier segment (line, quad, cubic) at parameter t.
-eval_bezier_segment :: proc "contextless" (kind: BezierKind, pts: [4][2]$T, t: T) -> [2]T where intrinsics.type_is_float(T) {
+evalBezierSegment :: proc "contextless" (kind: BezierKind, pts: [4][2]$T, t: T) -> [2]T where intrinsics.type_is_float(T) {
 	switch kind {
 	case .Line:
 		u := 1 - t

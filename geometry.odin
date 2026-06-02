@@ -67,10 +67,12 @@ ShapeNode :: struct {
 	strokeColor: linalg.Vector4f32,
 	thickness:   f32,
 	isClosed:    bool,
+	clipRect:    linalg_ex.Rectf32, // TODO: clipper 안정화 후 shapesComputePolygon에서 처리 활성화
 }
 
 Shapes :: struct {
-	nodes: []ShapeNode,
+	nodes:    []ShapeNode,
+	clipRect: linalg_ex.Rectf32,
 }
 
 @(private)
@@ -1030,6 +1032,39 @@ shapesComputePolygon :: proc(
 
 		for node, nidx in poly.nodes {
 			if node.color.a > 0 {
+				// TODO: clipper 안정화 후 주석 해제
+				// pts := node.pts
+				// isCurves := node.isCurves
+				// _isClosed := node.isClosed
+				// clipRect := node.clipRect
+				// if clipRect.left == 0 && clipRect.right == 0 && clipRect.top == 0 && clipRect.bottom == 0 {
+				// 	clipRect = poly.clipRect
+				// }
+				// if clipRect.left != 0 || clipRect.right != 0 || clipRect.top != 0 || clipRect.bottom != 0 {
+				// 	pathsForClip := make([][][2]f32, len(pts), context.temp_allocator)
+				// 	curveFlagsForClip := make([][]bool, len(pts), context.temp_allocator)
+				// 	for npii in 0 ..< len(pts) {
+				// 		pathsForClip[npii] = transmute([][2]f32)pts[npii]
+				// 		if isCurves != nil && npii < len(isCurves) {
+				// 			curveFlagsForClip[npii] = isCurves[npii]
+				// 		}
+				// 	}
+				// 	clipped, clippedCurves, clipErr := clipper.RectClip(clipRect, pathsForClip[:], curveFlagsForClip[:], context.temp_allocator)
+				// 	if clipErr == nil && len(clipped) > 0 {
+				// 		pts = make([][]linalg.Vector2f32, len(clipped), context.temp_allocator)
+				// 		isCurves = make([][]bool, len(clippedCurves), context.temp_allocator)
+				// 		for i in 0 ..< len(clipped) {
+				// 			pts[i] = transmute([]linalg.Vector2f32)clipped[i]
+				// 			if len(clippedCurves) > i { isCurves[i] = clippedCurves[i] }
+				// 		}
+				// 	}
+				// 	// 주석 해제 시 아래 nonCurves2 resize를 len(pts)로 변경할 것
+				// 	// non_zero_resize_dynamic_array(&nonCurves2, len(pts)) or_return
+				// 	// non_zero_resize_dynamic_array(&curves2, len(pts)) or_return
+				// 	// non_zero_resize_dynamic_array(&overlapSkip2, len(pts)) or_return
+				// 	// 아래 for i, for np 루프에서 node.pts → pts, node.isCurves → isCurves, node.isClosed → _isClosed 로 변경할 것
+				// }
+
 				non_zero_resize_dynamic_array(&nonCurves2, len(node.pts)) or_return
 				non_zero_resize_dynamic_array(&curves2, len(node.pts)) or_return
 				non_zero_resize_dynamic_array(&overlapSkip2, len(node.pts)) or_return

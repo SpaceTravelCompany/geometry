@@ -1,3 +1,4 @@
+//!Not working
 package clipper
 
 import "../linalg_ex"
@@ -42,19 +43,19 @@ PathType :: enum u8 {
 
 @(private = "file")
 Segment :: struct {
-	pts:       [4][2]f64,
-	kind:      linalg_ex.BezierKind,
+	pts:      [4][2]f64,
+	kind:     linalg_ex.BezierKind,
 	pathType: PathType,
 	isOpen:   bool,
 	pathIdx:  int,
 	segIdx:   int,
-	order:     int,
+	order:    int,
 }
 
 @(private = "file")
 Piece :: struct {
 	using base: Segment,
-	used: bool,
+	used:       bool,
 }
 
 @(private = "file")
@@ -71,9 +72,12 @@ SideEps :: 1e-7
 
 @(private = "file")
 _snapPt :: #force_inline proc "contextless" (p: [2]f64) -> u128 {
-	x := u64(i64(math.round(p.x * _SNAP_INV)))
-	y := u64(i64(math.round(p.y * _SNAP_INV)))
-	return (u128(x) << 64) | u128(y)
+	// sign bit flip: signed→unsigned 변환 시 순서 보존
+	x := i64(math.round(p.x * _SNAP_INV))
+	y := i64(math.round(p.y * _SNAP_INV))
+	ux := u64(x) ~ (1 << 63)
+	uy := u64(y) ~ (1 << 63)
+	return (u128(ux) << 64) | u128(uy)
 }
 
 @(private = "file")
@@ -142,6 +146,23 @@ _extractSub :: proc "contextless" (
 	pts: [4][2]f64,
 	t0, t1: f64,
 ) -> [4][2]f64 {
+	// t=1 경계: 다단계 보간 대신 원본 endpoint 직접 보존
+	if t1 >= 1.0 - EPS {
+		if t0 <= EPS do return pts
+		switch kind {
+		case .Line:
+			p := linalg_ex.SubdivLine([2][2]f64{pts[0], pts[1]}, t0)
+			return {p, pts[1], {}, {}}
+		case .Quad:
+			_, m, p12 := linalg_ex.SubdivQuadraticBezier([3][2]f64{pts[0], pts[1], pts[2]}, t0)
+			return {m, p12, pts[2], {}}
+		case .Cubic:
+			_, _, m, d0, d1 := linalg_ex.SubdivCubicBezier(pts, t0)
+			return {m, d0, d1, pts[3]}
+		}
+		return pts
+	}
+
 	result := pts
 	if t0 > EPS {
 		switch kind {
@@ -157,17 +178,24 @@ _extractSub :: proc "contextless" (
 		}
 	}
 
+	// Line: 다단계 보간(tAdj) 대신 직접 _eval 로 endpoint 계산 (정밀도 향상)
+	if kind == .Line {
+		result[1] = _eval(.Line, pts, t1)
+		return result
+	}
+
+	// Curve: 기존 subdivision 로직으로 control point 정확 보존
 	denom := 1.0 - t0
 	if denom <= EPS do return result
 	tAdj := (t1 - t0) / denom
 	if tAdj >= 1.0 - EPS do return result
 
-	switch kind {
-	case .Line:
-		p := linalg_ex.SubdivLine([2][2]f64{result[0], result[1]}, tAdj)
-		result[1] = p
+	#partial switch kind {
 	case .Quad:
-		p01, m, _ := linalg_ex.SubdivQuadraticBezier([3][2]f64{result[0], result[1], result[2]}, tAdj)
+		p01, m, _ := linalg_ex.SubdivQuadraticBezier(
+			[3][2]f64{result[0], result[1], result[2]},
+			tAdj,
+		)
 		result = {result[0], p01, m, {}}
 	case .Cubic:
 		c0, c1, m, _, _ := linalg_ex.SubdivCubicBezier(result, tAdj)
@@ -213,9 +241,16 @@ _sortParams :: proc(list: ^ParamList) {
 }
 
 @(private = "file")
-_appendXMonotoneParams :: proc(list: ^ParamList, kind: linalg_ex.BezierKind, pts: [4][2]f64) -> ClipperError {
+_appendXMonotoneParams :: proc(
+	list: ^ParamList,
+	kind: linalg_ex.BezierKind,
+	pts: [4][2]f64,
+) -> ClipperError {
 	if kind == .Line do return nil
-	t0, t1 := linalg_ex.GetBezierTForXMonotone(kind, [4]f64{pts[0].x, pts[1].x, pts[2].x, pts[3].x})
+	t0, t1 := linalg_ex.GetBezierTForXMonotone(
+		kind,
+		[4]f64{pts[0].x, pts[1].x, pts[2].x, pts[3].x},
+	)
 	_appendParam(list, t0) or_return
 	_appendParam(list, t1) or_return
 	return nil
@@ -241,10 +276,7 @@ _appendSegmentFromParams :: proc(
 }
 
 @(private = "file")
-_appendRawSegment :: proc(
-	out: ^[dynamic]Segment,
-	seg: Segment,
-) -> ClipperError {
+_appendRawSegment :: proc(out: ^[dynamic]Segment, seg: Segment) -> ClipperError {
 	params := make(ParamList, context.temp_allocator) or_return
 	_appendParam(&params, 0.0) or_return
 	_appendParam(&params, 1.0) or_return
@@ -282,12 +314,12 @@ _appendPathSegments :: proc(
 			if isOpen && j >= len(path) - 1 do break
 
 			seg := Segment {
-				kind      = .Line,
+				kind     = .Line,
 				pathType = pathType,
 				isOpen   = isOpen,
 				pathIdx  = pathIdx,
 				segIdx   = segIdx,
-				order     = order^,
+				order    = order^,
 			}
 			seg.pts[0] = path[j]
 
@@ -335,7 +367,12 @@ _appendPathSegments :: proc(
 }
 
 @(private = "file")
-_toF64Paths :: proc(paths: [][][2]$T) -> (out: [][][2]f64, err: ClipperError) where intrinsics.type_is_float(T) {
+_toF64Paths :: proc(
+	paths: [][][2]$T,
+) -> (
+	out: [][][2]f64,
+	err: ClipperError,
+) where intrinsics.type_is_float(T) {
 	if paths == nil do return nil, nil
 	out = make([][][2]f64, len(paths), context.temp_allocator) or_return
 	for path, i in paths {
@@ -368,7 +405,13 @@ _fromF64Paths :: proc(
 }
 
 @(private = "file")
-_copyBoolPaths :: proc(paths: [][]bool, allocator := context.allocator) -> (out: [][]bool, err: ClipperError) {
+_copyBoolPaths :: proc(
+	paths: [][]bool,
+	allocator := context.allocator,
+) -> (
+	out: [][]bool,
+	err: ClipperError,
+) {
 	if paths == nil do return nil, nil
 	out = utils_private.makeNonZeroedSlice([][]bool, len(paths), allocator) or_return
 	for path, i in paths {
@@ -519,7 +562,10 @@ _clipResult :: #force_inline proc "contextless" (clipType: ClipType, subj, clip:
 }
 
 @(private = "file")
-_openContributes :: #force_inline proc "contextless" (clipType: ClipType, inSubj, inClip: bool) -> bool {
+_openContributes :: #force_inline proc "contextless" (
+	clipType: ClipType,
+	inSubj, inClip: bool,
+) -> bool {
 	switch clipType {
 	case .Intersection:
 		return inClip
@@ -566,6 +612,23 @@ _trimDuplicateClosure :: proc(path: ^[dynamic][2]f64, curves: ^[dynamic]bool) ->
 }
 
 @(private = "file")
+_snapCleanPath :: proc(path: ^[dynamic][2]f64, curves: ^[dynamic]bool) -> ClipperError {
+	if len(path^) <= 1 do return nil
+	j := 1
+	for i in 1 ..< len(path^) {
+		d := path^[i] - path^[j - 1]
+		if d.x * d.x + d.y * d.y > 1e-8 {
+			path^[j] = path^[i]
+			if curves != nil do curves^[j] = curves^[i]
+			j += 1
+		}
+	}
+	non_zero_resize_dynamic_array(path, j) or_return
+	if curves != nil do non_zero_resize_dynamic_array(curves, j) or_return
+	return nil
+}
+
+@(private = "file")
 _buildClosedPaths :: proc(
 	pieces: ^[dynamic]Piece,
 	hasCurves: bool,
@@ -577,12 +640,17 @@ _buildClosedPaths :: proc(
 	paths = make([dynamic][dynamic][2]f64, context.temp_allocator) or_return
 	if hasCurves do curvesOut = make([dynamic][dynamic]bool, context.temp_allocator) or_return
 
-	startMap := make(map[u128]int, context.temp_allocator)
+	// unused piece 인덱스를 start-point snap 기준으로 정렬
+	indices := make([dynamic]int, 0, len(pieces), context.temp_allocator) or_return
 	for i in 0 ..< len(pieces) {
 		if !pieces[i].used {
-			startMap[_snapPt(_segStart(pieces[i]))] = i
+			non_zero_append(&indices, i) or_return
 		}
 	}
+	slice.sort_by_with_data(indices[:], proc(a, b: int, user_data: rawptr) -> bool {
+			p := (^[dynamic]Piece)(user_data)
+			return _snapPt(_segStart(p[a])) < _snapPt(_segStart(p[b]))
+		}, rawptr(pieces))
 
 	for i in 0 ..< len(pieces) {
 		if pieces[i].used do continue
@@ -597,16 +665,60 @@ _buildClosedPaths :: proc(
 		_appendPiecePoints(&path, hasCurves ? &curves : nil, pieces[i], true) or_return
 
 		for _snapPt(current) != firstKey {
-			if _snapPt(current) not_in startMap do break
-			nextIdx := startMap[_snapPt(current)]
-			if pieces[nextIdx].used do break
-			pieces[nextIdx].used = true
-			_appendPiecePoints(&path, hasCurves ? &curves : nil, pieces[nextIdx], false) or_return
-			current = _segEndPiece(pieces[nextIdx])
+			// 이진탐색으로 current snap-point의 첫 번째 piece 찾기
+			key := _snapPt(current)
+			lo, hi := 0, len(indices)
+			for lo < hi {
+				mid := lo + (hi - lo) / 2
+				if _snapPt(_segStart(pieces[indices[mid]])) < key {
+					lo = mid + 1
+				} else {
+					hi = mid
+				}
+			}
+			// 같은 snap-point의 piece들 중 unused 찾기
+			found := false
+			idx := lo
+			for idx < len(indices) && _snapPt(_segStart(pieces[indices[idx]])) == key {
+				if !pieces[indices[idx]].used {
+					nextIdx := indices[idx]
+					pieces[nextIdx].used = true
+					_appendPiecePoints(
+						&path,
+						hasCurves ? &curves : nil,
+						pieces[nextIdx],
+						false,
+					) or_return
+					current = _segEndPiece(pieces[nextIdx])
+					found = true
+					break
+				}
+				idx += 1
+			}
+			if !found do break
 		}
 
+		_snapCleanPath(&path, hasCurves ? &curves : nil) or_return
 		_trimDuplicateClosure(&path, hasCurves ? &curves : nil) or_return
 		if len(path) >= 3 {
+			// 방향 정규화: CW(면적<0)이면 뒤집어서 CCW로
+			area: f64
+			for k in 0 ..< len(path) {
+				j := (k + 1) % len(path)
+				area += path[k].x * path[j].y - path[j].x * path[k].y
+			}
+			if area < 0 {
+				for k := 0; k < len(path) / 2; k += 1 {
+					j := len(path) - 1 - k
+					path[k], path[j] = path[j], path[k]
+				}
+				if hasCurves && len(curves) > 0 {
+					for k := 0; k < len(curves) / 2; k += 1 {
+						j := len(curves) - 1 - k
+						curves[k], curves[j] = curves[j], curves[k]
+					}
+				}
+			}
 			non_zero_append(&paths, path) or_return
 			if hasCurves do non_zero_append(&curvesOut, curves) or_return
 		}
@@ -635,6 +747,7 @@ _buildOpenPaths :: proc(
 	for piece in pieces {
 		if !havePath || _snapPt(current) != _snapPt(_segStart(piece)) {
 			if havePath && len(path) >= 2 {
+				_snapCleanPath(&path, hasCurves ? &curves : nil) or_return
 				non_zero_append(&paths, path) or_return
 				if hasCurves do non_zero_append(&curvesOut, curves) or_return
 			}
@@ -648,6 +761,7 @@ _buildOpenPaths :: proc(
 		current = _segEndPiece(piece)
 	}
 	if havePath && len(path) >= 2 {
+		_snapCleanPath(&path, hasCurves ? &curves : nil) or_return
 		non_zero_append(&paths, path) or_return
 		if hasCurves do non_zero_append(&curvesOut, curves) or_return
 	}
@@ -677,7 +791,10 @@ _sweepSegMinMaxY :: proc "contextless" (s: Segment) -> (minY, maxY: f64) {
 }
 
 @(private = "file")
-_SweepKind :: enum u8 { Start, End }
+_SweepKind :: enum u8 {
+	Start,
+	End,
+}
 
 @(private = "file")
 _SweepEvent :: struct {
@@ -694,22 +811,17 @@ _sweepCmpEvent :: proc(a, b: _SweepEvent) -> bool {
 }
 
 @(private = "file")
-_splitAllSegments :: proc(
-	segs: []Segment,
-) -> (
-	pieces: [dynamic]Piece,
-	err: ClipperError,
-) {
+_splitAllSegments :: proc(segs: []Segment) -> (pieces: [dynamic]Piece, err: ClipperError) {
 	if len(segs) <= 1 {
 		pieces = make([dynamic]Piece, context.temp_allocator) or_return
 		for s in segs {
 			p := Piece {
-				pts       = s.pts,
-				kind      = s.kind,
+				pts      = s.pts,
+				kind     = s.kind,
 				pathType = s.pathType,
 				isOpen   = s.isOpen,
 				pathIdx  = s.pathIdx,
-				order     = s.order,
+				order    = s.order,
 			}
 			non_zero_append(&pieces, p) or_return
 		}
@@ -721,9 +833,17 @@ _splitAllSegments :: proc(
 	nEvents := 0
 	for s, i in segs {
 		minX, maxX := _sweepSegMinMaxX(s)
-		events[nEvents] = _SweepEvent{x = minX, kind = .Start, segIdx = i}
+		events[nEvents] = _SweepEvent {
+			x      = minX,
+			kind   = .Start,
+			segIdx = i,
+		}
 		nEvents += 1
-		events[nEvents] = _SweepEvent{x = maxX + EPS * 2, kind = .End, segIdx = i}
+		events[nEvents] = _SweepEvent {
+			x      = maxX + EPS * 2,
+			kind   = .End,
+			segIdx = i,
+		}
 		nEvents += 1
 	}
 	non_zero_resize(&events, nEvents) or_return
@@ -742,7 +862,6 @@ _splitAllSegments :: proc(
 	for ev in events {
 		if ev.kind == .Start {
 			segA := ev.segIdx
-			_, maxXA := _sweepSegMinMaxX(segs[segA])
 
 			clean := 0
 			for i in 0 ..< len(active) {
@@ -762,7 +881,12 @@ _splitAllSegments :: proc(
 				minYB, maxYB := _sweepSegMinMaxY(segs[aSegIdx])
 				if maxYA + EPS < minYB || maxYB + EPS < minYA do continue
 
-				_appendIntersections(segs[segA], segs[aSegIdx], &params[segA], &params[aSegIdx]) or_return
+				_appendIntersections(
+					segs[segA],
+					segs[aSegIdx],
+					&params[segA],
+					&params[aSegIdx],
+				) or_return
 			}
 
 			non_zero_append(&active, segA) or_return
@@ -779,17 +903,18 @@ _splitAllSegments :: proc(
 	pieces = make([dynamic]Piece, context.temp_allocator) or_return
 	for s, i in segs {
 		_sortParams(&params[i])
+
 		for j in 0 ..< len(params[i]) - 1 {
 			t0 := params[i][j]
 			t1 := params[i][j + 1]
 			if t1 - t0 <= EPS do continue
 			p := Piece {
-				pts       = _extractSub(s.kind, s.pts, t0, t1),
-				kind      = s.kind,
+				pts      = _extractSub(s.kind, s.pts, t0, t1),
+				kind     = s.kind,
 				pathType = s.pathType,
 				isOpen   = s.isOpen,
 				pathIdx  = s.pathIdx,
-				order     = s.order,
+				order    = s.order,
 			}
 			non_zero_append(&pieces, p) or_return
 		}
@@ -865,7 +990,11 @@ _copySolutionPaths :: proc(
 		outPaths[i] = utils_private.makeNonZeroedSlice([][2]f64, len(path), allocator) or_return
 		for p, j in path do outPaths[i][j] = p
 		if hasCurves {
-			outCurves[i] = utils_private.makeNonZeroedSlice([]bool, len(curves[i]), allocator) or_return
+			outCurves[i] = utils_private.makeNonZeroedSlice(
+				[]bool,
+				len(curves[i]),
+				allocator,
+			) or_return
 			for v, j in curves[i] do outCurves[i][j] = v
 		}
 	}
@@ -903,15 +1032,33 @@ _booleanCurve64 :: proc(
 	}
 
 	allPieces := _splitAllSegments(segs[:]) or_return
-	closedPieces, openPieces := _classifyPieces(allPieces[:], closedSegs[:], clipType, fillRule) or_return
+	closedPieces, openPieces := _classifyPieces(
+		allPieces[:],
+		closedSegs[:],
+		clipType,
+		fillRule,
+	) or_return
 
 	hasClosedCurves := subjectsIsCurves != nil || clipsIsCurves != nil
 	hasOpenCurves := opensIsCurves != nil
-	solutionClosed, solutionClosedCurves := _buildClosedPaths(&closedPieces, hasClosedCurves) or_return
+	solutionClosed, solutionClosedCurves := _buildClosedPaths(
+		&closedPieces,
+		hasClosedCurves,
+	) or_return
 	solutionOpen, solutionOpenCurves := _buildOpenPaths(openPieces[:], hasOpenCurves) or_return
 
-	res, resIsCurves = _copySolutionPaths(hasClosedCurves, solutionClosed, solutionClosedCurves, allocator) or_return
-	resOpen, resOpenIsCurves = _copySolutionPaths(hasOpenCurves, solutionOpen, solutionOpenCurves, allocator) or_return
+	res, resIsCurves = _copySolutionPaths(
+		hasClosedCurves,
+		solutionClosed,
+		solutionClosedCurves,
+		allocator,
+	) or_return
+	resOpen, resOpenIsCurves = _copySolutionPaths(
+		hasOpenCurves,
+		solutionOpen,
+		solutionOpenCurves,
+		allocator,
+	) or_return
 	return
 }
 
@@ -992,10 +1139,10 @@ RectClip :: proc(
 	err: ClipperError,
 ) where intrinsics.type_is_float(T) {
 	rectPath := [4][2]T {
-		{rect.left, rect.top},
-		{rect.right, rect.top},
-		{rect.right, rect.bottom},
 		{rect.left, rect.bottom},
+		{rect.right, rect.bottom},
+		{rect.right, rect.top},
+		{rect.left, rect.top},
 	}
 	res, _, resIsCurves, _, err = BooleanOpCurve(
 		.Intersection,
@@ -1022,10 +1169,10 @@ RectClipLines :: proc(
 	err: ClipperError,
 ) where intrinsics.type_is_float(T) {
 	rectPath := [4][2]T {
-		{rect.left, rect.top},
-		{rect.right, rect.top},
-		{rect.right, rect.bottom},
 		{rect.left, rect.bottom},
+		{rect.right, rect.bottom},
+		{rect.right, rect.top},
+		{rect.left, rect.top},
 	}
 	_, res, _, resIsCurves, err = BooleanOpCurve(
 		.Intersection,

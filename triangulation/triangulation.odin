@@ -352,7 +352,7 @@ CreateInnerLocMinLooseEdge :: proc(
 
 	e := ctx.firstActive
 	eBelow: ^Edge = nil
-	bestD: f64 = -1.0
+	bestD, bestD_: f64 = 0.0, 1.0
 
 	for e != nil {
 		inRange :=
@@ -364,9 +364,9 @@ CreateInnerLocMinLooseEdge :: proc(
 			!(linalg_ex.CrossProductSign(e.vL.p, vAbove.p, e.vR.p) < 0)
 		if inRange {
 			d, d_ := linalg_ex.ShortestLength2Line(vAbove.p, e.vL.p, e.vR.p)
-			if eBelow == nil || (d_ > 0 ? d < bestD * d_ : d > bestD * d_) {
+			if eBelow == nil || d * bestD_ < bestD * d_ {
 				eBelow = e
-				bestD = d
+				bestD = d; bestD_ = d_
 			}
 		}
 		e = e.nextE
@@ -529,10 +529,6 @@ AddPath :: proc(ctx: ^Context, pts: [][2]f64, baseIdx: u32) -> (err: TrianguateE
 			iNext = utils.Next(i, len(pts))
 		}
 		if i == i0 do break
-		// if linalg_ex.CrossProductSign(vPrev.p, pts[i], pts[iNext]) == 0 {
-		// 	i = iNext
-		// 	continue
-		// }
 
 		for pts[i].y <= vPrev.p.y { 	// ascend up next bound to LocMax
 			vert := MakeVertex(pts[i], baseIdx + u32(i)) or_return

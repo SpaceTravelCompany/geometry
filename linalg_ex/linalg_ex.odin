@@ -1,7 +1,6 @@
 package linalg_ex
 
 import "base:intrinsics"
-import "base:runtime"
 import "core:math"
 import "core:math/linalg"
 
@@ -30,9 +29,7 @@ PointInPolygonResult :: enum u8 {
 	Inside,
 }
 
-Rect_ :: struct(
-	$T: typeid
-) where intrinsics.type_is_numeric(T) {
+Rect_ :: struct($T: typeid) where intrinsics.type_is_numeric(T) {
 	left:   T,
 	right:  T,
 	top:    T,
@@ -51,7 +48,8 @@ RectInit :: #force_inline proc "contextless" (left: $T, right: T, top: T, bottom
 
 CheckRect :: #force_inline proc "contextless" (
 	_pts: [4][$N]$T,
-) -> bool where N >= 2 && intrinsics.type_is_numeric(T) {
+) -> bool where N >= 2 &&
+	intrinsics.type_is_numeric(T) {
 	return(
 		!(!((_pts[0].y) == (_pts[1].y)) ||
 			!((_pts[2].y) == (_pts[3].y)) ||
@@ -229,10 +227,7 @@ RectOr :: #force_inline proc "contextless" (
 
 	return res
 }
-RectPointIn :: #force_inline proc "contextless" (
-	_r: Rect_($T),
-	p: [2]T,
-) -> bool #no_bounds_check {
+RectPointIn :: #force_inline proc "contextless" (_r: Rect_($T), p: [2]T) -> bool #no_bounds_check {
 	return(
 		p.x >= _r.left &&
 		p.x <= _r.right &&
@@ -413,7 +408,10 @@ PointLineLeftOrRight :: #force_inline proc "contextless" (
 	l0: [2]T,
 	l1: [2]T,
 ) -> T where intrinsics.type_is_float(T) {
-	return ((((((l1.x) - (l0.x))) * (((p.y) - (l0.y))))) - (((((p.x) - (l0.x))) * (((l1.y) - (l0.y))))))
+	return(
+		(((((l1.x) - (l0.x))) * (((p.y) - (l0.y))))) -
+		(((((p.x) - (l0.x))) * (((l1.y) - (l0.y))))) \
+	)
 }
 
 PointInPolygon :: proc "contextless" (
@@ -500,8 +498,12 @@ LineInPolygon :: proc "contextless" (
 		j := (i + 1) % len(polygon)
 		ok, res = LinesIntersect2(polygon[i], polygon[j], a, b)
 		if ok == .intersect {
-			sameA := (math.abs((a.x) - (res.x)) <= epsilon(T) * T(16)) && (math.abs((a.y) - (res.y)) <= epsilon(T) * T(16))
-			sameB := (math.abs((b.x) - (res.x)) <= epsilon(T) * T(16)) && (math.abs((b.y) - (res.y)) <= epsilon(T) * T(16))
+			sameA :=
+				(math.abs((a.x) - (res.x)) <= epsilon(T) * T(16)) &&
+				(math.abs((a.y) - (res.y)) <= epsilon(T) * T(16))
+			sameB :=
+				(math.abs((b.x) - (res.x)) <= epsilon(T) * T(16)) &&
+				(math.abs((b.y) - (res.y)) <= epsilon(T) * T(16))
 			if sameA || sameB do continue
 			return true
 		}
@@ -587,7 +589,7 @@ NearestPointBetweenPointAndLine :: proc "contextless" (
 }
 
 Circle :: struct(T: typeid) where intrinsics.type_is_float(T) {
-	p:           [2]T,
+	p:          [2]T,
 	rectRadius: T,
 }
 
@@ -823,14 +825,12 @@ CrossProductSign :: proc "contextless" (
 	return 0
 }
 
-DotProduct :: proc "contextless" (
-	p1, p2, p3: [2]$T,
-) -> T where intrinsics.type_is_float(T) {
+DotProduct :: proc "contextless" (p1, p2, p3: [2]$T) -> T where intrinsics.type_is_float(T) {
 	a := ((p2.x) - (p1.x))
 	b := ((p3.x) - (p2.x))
 	c := ((p2.y) - (p1.y))
 	d := ((p3.y) - (p2.y))
-	return ((((a) * (b))) + (((c) * (d))))
+	return (((a) * (b))) + (((c) * (d)))
 }
 
 // InCircleTest: returns determinant. Positive => D inside circle through A,B,C (when ABC is CCW).
@@ -846,7 +846,11 @@ InCircleTest :: proc "contextless" (
 	m20 := ((ptC.x) - (ptD.x))
 	m21 := ((ptC.y) - (ptD.y))
 	m22 := ((((m20) * (m20))) + (((m21) * (m21))))
-	return ((((((m00) * (((((m11) * (m22))) - (((m21) * (m12))))))) - (((m10) * (((((m01) * (m22))) - (((m21) * (m02))))))))) + (((m20) * (((((m01) * (m12))) - (((m11) * (m02))))))))
+	return(
+		(((((m00) * (((((m11) * (m22))) - (((m21) * (m12))))))) -
+				(((m10) * (((((m01) * (m22))) - (((m21) * (m02))))))))) +
+		(((m20) * (((((m01) * (m12))) - (((m11) * (m02))))))) \
+	)
 }
 
 GetAngle :: proc(a, b, c: [2]$T) -> T where intrinsics.type_is_float(T) {
@@ -861,11 +865,15 @@ GetAngle :: proc(a, b, c: [2]$T) -> T where intrinsics.type_is_float(T) {
 }
 
 // Evaluate any Bezier segment (line, quad, cubic) at parameter t.
-evalBezierSegment :: proc "contextless" (kind: BezierKind, pts: [4][2]$T, t: T) -> [2]T where intrinsics.type_is_float(T) {
+evalBezierSegment :: proc "contextless" (
+	kind: BezierKind,
+	pts: [4][2]$T,
+	t: T,
+) -> [2]T where intrinsics.type_is_float(T) {
 	switch kind {
 	case .Line:
 		u := 1 - t
-		return { u * pts[0].x + t * pts[1].x, u * pts[0].y + t * pts[1].y }
+		return {u * pts[0].x + t * pts[1].x, u * pts[0].y + t * pts[1].y}
 	case .Quad:
 		return EvalBezier(kind, pts, t)
 	case .Cubic:

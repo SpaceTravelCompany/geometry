@@ -3,9 +3,7 @@ package linalg_ex
 import "base:intrinsics"
 import "base:runtime"
 import "core:math"
-import "core:math/fixed"
 import "core:math/linalg"
-import "shared:utils_private/fixed_bcd"
 
 import "shared:utils_private"
 
@@ -34,8 +32,7 @@ PointInPolygonResult :: enum u8 {
 
 Rect_ :: struct(
 	$T: typeid
-) where intrinsics.type_is_numeric(T) ||
-	intrinsics.type_is_specialization_of(T, fixed.Fixed) {
+) where intrinsics.type_is_numeric(T) {
 	left:   T,
 	right:  T,
 	top:    T,
@@ -54,13 +51,12 @@ RectInit :: #force_inline proc "contextless" (left: $T, right: T, top: T, bottom
 
 CheckRect :: #force_inline proc "contextless" (
 	_pts: [4][$N]$T,
-) -> bool where N >= 2 && intrinsics.type_is_numeric(T) ||
-	intrinsics.type_is_specialization_of(T, fixed.Fixed) {
+) -> bool where N >= 2 && intrinsics.type_is_numeric(T) {
 	return(
-		!(!NumEq(_pts[0].y, _pts[1].y) ||
-			!NumEq(_pts[2].y, _pts[3].y) ||
-			!NumEq(_pts[0].x, _pts[2].x) ||
-			!NumEq(_pts[1].x, _pts[3].x)) \
+		!(!((_pts[0].y) == (_pts[1].y)) ||
+			!((_pts[2].y) == (_pts[3].y)) ||
+			!((_pts[0].x) == (_pts[2].x)) ||
+			!((_pts[1].x) == (_pts[3].x))) \
 	)
 }
 
@@ -186,19 +182,19 @@ RectAnd :: #force_inline proc "contextless" (
 	_r2: Rect_(T),
 ) -> Rect_(T) #no_bounds_check {
 	res: Rect_(T)
-	res.left = NumMax(_r1.left, _r2.left)
-	res.right = NumMin(_r1.right, _r2.right)
-	if NumLt(res.right, res.left) do return {}
+	res.left = ((_r1.left) > (_r2.left) ? (_r1.left) : (_r2.left))
+	res.right = ((_r1.right) < (_r2.right) ? (_r1.right) : (_r2.right))
+	if ((res.right) < (res.left)) do return {}
 
-	r1Top := NumMax(_r1.top, _r1.bottom)
-	r1Bottom := NumMin(_r1.top, _r1.bottom)
-	r2Top := NumMax(_r2.top, _r2.bottom)
-	r2Bottom := NumMin(_r2.top, _r2.bottom)
+	r1Top := ((_r1.top) > (_r1.bottom) ? (_r1.top) : (_r1.bottom))
+	r1Bottom := ((_r1.top) < (_r1.bottom) ? (_r1.top) : (_r1.bottom))
+	r2Top := ((_r2.top) > (_r2.bottom) ? (_r2.top) : (_r2.bottom))
+	r2Bottom := ((_r2.top) < (_r2.bottom) ? (_r2.top) : (_r2.bottom))
 
-	yTop := NumMin(r1Top, r2Top)
-	yBottom := NumMax(r1Bottom, r2Bottom)
+	yTop := ((r1Top) < (r2Top) ? (r1Top) : (r2Top))
+	yBottom := ((r1Bottom) > (r2Bottom) ? (r1Bottom) : (r2Bottom))
 
-	if NumGe(_r1.top, _r1.bottom) {
+	if ((_r1.top) >= (_r1.bottom)) {
 		res.top = yTop
 		res.bottom = yBottom
 	} else {
@@ -212,18 +208,18 @@ RectOr :: #force_inline proc "contextless" (
 	_r2: Rect_(T),
 ) -> Rect_(T) #no_bounds_check {
 	res: Rect_(T)
-	res.left = NumMin(_r1.left, _r2.left)
-	res.right = NumMax(_r1.right, _r2.right)
+	res.left = ((_r1.left) < (_r2.left) ? (_r1.left) : (_r2.left))
+	res.right = ((_r1.right) > (_r2.right) ? (_r1.right) : (_r2.right))
 
-	r1Top := NumMax(_r1.top, _r1.bottom)
-	r1Bottom := NumMin(_r1.top, _r1.bottom)
-	r2Top := NumMax(_r2.top, _r2.bottom)
-	r2Bottom := NumMin(_r2.top, _r2.bottom)
+	r1Top := ((_r1.top) > (_r1.bottom) ? (_r1.top) : (_r1.bottom))
+	r1Bottom := ((_r1.top) < (_r1.bottom) ? (_r1.top) : (_r1.bottom))
+	r2Top := ((_r2.top) > (_r2.bottom) ? (_r2.top) : (_r2.bottom))
+	r2Bottom := ((_r2.top) < (_r2.bottom) ? (_r2.top) : (_r2.bottom))
 
-	yTop := NumMax(r1Top, r2Top)
-	yBottom := NumMin(r1Bottom, r2Bottom)
+	yTop := ((r1Top) > (r2Top) ? (r1Top) : (r2Top))
+	yBottom := ((r1Bottom) < (r2Bottom) ? (r1Bottom) : (r2Bottom))
 
-	if NumGe(_r1.top, _r1.bottom) {
+	if ((_r1.top) >= (_r1.bottom)) {
 		res.top = yTop
 		res.bottom = yBottom
 	} else {
@@ -237,30 +233,17 @@ RectPointIn :: #force_inline proc "contextless" (
 	_r: Rect_($T),
 	p: [2]T,
 ) -> bool #no_bounds_check {
-	when intrinsics.type_is_specialization_of(
-		T,
-		fixed_bcd.BCD,
-	) || intrinsics.type_is_specialization_of(T, fixed.Fixed) {
-		return(
-			p.x.i >= _r.left.i &&
-			p.x.i <= _r.right.i &&
-			(_r.top.i > _r.bottom.i ? (p.y.i <= _r.top.i && p.y.i >= _r.bottom.i) : (p.y.i >= _r.top.i && p.y.i <= _r.bottom.i)) \
-		)
-	} else {
-		return(
-			p.x >= _r.left &&
-			p.x <= _r.right &&
-			(_r.top > _r.bottom ? (p.y <= _r.top && p.y >= _r.bottom) : (p.y >= _r.top && p.y <= _r.bottom)) \
-		)
-	}
+	return(
+		p.x >= _r.left &&
+		p.x <= _r.right &&
+		(_r.top > _r.bottom ? (p.y <= _r.top && p.y >= _r.bottom) : (p.y >= _r.top && p.y <= _r.bottom)) \
+	)
 }
 
 // Polygon-polygon overlap: vertex containment or edge intersection.
 PolygonOverlapsPolygon :: proc "contextless" (
 	poly1, poly2: [][2]$T,
-) -> bool where intrinsics.type_is_float(T) ||
-	intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
-	intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
+) -> bool where intrinsics.type_is_float(T) {
 	if len(poly1) < 3 || len(poly2) < 3 do return false
 	for p in poly1 {
 		if PointInPolygon(p, poly2) == .Inside do return true
@@ -285,29 +268,10 @@ RectMove :: #force_inline proc "contextless" (
 	p: [2]T,
 ) -> Rect_(T) #no_bounds_check {
 	res: Rect_(T)
-
-	when intrinsics.type_is_specialization_of(
-		T,
-		fixed_bcd.BCD,
-	) || intrinsics.type_is_specialization_of(T, fixed.Fixed) {
-		res.left = T {
-			i = _r.left.i + p.x.i,
-		}
-		res.top = T {
-			i = _r.top.i + p.y.i,
-		}
-		res.right = T {
-			i = _r.right.i + p.x.i,
-		}
-		res.bottom = T {
-			i = _r.bottom.i + p.y.i,
-		}
-	} else {
-		res.left = _r.left + p.x
-		res.top = _r.top + p.y
-		res.right = _r.right + p.x
-		res.bottom = _r.bottom + p.y
-	}
+	res.left = _r.left + p.x
+	res.top = _r.top + p.y
+	res.right = _r.right + p.x
+	res.bottom = _r.bottom + p.y
 	return res
 }
 
@@ -316,32 +280,30 @@ PointInTriangle :: proc "contextless" (
 	a: [2]T,
 	b: [2]T,
 	c: [2]T,
-) -> bool where intrinsics.type_is_float(T) ||
-	intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
-	intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
-	zero := NumConst(0, T)
-	x0 := NumSub(c.x, a.x)
-	y0 := NumSub(c.y, a.y)
-	x1 := NumSub(b.x, a.x)
-	y1 := NumSub(b.y, a.y)
-	x2 := NumSub(p.x, a.x)
-	y2 := NumSub(p.y, a.y)
+) -> bool where intrinsics.type_is_float(T) {
+	zero := T(0)
+	x0 := ((c.x) - (a.x))
+	y0 := ((c.y) - (a.y))
+	x1 := ((b.x) - (a.x))
+	y1 := ((b.y) - (a.y))
+	x2 := ((p.x) - (a.x))
+	y2 := ((p.y) - (a.y))
 
-	dot00 := NumAdd(NumMul(x0, x0), NumMul(y0, y0))
-	dot01 := NumAdd(NumMul(x0, x1), NumMul(y0, y1))
-	dot02 := NumAdd(NumMul(x0, x2), NumMul(y0, y2))
-	dot11 := NumAdd(NumMul(x1, x1), NumMul(y1, y1))
-	dot12 := NumAdd(NumMul(x1, x2), NumMul(y1, y2))
-	denominator := NumSub(NumMul(dot00, dot11), NumMul(dot01, dot01))
-	if NumEq(denominator, zero) do return false
+	dot00 := ((((x0) * (x0))) + (((y0) * (y0))))
+	dot01 := ((((x0) * (x1))) + (((y0) * (y1))))
+	dot02 := ((((x0) * (x2))) + (((y0) * (y2))))
+	dot11 := ((((x1) * (x1))) + (((y1) * (y1))))
+	dot12 := ((((x1) * (x2))) + (((y1) * (y2))))
+	denominator := ((((dot00) * (dot11))) - (((dot01) * (dot01))))
+	if ((denominator) == (zero)) do return false
 
-	u := NumSub(NumMul(dot11, dot02), NumMul(dot01, dot12))
-	v := NumSub(NumMul(dot00, dot12), NumMul(dot01, dot02))
+	u := ((((dot11) * (dot02))) - (((dot01) * (dot12))))
+	v := ((((dot00) * (dot12))) - (((dot01) * (dot02))))
 
-	if NumGt(denominator, zero) {
-		return NumGt(u, zero) && NumGt(v, zero) && NumLt(NumAdd(u, v), denominator)
+	if ((denominator) > (zero)) {
+		return ((u) > (zero)) && ((v) > (zero)) && ((((u) + (v))) < (denominator))
 	}
-	return NumLt(u, zero) && NumLt(v, zero) && NumGt(NumAdd(u, v), denominator)
+	return ((u) < (zero)) && ((v) < (zero)) && ((((u) + (v))) > (denominator))
 }
 
 epsilon :: proc "contextless" ($T: typeid) -> T where intrinsics.type_is_float(T) {
@@ -361,37 +323,19 @@ PointInLine :: proc "contextless" (
 ) -> (
 	bool,
 	T,
-) where intrinsics.type_is_float(T) ||
-	intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
-	intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
-	minX := NumMin(l0.x, l1.x)
-	maxX := NumMax(l0.x, l1.x)
-	minY := NumMin(l0.y, l1.y)
-	maxY := NumMax(l0.y, l1.y)
-	a := NumDiv(NumSub(l0.y, l1.y), NumSub(l0.x, l1.x))
-	b := NumSub(l0.y, NumMul(a, l0.x))
-	pY := NumAdd(NumMul(a, p.x), b)
-	inBbox := NumGe(p.x, minX) && NumLe(p.x, maxX) && NumGe(p.y, minY) && NumLe(p.y, maxY)
-	t := NumDiv(NumSub(p.x, minX), NumSub(maxX, minX))
+) where intrinsics.type_is_float(T) {
+	minX := ((l0.x) < (l1.x) ? (l0.x) : (l1.x))
+	maxX := ((l0.x) > (l1.x) ? (l0.x) : (l1.x))
+	minY := ((l0.y) < (l1.y) ? (l0.y) : (l1.y))
+	maxY := ((l0.y) > (l1.y) ? (l0.y) : (l1.y))
+	a := ((((l0.y) - (l1.y))) / (((l0.x) - (l1.x))))
+	b := ((l0.y) - (((a) * (l0.x))))
+	pY := ((((a) * (p.x))) + (b))
+	inBbox := ((p.x) >= (minX)) && ((p.x) <= (maxX)) && ((p.y) >= (minY)) && ((p.y) <= (maxY))
+	t := ((((p.x) - (minX))) / (((maxX) - (minX))))
 
-	onLine := NumEqE(p.y, pY)
+	onLine := (math.abs((p.y) - (pY)) <= epsilon(T) * T(16))
 	return onLine && inBbox, t
-}
-
-minFixed :: proc "contextless" (
-	v0: $T,
-	v1: T,
-) -> T where intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
-	intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
-	return v0.i < v1.i ? v0 : v1
-}
-
-maxFixed :: proc "contextless" (
-	v0: $T,
-	v1: T,
-) -> T where intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
-	intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
-	return v0.i > v1.i ? v0 : v1
 }
 
 SubdivLine :: proc "contextless" (
@@ -399,15 +343,8 @@ SubdivLine :: proc "contextless" (
 	subdiv: T,
 ) -> (
 	pt01: [2]T,
-) where intrinsics.type_is_float(T) ||
-	intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
-	intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
-	when intrinsics.type_is_float(T) {
-		pt01 = linalg.lerp(pts[0], pts[1], subdiv)
-	} else {
-		subdiv2 := splat2Fixed(subdiv)
-		pt01 = lerpFixed(pts[0], pts[1], subdiv2)
-	}
+) where intrinsics.type_is_float(T) {
+	pt01 = linalg.lerp(pts[0], pts[1], subdiv)
 	return
 }
 
@@ -416,19 +353,10 @@ SubdivQuadraticBezier :: proc "contextless" (
 	subdiv: T,
 ) -> (
 	pt1, pt12, pt2: [2]T,
-) where intrinsics.type_is_float(T) ||
-	intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
-	intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
-	when intrinsics.type_is_float(T) {
-		pt1 = linalg.lerp(pts[0], pts[1], subdiv)
-		pt2 = linalg.lerp(pts[1], pts[2], subdiv)
-		pt12 = linalg.lerp(pt1, pt2, subdiv)
-	} else {
-		subdiv2 := splat2Fixed(subdiv)
-		pt1 = lerpFixed(pts[0], pts[1], subdiv2)
-		pt2 = lerpFixed(pts[1], pts[2], subdiv2)
-		pt12 = lerpFixed(pt1, pt2, subdiv2)
-	}
+) where intrinsics.type_is_float(T) {
+	pt1 = linalg.lerp(pts[0], pts[1], subdiv)
+	pt2 = linalg.lerp(pts[1], pts[2], subdiv)
+	pt12 = linalg.lerp(pt1, pt2, subdiv)
 	return
 }
 
@@ -437,53 +365,20 @@ SubdivCubicBezier :: proc "contextless" (
 	subdiv: T,
 ) -> (
 	c0, c1, m, d0, d1: [2]T,
-) where intrinsics.type_is_float(T) ||
-	intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
-	intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
-	when intrinsics.type_is_float(T) {
-		subdiv2 := subdiv
-		lerp_ :: linalg.lerp
-	} else {
-		subdiv2 := splat2Fixed(subdiv)
-		lerp_ :: lerpFixed
-	}
-	p01 := lerp_(pts[0], pts[1], subdiv2)
-	p12 := lerp_(pts[1], pts[2], subdiv2)
-	p23 := lerp_(pts[2], pts[3], subdiv2)
+) where intrinsics.type_is_float(T) {
+	p01 := linalg.lerp(pts[0], pts[1], subdiv)
+	p12 := linalg.lerp(pts[1], pts[2], subdiv)
+	p23 := linalg.lerp(pts[2], pts[3], subdiv)
 
-	p012 := lerp_(p01, p12, subdiv2)
-	p123 := lerp_(p12, p23, subdiv2)
+	p012 := linalg.lerp(p01, p12, subdiv)
+	p123 := linalg.lerp(p12, p23, subdiv)
 
 	c0 = p01
 	c1 = p012
-	m = lerp_(p012, p123, subdiv2)
+	m = linalg.lerp(p012, p123, subdiv)
 	d0 = p123
 	d1 = p23
 	return
-}
-
-// Fixed-point version of linalg.lerp: result = a + t*(b - a). t is typically in [0, 1].
-lerpFixed :: proc "contextless" (
-	a, b, t: $T,
-) -> T where intrinsics.type_is_specialization_of(intrinsics.type_elem_type(T), fixed.Fixed) ||
-	intrinsics.type_is_specialization_of(
-		intrinsics.type_elem_type(T),
-		fixed_bcd.BCD,
-	) #no_bounds_check {
-	when intrinsics.type_is_array(T) {
-		res: T
-		#unroll for i in 0 ..< len(T) {
-			res[i] = lerpFixed(a[i], b[i], t[i])
-		}
-		return res
-	} else {
-		when intrinsics.type_is_specialization_of(intrinsics.type_elem_type(T), fixed.Fixed) {
-
-			return fixed.add(a, fixed.mul(t, fixed.sub(b, a)))
-		} else {
-			return fixed_bcd.add(a, fixed_bcd.mul(t, fixed_bcd.sub(b, a)))
-		}
-	}
 }
 
 PointDeltaInLine :: proc "contextless" (
@@ -503,15 +398,13 @@ PointInVector :: proc "contextless" (
 ) -> (
 	bool,
 	T,
-) where intrinsics.type_is_float(T) ||
-	intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
-	intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
-	zero := NumConst(0, T)
-	a := NumSub(v1.y, v0.y)
-	b := NumSub(v0.x, v1.x)
-	c := NumAdd(NumMul(v1.x, v0.y), NumMul(v0.x, v1.y))
-	res := NumAdd(NumAdd(NumMul(a, p.x), NumMul(b, p.y)), c)
-	return NumEqE(res, zero), res
+) where intrinsics.type_is_float(T) {
+	zero := T(0)
+	a := ((v1.y) - (v0.y))
+	b := ((v0.x) - (v1.x))
+	c := ((((v1.x) * (v0.y))) + (((v0.x) * (v1.y))))
+	res := ((((((a) * (p.x))) + (((b) * (p.y))))) + (c))
+	return (math.abs((res) - (zero)) <= epsilon(T) * T(16)), res
 }
 
 // > 0: left, < 0: right, == 0: on the line
@@ -519,28 +412,21 @@ PointLineLeftOrRight :: #force_inline proc "contextless" (
 	p: [2]$T,
 	l0: [2]T,
 	l1: [2]T,
-) -> T where intrinsics.type_is_float(T) ||
-	intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
-	intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
-	return NumSub(
-		NumMul(NumSub(l1.x, l0.x), NumSub(p.y, l0.y)),
-		NumMul(NumSub(p.x, l0.x), NumSub(l1.y, l0.y)),
-	)
+) -> T where intrinsics.type_is_float(T) {
+	return ((((((l1.x) - (l0.x))) * (((p.y) - (l0.y))))) - (((((p.x) - (l0.x))) * (((l1.y) - (l0.y))))))
 }
 
 PointInPolygon :: proc "contextless" (
 	p: [2]$T,
 	polygon: [][2]T,
-) -> PointInPolygonResult where intrinsics.type_is_float(T) ||
-	intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
-	intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
+) -> PointInPolygonResult where intrinsics.type_is_float(T) {
 	isPointOnSegment :: proc "contextless" (p: [2]$T, p1: [2]T, p2: [2]T) -> bool {
 		return(
 			CrossProductSign(p1, p2, p) == 0 &&
-			NumGe(p.x, NumMin(p1.x, p2.x)) &&
-			NumLe(p.x, NumMax(p1.x, p2.x)) &&
-			NumGe(p.y, NumMin(p1.y, p2.y)) &&
-			NumLe(p.y, NumMax(p1.y, p2.y)) \
+			((p.x) >= (((p1.x) < (p2.x) ? (p1.x) : (p2.x)))) &&
+			((p.x) <= (((p1.x) > (p2.x) ? (p1.x) : (p2.x)))) &&
+			((p.y) >= (((p1.y) < (p2.y) ? (p1.y) : (p2.y)))) &&
+			((p.y) <= (((p1.y) > (p2.y) ? (p1.y) : (p2.y)))) \
 		)
 	}
 	windingNumber := 0
@@ -549,77 +435,42 @@ PointInPolygon :: proc "contextless" (
 		p2 := polygon[(i + 1) % len(polygon)]
 		if isPointOnSegment(p, p1, p2) do return .On
 
-		if NumLe(p1.y, p.y) {
-			if NumGt(p2.y, p.y) && CrossProductSign(p1, p2, p) > 0 do windingNumber += 1
+		if ((p1.y) <= (p.y)) {
+			if ((p2.y) > (p.y)) && CrossProductSign(p1, p2, p) > 0 do windingNumber += 1
 		} else {
-			if NumLe(p2.y, p.y) && CrossProductSign(p1, p2, p) < 0 do windingNumber -= 1
+			if ((p2.y) <= (p.y)) && CrossProductSign(p1, p2, p) < 0 do windingNumber -= 1
 		}
 	}
 	return windingNumber != 0 ? .Inside : .Outside
 }
 
-vectorCross2Fixed :: #force_inline proc "contextless" (
-	a, b: [2]$E,
-) -> E where intrinsics.type_is_specialization_of(E, fixed.Fixed) ||
-	intrinsics.type_is_specialization_of(E, fixed_bcd.BCD) {
-	return NumSub(NumMul(a.x, b.y), NumMul(a.y, b.x))
-}
-
-vectorCross2Bcd :: #force_inline proc "contextless" (
-	a, b: [2]$E,
-) -> E where intrinsics.type_is_specialization_of(E, fixed_bcd.BCD) {
-	return fixed_bcd.sub(fixed_bcd.mul(a.x, b.y), fixed_bcd.mul(a.y, b.x))
-}
-
 CenterPointInPolygon :: proc "contextless" (
 	polygon: [][2]$T,
-) -> [2]T where intrinsics.type_is_float(T) ||
-	intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
-	intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
-	when intrinsics.type_is_float(T) {
-		area: f32 = 0
-		p: [2]T = {0, 0}
-		for i in 0 ..< len(polygon) {
-			j := (i + 1) % len(polygon)
-			factor := linalg.vector_cross2(polygon[i], polygon[j])
-			area += factor
-			p = (polygon[i] + polygon[j]) * math.splat_2(factor) + p
-		}
-		area = area / 2 * 6
-		p /= math.splat_2(area)
-		return p
-	} else {
-		threeT := NumConst(3, T)
-		area: T = {}
-		p: [2]T = {}
-		for i in 0 ..< len(polygon) {
-			j := (i + 1) % len(polygon)
-			factor := vectorCross2Fixed(polygon[i], polygon[j])
-			area = NumAdd(area, factor)
-			sumPt := [2]T{NumAdd(polygon[i].x, polygon[j].x), NumAdd(polygon[i].y, polygon[j].y)}
-			p.x = NumAdd(p.x, NumMul(sumPt.x, factor))
-			p.y = NumAdd(p.y, NumMul(sumPt.y, factor))
-		}
-		area = NumMul(area, threeT)
-		p.x = NumDiv(p.x, area)
-		p.y = NumDiv(p.y, area)
-		return p
+) -> [2]T where intrinsics.type_is_float(T) {
+	area: f32 = 0
+	p: [2]T = {0, 0}
+	for i in 0 ..< len(polygon) {
+		j := (i + 1) % len(polygon)
+		factor := linalg.vector_cross2(polygon[i], polygon[j])
+		area += factor
+		p = (polygon[i] + polygon[j]) * math.splat_2(factor) + p
 	}
+	area = area / 2 * 6
+	p /= math.splat_2(area)
+	return p
 }
 
 GetPolygonOrientation :: proc "contextless" (
 	polygon: [][2]$T,
-) -> PolyOrientation where intrinsics.type_is_float(T) ||
-	intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
-	intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
-	zero := NumConst(0, T)
+) -> PolyOrientation where intrinsics.type_is_float(T) {
+	zero := T(0)
 	res: T = zero
 	for i in 0 ..< len(polygon) {
 		j := (i + 1) % len(polygon)
-		factor := NumMul(NumSub(polygon[j].x, polygon[i].x), NumAdd(polygon[j].y, polygon[i].y))
-		res = NumAdd(res, factor)
+		factor := ((((polygon[j].x) - (polygon[i].x))) * (((polygon[j].y) + (polygon[i].y))))
+		res = ((res) + (factor))
 	}
-	return NumGt(res, zero) ? .Clockwise : .CounterClockwise
+	return ((res) > (zero)) ? .Clockwise : .CounterClockwise
 }
 
 PolygonSignedArea :: proc "contextless" (polygon: []linalg.Vector2f32) -> f32 {
@@ -639,8 +490,7 @@ LineInPolygon :: proc "contextless" (
 	b: [2]T,
 	polygon: [][2]T,
 	checkInsideLine := true,
-) -> bool where intrinsics.type_is_float(T) ||
-	intrinsics.type_is_specialization_of(T, fixed.Fixed) {
+) -> bool where intrinsics.type_is_float(T) {
 	//Points a, b must all be inside the polygon so that line a, b and polygon line segments do not intersect, so b does not need to be checked.
 	if checkInsideLine && PointInPolygon(a, polygon) do return true
 
@@ -650,8 +500,8 @@ LineInPolygon :: proc "contextless" (
 		j := (i + 1) % len(polygon)
 		ok, res = LinesIntersect2(polygon[i], polygon[j], a, b)
 		if ok == .intersect {
-			sameA := NumEqE(a.x, res.x) && NumEqE(a.y, res.y)
-			sameB := NumEqE(b.x, res.x) && NumEqE(b.y, res.y)
+			sameA := (math.abs((a.x) - (res.x)) <= epsilon(T) * T(16)) && (math.abs((a.y) - (res.y)) <= epsilon(T) * T(16))
+			sameB := (math.abs((b.x) - (res.x)) <= epsilon(T) * T(16)) && (math.abs((b.y) - (res.y)) <= epsilon(T) * T(16))
 			if sameA || sameB do continue
 			return true
 		}
@@ -676,41 +526,30 @@ LinesIntersect2 :: proc "contextless" (
 ) -> (
 	IntersectKind,
 	[2]T,
-) where intrinsics.type_is_float(T) ||
-	intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
-	intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
+) where intrinsics.type_is_float(T) {
 	if checkIsTouching {
-		sameAB1 := NumEq(a1.x, b1.x) && NumEq(a1.y, b1.y)
-		sameAB2 := NumEq(a1.x, b2.x) && NumEq(a1.y, b2.y)
-		sameA2B1 := NumEq(a2.x, b1.x) && NumEq(a2.y, b1.y)
-		sameA2B2 := NumEq(a2.x, b2.x) && NumEq(a2.y, b2.y)
+		sameAB1 := a1.x == b1.x && a1.y == b1.y
+		sameAB2 := a1.x == b2.x && a1.y == b2.y
+		sameA2B1 := a2.x == b1.x && a2.y == b1.y
+		sameA2B2 := a2.x == b2.x && a2.y == b2.y
 		if sameAB1 || sameAB2 do return .none, a1
 		else if sameA2B1 || sameA2B2 do return .none, a2
 	}
 
-	zero := NumConst(0, T)
-	den: T = NumSub(
-		NumMul(NumSub(b2.y, b1.y), NumSub(a2.x, a1.x)),
-		NumMul(NumSub(b2.x, b1.x), NumSub(a2.y, a1.y)),
-	)
-	if NumEq(den, zero) {
+	zero := T(0)
+	den := (b2.y - b1.y) * (a2.x - a1.x) - (b2.x - b1.x) * (a2.y - a1.y)
+	if den == zero {
 		return .collinear, {}
 	}
 
-	ua := NumSub(
-		NumMul(NumSub(b2.x, b1.x), NumSub(a1.y, b1.y)),
-		NumMul(NumSub(b2.y, b1.y), NumSub(a1.x, b1.x)),
-	)
-	ub := NumSub(
-		NumMul(NumSub(a2.x, a1.x), NumSub(a1.y, b1.y)),
-		NumMul(NumSub(a2.y, a1.y), NumSub(a1.x, b1.x)),
-	)
+	ua := (b2.x - b1.x) * (a1.y - b1.y) - (b2.y - b1.y) * (a1.x - b1.x)
+	ub := (a2.x - a1.x) * (a1.y - b1.y) - (a2.y - a1.y) * (a1.x - b1.x)
 
 	resDen :=
-		NumGt(den, zero) ? (NumGe(ua, zero) && NumGe(ub, zero) && NumLe(ua, den) && NumLe(ub, den)) : (NumGe(ua, den) && NumGe(ub, den) && NumLe(ua, zero) && NumLe(ub, zero))
+		den > zero ? (ua >= zero && ub >= zero && ua <= den && ub <= den) : (ua >= den && ub >= den && ua <= zero && ub <= zero)
 
-	t := NumDiv(ua, den)
-	return resDen ? .intersect : .none, [2]T{NumAdd(a1.x, NumMul(t, NumSub(a2.x, a1.x))), NumAdd(a1.y, NumMul(t, NumSub(a2.y, a1.y)))}
+	t := ua / den
+	return resDen ? .intersect : .none, [2]T{a1.x + t * (a2.x - a1.x), a1.y + t * (a2.y - a1.y)}
 }
 
 LinesIntersect3 :: proc "contextless" (
@@ -719,31 +558,20 @@ LinesIntersect3 :: proc "contextless" (
 	b1: [2]T,
 	b2: [2]T,
 	checkIsTouching: bool = false,
-) -> IntersectKind where intrinsics.type_is_float(T) ||
-	intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
-	intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
-	sameA1B1 := NumEq(a1.x, b1.x) && NumEq(a1.y, b1.y)
-	sameA2B1 := NumEq(a2.x, b1.x) && NumEq(a2.y, b1.y)
-	sameA1B2 := NumEq(a1.x, b2.x) && NumEq(a1.y, b2.y)
-	sameA2B2 := NumEq(a2.x, b2.x) && NumEq(a2.y, b2.y)
+) -> IntersectKind where intrinsics.type_is_float(T) {
+	sameA1B1 := a1.x == b1.x && a1.y == b1.y
+	sameA2B1 := a2.x == b1.x && a2.y == b1.y
+	sameA1B2 := a1.x == b2.x && a1.y == b2.y
+	sameA2B2 := a2.x == b2.x && a2.y == b2.y
 	if checkIsTouching && (sameA1B1 || sameA2B1 || sameA1B2 || sameA2B2) do return .none
 
-	zero := NumConst(0, T)
-	den: T = NumSub(
-		NumMul(NumSub(b2.y, b1.y), NumSub(a2.x, a1.x)),
-		NumMul(NumSub(b2.x, b1.x), NumSub(a2.y, a1.y)),
-	)
-	if NumEq(den, zero) do return .collinear
-	ua := NumSub(
-		NumMul(NumSub(b2.x, b1.x), NumSub(a1.y, b1.y)),
-		NumMul(NumSub(b2.y, b1.y), NumSub(a1.x, b1.x)),
-	)
-	ub := NumSub(
-		NumMul(NumSub(a2.x, a1.x), NumSub(a1.y, b1.y)),
-		NumMul(NumSub(a2.y, a1.y), NumSub(a1.x, b1.x)),
-	)
+	zero := T(0)
+	den := (b2.y - b1.y) * (a2.x - a1.x) - (b2.x - b1.x) * (a2.y - a1.y)
+	if den == zero do return .collinear
+	ua := (b2.x - b1.x) * (a1.y - b1.y) - (b2.y - b1.y) * (a1.x - b1.x)
+	ub := (a2.x - a1.x) * (a1.y - b1.y) - (a2.y - a1.y) * (a1.x - b1.x)
 	resDen :=
-		NumGt(den, zero) ? (NumGe(ua, zero) && NumGe(ub, zero) && NumLe(ua, den) && NumLe(ub, den)) : (NumGe(ua, den) && NumGe(ub, den) && NumLe(ua, zero) && NumLe(ub, zero))
+		den > zero ? (ua >= zero && ub >= zero && ua <= den && ub <= den) : (ua >= den && ub >= den && ua <= zero && ub <= zero)
 	return resDen ? .intersect : .none
 }
 
@@ -751,20 +579,11 @@ NearestPointBetweenPointAndLine :: proc "contextless" (
 	p: [2]$T,
 	l0: [2]T,
 	l1: [2]T,
-) -> [2]T where intrinsics.type_is_float(T) ||
-	intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
-	intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
-	when intrinsics.type_is_float(T) {
-		AB := l1 - l0
-		AC := p - l0
+) -> [2]T where intrinsics.type_is_float(T) {
+	AB := l1 - l0
+	AC := p - l0
 
-		return l0 + AB * (linalg.vector_dot(AB, AC) / linalg.vector_dot(AB, AB))
-	} else {
-		ab := [2]T{NumSub(l1.x, l0.x), NumSub(l1.y, l0.y)}
-		ac := [2]T{NumSub(p.x, l0.x), NumSub(p.y, l0.y)}
-		t := NumDiv(Vec2Dot(ab, ac), Vec2Dot(ab, ab))
-		return [2]T{NumAdd(l0.x, NumMul(ab.x, t)), NumAdd(l0.y, NumMul(ab.y, t))}
-	}
+	return l0 + AB * (linalg.vector_dot(AB, AC) / linalg.vector_dot(AB, AB))
 }
 
 Circle :: struct(T: typeid) where intrinsics.type_is_float(T) {
@@ -787,31 +606,8 @@ OppPolyOrientation :: #force_inline proc "contextless" (ccw: PolyOrientation) ->
 xyMirrorPoint :: #force_inline proc "contextless" (
 	pivot: [2]$T,
 	target: [2]T,
-) -> [2]T where intrinsics.type_is_float(T) ||
-	intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
-	intrinsics.type_is_specialization_of(T, fixed_bcd.Fixed) {
-	when intrinsics.type_is_float(T) {
-		return [2]T{2.0, 2.0} * pivot - target
-	} else {
-		when intrinsics.type_is_specialization_of(T, fixed.Fixed) {
-
-			add :: fixed.add
-			sub :: fixed.sub
-			mul :: fixed.mul
-			twoT :: T {
-				i = 2 << intrinsics.type_polymorphic_record_parameter_value(T, 1),
-			}
-		} else {
-			add :: fixed_bcd.add
-			sub :: fixed_bcd.sub
-			mul :: fixed_bcd.mul
-			twoT :: T {
-				i = 2 * fixed_bcd._SCALE_TABLE[intrinsics.type_polymorphic_record_parameter_value(T, 0) - 1],
-			}
-		}
-
-		return [2]T{sub(mul(twoT, pivot.x), target.x), sub(mul(twoT, pivot.y), target.y)}
-	}
+) -> [2]T where intrinsics.type_is_float(T) {
+	return [2]T{2.0, 2.0} * pivot - target
 }
 
 Area :: union($T: typeid) where intrinsics.type_is_numeric(T) {
@@ -845,26 +641,24 @@ ShortestLength2Line :: proc "contextless" (
 ) -> (
 	T,
 	T,
-) where intrinsics.type_is_float(T) ||
-	intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
-	intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
-	zero := NumConst(0, T)
-	one := NumConst(1, T)
-	dx := NumSub(l2.x, l1.x)
-	dy := NumSub(l2.y, l1.y)
-	ax := NumSub(pt.x, l1.x)
-	ay := NumSub(pt.y, l1.y)
-	qNum := NumAdd(NumMul(ax, dx), NumMul(ay, dy))
-	denom := NumAdd(NumMul(dx, dx), NumMul(dy, dy))
-	if NumLt(qNum, zero) {
-		return NumAdd(NumMul(ax, ax), NumMul(ay, ay)), one
-	} else if NumGt(qNum, denom) {
-		bx := NumSub(pt.x, l2.x)
-		by := NumSub(pt.y, l2.y)
-		return NumAdd(NumMul(bx, bx), NumMul(by, by)), one
+) where intrinsics.type_is_float(T) {
+	zero := T(0)
+	one := T(1)
+	dx := ((l2.x) - (l1.x))
+	dy := ((l2.y) - (l1.y))
+	ax := ((pt.x) - (l1.x))
+	ay := ((pt.y) - (l1.y))
+	qNum := ((((ax) * (dx))) + (((ay) * (dy))))
+	denom := ((((dx) * (dx))) + (((dy) * (dy))))
+	if ((qNum) < (zero)) {
+		return ((((ax) * (ax))) + (((ay) * (ay)))), one
+	} else if ((qNum) > (denom)) {
+		bx := ((pt.x) - (l2.x))
+		by := ((pt.y) - (l2.y))
+		return ((((bx) * (bx))) + (((by) * (by)))), one
 	} else {
-		cross := NumSub(NumMul(ax, dy), NumMul(dx, ay))
-		return NumMul(cross, cross), denom
+		cross := ((((ax) * (dy))) - (((dx) * (ay))))
+		return ((cross) * (cross)), denom
 	}
 }
 
@@ -997,13 +791,6 @@ sr2dMatrix2 :: proc "contextless" (
 
 
 @(require_results)
-splat2Fixed :: #force_inline proc "contextless" (
-	v: $T,
-) -> [2]T where intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
-	intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
-	return [2]T{v, v}
-}
-
 CvtQuadraticToCubic0 :: #force_inline proc "contextless" (
 	_start: [2]$T,
 	_control: [2]T,
@@ -1024,54 +811,42 @@ CvtQuadraticToCubic1 :: #force_inline proc "contextless" (
 @(require_results)
 CrossProductSign :: proc "contextless" (
 	p1, p2, p3: [2]$T,
-) -> int where intrinsics.type_is_float(T) ||
-	intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
-	intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
-	a := NumSub(p2.x, p1.x)
-	b := NumSub(p3.y, p2.y)
-	c := NumSub(p2.y, p1.y)
-	d := NumSub(p3.x, p2.x)
-	ab := NumMul(a, b)
-	cd := NumMul(c, d)
-	if NumGt(ab, cd) do return 1
-	if NumLt(ab, cd) do return -1
+) -> int where intrinsics.type_is_float(T) {
+	a := ((p2.x) - (p1.x))
+	b := ((p3.y) - (p2.y))
+	c := ((p2.y) - (p1.y))
+	d := ((p3.x) - (p2.x))
+	ab := ((a) * (b))
+	cd := ((c) * (d))
+	if ((ab) > (cd)) do return 1
+	if ((ab) < (cd)) do return -1
 	return 0
 }
 
 DotProduct :: proc "contextless" (
 	p1, p2, p3: [2]$T,
-) -> T where intrinsics.type_is_float(T) ||
-	intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
-	intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
-	a := NumSub(p2.x, p1.x)
-	b := NumSub(p3.x, p2.x)
-	c := NumSub(p2.y, p1.y)
-	d := NumSub(p3.y, p2.y)
-	return NumAdd(NumMul(a, b), NumMul(c, d))
+) -> T where intrinsics.type_is_float(T) {
+	a := ((p2.x) - (p1.x))
+	b := ((p3.x) - (p2.x))
+	c := ((p2.y) - (p1.y))
+	d := ((p3.y) - (p2.y))
+	return ((((a) * (b))) + (((c) * (d))))
 }
 
 // InCircleTest: returns determinant. Positive => D inside circle through A,B,C (when ABC is CCW).
 InCircleTest :: proc "contextless" (
 	ptA, ptB, ptC, ptD: [2]$T,
-) -> T where intrinsics.type_is_float(T) ||
-	intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
-	intrinsics.type_is_specialization_of(T, fixed_bcd.BCD) {
-	m00 := NumSub(ptA.x, ptD.x)
-	m01 := NumSub(ptA.y, ptD.y)
-	m02 := NumAdd(NumMul(m00, m00), NumMul(m01, m01))
-	m10 := NumSub(ptB.x, ptD.x)
-	m11 := NumSub(ptB.y, ptD.y)
-	m12 := NumAdd(NumMul(m10, m10), NumMul(m11, m11))
-	m20 := NumSub(ptC.x, ptD.x)
-	m21 := NumSub(ptC.y, ptD.y)
-	m22 := NumAdd(NumMul(m20, m20), NumMul(m21, m21))
-	return NumAdd(
-		NumSub(
-			NumMul(m00, NumSub(NumMul(m11, m22), NumMul(m21, m12))),
-			NumMul(m10, NumSub(NumMul(m01, m22), NumMul(m21, m02))),
-		),
-		NumMul(m20, NumSub(NumMul(m01, m12), NumMul(m11, m02))),
-	)
+) -> T where intrinsics.type_is_float(T) {
+	m00 := ((ptA.x) - (ptD.x))
+	m01 := ((ptA.y) - (ptD.y))
+	m02 := ((((m00) * (m00))) + (((m01) * (m01))))
+	m10 := ((ptB.x) - (ptD.x))
+	m11 := ((ptB.y) - (ptD.y))
+	m12 := ((((m10) * (m10))) + (((m11) * (m11))))
+	m20 := ((ptC.x) - (ptD.x))
+	m21 := ((ptC.y) - (ptD.y))
+	m22 := ((((m20) * (m20))) + (((m21) * (m21))))
+	return ((((((m00) * (((((m11) * (m22))) - (((m21) * (m12))))))) - (((m10) * (((((m01) * (m22))) - (((m21) * (m02))))))))) + (((m20) * (((((m01) * (m12))) - (((m11) * (m02))))))))
 }
 
 GetAngle :: proc(a, b, c: [2]$T) -> T where intrinsics.type_is_float(T) {

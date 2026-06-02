@@ -3,7 +3,6 @@ package linalg_ex
 import "base:intrinsics"
 //import "core:fmt"
 import "core:math"
-import "core:math/fixed"
 import "core:math/linalg"
 import "core:testing"
 
@@ -24,7 +23,11 @@ _rootEps :: #force_inline proc "contextless" ($T: typeid) -> T where intrinsics.
 }
 
 @(private = "file")
-_addUnitRoot :: proc "contextless" (roots: ^[4]$T, count: ^int, root: T) where intrinsics.type_is_float(T) {
+_addUnitRoot :: proc "contextless" (
+	roots: ^[4]$T,
+	count: ^int,
+	root: T,
+) where intrinsics.type_is_float(T) {
 	eps := _rootEps(T)
 	if root < -eps || root > 1 + eps || count^ >= len(roots^) do return
 	r := math.clamp(root, T(0), T(1))
@@ -36,14 +39,22 @@ _addUnitRoot :: proc "contextless" (roots: ^[4]$T, count: ^int, root: T) where i
 }
 
 @(private = "file")
-_solveLinearUnit :: proc "contextless" (roots: ^[4]$T, count: ^int, b, c: T) where intrinsics.type_is_float(T) {
+_solveLinearUnit :: proc "contextless" (
+	roots: ^[4]$T,
+	count: ^int,
+	b, c: T,
+) where intrinsics.type_is_float(T) {
 	eps := _rootEps(T)
 	if math.abs(b) <= eps do return
 	_addUnitRoot(roots, count, -c / b)
 }
 
 @(private = "file")
-_solveQuadraticUnit :: proc "contextless" (roots: ^[4]$T, count: ^int, a, b, c: T) where intrinsics.type_is_float(T) {
+_solveQuadraticUnit :: proc "contextless" (
+	roots: ^[4]$T,
+	count: ^int,
+	a, b, c: T,
+) where intrinsics.type_is_float(T) {
 	eps := _rootEps(T)
 	if math.abs(a) <= eps {
 		_solveLinearUnit(roots, count, b, c)
@@ -61,7 +72,11 @@ _solveQuadraticUnit :: proc "contextless" (roots: ^[4]$T, count: ^int, a, b, c: 
 }
 
 @(private = "file")
-_solveCubicUnit :: proc "contextless" (roots: ^[4]$T, count: ^int, a, b, c, d: T) where intrinsics.type_is_float(T) {
+_solveCubicUnit :: proc "contextless" (
+	roots: ^[4]$T,
+	count: ^int,
+	a, b, c, d: T,
+) where intrinsics.type_is_float(T) {
 	eps := _rootEps(T)
 	if math.abs(a) <= eps {
 		_solveQuadraticUnit(roots, count, b, c, d)
@@ -116,7 +131,10 @@ _evalAnyBezier :: proc "contextless" (
 }
 
 @(private = "file")
-_lineTForPoint :: proc "contextless" (line: [4][2]$T, p: [2]T) -> T where intrinsics.type_is_float(T) {
+_lineTForPoint :: proc "contextless" (
+	line: [4][2]$T,
+	p: [2]T,
+) -> T where intrinsics.type_is_float(T) {
 	dx := line[1].x - line[0].x
 	dy := line[1].y - line[0].y
 	den := dx * dx + dy * dy
@@ -215,12 +233,8 @@ _splitHalf :: proc "contextless" (
 	pts: [4][2]$T,
 ) -> (
 	left, right: [4][2]T,
-) where intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
-	intrinsics.type_is_float(T) {
-	half :=
-		T(0.5) when intrinsics.type_is_float(T) else T {
-			i = 1 << intrinsics.type_polymorphic_record_parameter_value(T, 1) >> 1,
-		}
+) where intrinsics.type_is_float(T) {
+	half := T(0.5)
 	switch kind {
 	case .Line:
 		mid := SubdivLine([2][2]T{pts[0], pts[1]}, half)
@@ -243,9 +257,8 @@ _splitHalf :: proc "contextless" (
 @(private = "file")
 _distToBaseline :: #force_inline proc "contextless" (
 	px, py, ax, ay, dx, dy: $T,
-) -> T where intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
-	intrinsics.type_is_float(T) {
-	return NumSub(NumMul(NumSub(px, ax), dy), NumMul(NumSub(py, ay), dx))
+) -> T where intrinsics.type_is_float(T) {
+	return (px - ax) * dy - (py - ay) * dx
 }
 
 // Clip convex hull of distance control polygon against fat line band [d_min, d_max].
@@ -257,44 +270,40 @@ _clipHull :: proc "contextless" (
 	dMin, dMax: T,
 ) -> (
 	tLo, tHi: T,
-) where intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
-	intrinsics.type_is_float(T) {
-	one :=
-		T(1) when intrinsics.type_is_float(T) else T {
-			i = 1 << intrinsics.type_polymorphic_record_parameter_value(T, 1),
-		}
-	zero := T(0) when intrinsics.type_is_float(T) else T{i = 0}
+) where intrinsics.type_is_float(T) {
+	one := T(1)
+	zero := T(0)
 	tLo = one
 	tHi = zero
 
 	for i in 0 ..= n {
-		if NumGe(d[i], dMin) && NumLe(d[i], dMax) {
-			ti := NumRatio(i, n, T)
-			if NumLt(ti, tLo) do tLo = ti
-			if NumGt(ti, tHi) do tHi = ti
+		if d[i] >= dMin && d[i] <= dMax {
+			ti := T(i) / T(n)
+			if ti < tLo do tLo = ti
+			if ti > tHi do tHi = ti
 		}
 	}
 
 	for i in 0 ..= n {
 		for j in i + 1 ..= n {
-			ti := NumRatio(i, n, T)
-			tj := NumRatio(j, n, T)
-			dd := NumSub(d[j], d[i])
-			if NumEq(dd, zero) do continue
-			dt := NumSub(tj, ti)
+			ti := T(i) / T(n)
+			tj := T(j) / T(n)
+			dd := d[j] - d[i]
+			if dd == zero do continue
+			dt := tj - ti
 
-			if NumLt(d[i], dMin) != NumLt(d[j], dMin) {
-				tc := NumAdd(ti, NumMul(NumDiv(NumSub(dMin, d[i]), dd), dt))
-				if NumGe(tc, zero) && NumLe(tc, one) {
-					if NumLt(tc, tLo) do tLo = tc
-					if NumGt(tc, tHi) do tHi = tc
+			if (d[i] < dMin) != (d[j] < dMin) {
+				tc := ti + (dMin - d[i]) / dd * dt
+				if tc >= zero && tc <= one {
+					if tc < tLo do tLo = tc
+					if tc > tHi do tHi = tc
 				}
 			}
-			if NumGt(d[i], dMax) != NumGt(d[j], dMax) {
-				tc := NumAdd(ti, NumMul(NumDiv(NumSub(dMax, d[i]), dd), dt))
-				if NumGe(tc, zero) && NumLe(tc, one) {
-					if NumLt(tc, tLo) do tLo = tc
-					if NumGt(tc, tHi) do tHi = tc
+			if (d[i] > dMax) != (d[j] > dMax) {
+				tc := ti + (dMax - d[i]) / dd * dt
+				if tc >= zero && tc <= one {
+					if tc < tLo do tLo = tc
+					if tc > tHi do tHi = tc
 				}
 			}
 		}
@@ -306,12 +315,12 @@ _clipHull :: proc "contextless" (
 _BezClipWork :: struct($T: typeid) {
 	a:       [4][2]T,
 	b:       [4][2]T,
-	kindA:  BezierKind,
-	kindB:  BezierKind,
-	aLo:    T,
-	aHi:    T,
-	bLo:    T,
-	bHi:    T,
+	kindA:   BezierKind,
+	kindB:   BezierKind,
+	aLo:     T,
+	aHi:     T,
+	bLo:     T,
+	bHi:     T,
 	swapped: bool, // true when a/b correspond to original b/a
 }
 
@@ -321,16 +330,12 @@ _extractSub :: proc "contextless" (
 	kind: BezierKind,
 	pts: [4][2]$T,
 	tLo, tHi: T,
-) -> [4][2]T where intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
-	intrinsics.type_is_float(T) {
-	one :=
-		T(1) when intrinsics.type_is_float(T) else T {
-			i = 1 << intrinsics.type_polymorphic_record_parameter_value(T, 1),
-		}
-	zero := T(0) when intrinsics.type_is_float(T) else T{i = 0}
+) -> [4][2]T where intrinsics.type_is_float(T) {
+	one := T(1)
+	zero := T(0)
 	result := pts
 
-	if NumGt(tLo, zero) {
+	if tLo > zero {
 		switch kind {
 		case .Line:
 			p := SubdivLine([2][2]T{pts[0], pts[1]}, tLo)
@@ -344,10 +349,10 @@ _extractSub :: proc "contextless" (
 		}
 	}
 
-	denom := NumSub(one, tLo)
-	if NumLe(denom, zero) do return result
-	tAdj := NumDiv(NumSub(tHi, tLo), denom)
-	if NumGe(tAdj, one) do return result
+	denom := one - tLo
+	if denom <= zero do return result
+	tAdj := (tHi - tLo) / denom
+	if tAdj >= one do return result
 
 	switch kind {
 	case .Line:
@@ -363,9 +368,86 @@ _extractSub :: proc "contextless" (
 	return result
 }
 
-// Bézier Clipping intersection (Sederberg-Nishita).
-// Returns all intersections found (up to fixed capacity), with each input curve's t.
-GetBezierIntersectPt :: proc "contextless" (
+// ─── Recursive AABB Subdivision 교차 검사 (빠른 버전) ───────────────
+// Line+Line → 즉시 라인 교차
+// 그 외 → AABB overlap → recursive de Casteljau → leaf line-line
+
+DEPTH_LIMIT :: 20
+
+@(private = "file")
+_linesFromBezier :: proc "contextless" (kind: BezierKind, pts: [4][2]$T) -> (a, b: [2]T) where intrinsics.type_is_float(T) {
+	o := bezierOrder(kind)
+	return pts[0], pts[o - 1]
+}
+
+@(private = "file")
+_controlPointAABB :: proc "contextless" (kind: BezierKind, pts: [4][2]$T) -> (minX, minY, maxX, maxY: T) where intrinsics.type_is_float(T) {
+	n := bezierOrder(kind)
+	minX = pts[0].x; maxX = pts[0].x
+	minY = pts[0].y; maxY = pts[0].y
+	for i in 1 ..< n {
+		if pts[i].x < minX do minX = pts[i].x
+		if pts[i].x > maxX do maxX = pts[i].x
+		if pts[i].y < minY do minY = pts[i].y
+		if pts[i].y > maxY do maxY = pts[i].y
+	}
+	return
+}
+
+@(private = "file")
+_lineLineIntersection :: proc "contextless" (a, b: [4][2]$T) -> (count: int, ips: [MaxBezierIntersections][2]T, tAs, tBs: [MaxBezierIntersections]T) where intrinsics.type_is_float(T) {
+	if LinesIntersect3(a[0], a[1], b[0], b[1]) != .intersect do return 0, {}, {}, {}
+	ips[0] = {linalg.lerp(a[0].x, a[1].x, 0.5), linalg.lerp(a[0].y, a[1].y, 0.5)}
+	tAs[0] = 0.5; tBs[0] = 0.5
+	return 1, ips, tAs, tBs
+}
+
+@(private = "file")
+_intersectRecursive :: proc(
+	$T: typeid,
+	kindA: BezierKind, aIn: [4][2]T, aLo, aHi: T,
+	kindB: BezierKind, bIn: [4][2]T, bLo, bHi: T,
+	count: ^int, ips: ^[MaxBezierIntersections][2]T, tAs, tBs: ^[MaxBezierIntersections]T,
+	depth: int,
+) where intrinsics.type_is_float(T) {
+	if depth >= DEPTH_LIMIT {
+		la0, la1 := _linesFromBezier(kindA, aIn)
+		lb0, lb1 := _linesFromBezier(kindB, bIn)
+		if LinesIntersect3(la0, la1, lb0, lb1) == .intersect {
+			if count^ < MaxBezierIntersections {
+				ips[count^] = linalg.lerp(la0, la1, 0.5)
+				tAs[count^] = (aLo + aHi) / 2
+				tBs[count^] = (bLo + bHi) / 2
+				count^ += 1
+			}
+		}
+		return
+	}
+
+	// AABB overlap 체크
+	aMinX, aMinY, aMaxX, aMaxY := _controlPointAABB(kindA, aIn)
+	bMinX, bMinY, bMaxX, bMaxY := _controlPointAABB(kindB, bIn)
+	if aMaxX < bMinX || bMaxX < aMinX || aMaxY < bMinY || bMaxY < aMinY do return
+
+	// 더 큰 AABB 쪽을 subdivision
+	aDiag := (aMaxX - aMinX) * (aMaxX - aMinX) + (aMaxY - aMinY) * (aMaxY - aMinY)
+	bDiag := (bMaxX - bMinX) * (bMaxX - bMinX) + (bMaxY - bMinY) * (bMaxY - bMinY)
+	if bDiag > aDiag {
+		bLeft, bRight := _splitHalf(kindB, bIn)
+		bMid := (bLo + bHi) / 2
+		_intersectRecursive(T, kindA, aIn, aLo, aHi, kindB, bLeft,  bLo, bMid, count, ips, tAs, tBs, depth + 1)
+		_intersectRecursive(T, kindA, aIn, aLo, aHi, kindB, bRight, bMid, bHi, count, ips, tAs, tBs, depth + 1)
+	} else {
+		aLeft, aRight := _splitHalf(kindA, aIn)
+		aMid := (aLo + aHi) / 2
+		_intersectRecursive(T, kindA, aLeft,  aLo, aMid, kindB, bIn, bLo, bHi, count, ips, tAs, tBs, depth + 1)
+		_intersectRecursive(T, kindA, aRight, aMid, aHi, kindB, bIn, bLo, bHi, count, ips, tAs, tBs, depth + 1)
+	}
+}
+
+// 빠른 교차 검사 — recursive AABB subdivision.
+// Line+Line은 즉시 처리, 그 외는 AABB overlap → de Casteljau 분할 → leaf line-line.
+GetBezierIntersectPt :: proc(
 	kindA: BezierKind,
 	aIn: [4][2]$T,
 	kindB: BezierKind,
@@ -375,66 +457,78 @@ GetBezierIntersectPt :: proc "contextless" (
 	ips: [MaxBezierIntersections][2]T,
 	tAs: [MaxBezierIntersections]T,
 	tBs: [MaxBezierIntersections]T,
-) where intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
-	intrinsics.type_is_float(T) {
-	when intrinsics.type_is_float(T) {
-		if kindA == .Line {
-			return _lineCurveIntersections(aIn, kindB, bIn)
-		}
-		if kindB == .Line {
-			count, ips, tLine, tCurve := _lineCurveIntersections(bIn, kindA, aIn)
-			return count, ips, tCurve, tLine
-		}
+) where intrinsics.type_is_float(T) {
+	if kindA == .Line && kindB == .Line {
+		return _lineLineIntersection(aIn, bIn)
+	}
+	count = 0
+	_intersectRecursive(T, kindA, aIn, 0, 1, kindB, bIn, 0, 1, &count, &ips, &tAs, &tBs, 0)
+	return
+}
+
+// ─── Sederberg-Nishita Bézier Clipping (레퍼런스) ──────────────────
+GetBezierIntersectPtSlow :: proc(
+	kindA: BezierKind,
+	aIn: [4][2]$T,
+	kindB: BezierKind,
+	bIn: [4][2]T,
+) -> (
+	count: int,
+	ips: [MaxBezierIntersections][2]T,
+	tAs: [MaxBezierIntersections]T,
+	tBs: [MaxBezierIntersections]T,
+) where intrinsics.type_is_float(T) {
+	if kindA == .Line {
+		return _lineCurveIntersections(aIn, kindB, bIn)
+	}
+	if kindB == .Line {
+		count, ips, tLine, tCurve := _lineCurveIntersections(bIn, kindA, aIn)
+		return count, ips, tCurve, tLine
 	}
 
-	one :=
-		T(1) when intrinsics.type_is_float(T) else T {
-			i = 1 << intrinsics.type_polymorphic_record_parameter_value(T, 1),
-		}
-	zero := T(0) when intrinsics.type_is_float(T) else T{i = 0}
-	eps: T = epsilon(T) when intrinsics.type_is_float(T) else T{}
-	epsHit := NumMul(eps, NumConst(10, T)) when intrinsics.type_is_float(T) else zero
-	fourFifth := NumRatio(4, 5, T)
+	one := T(1)
+	zero := T(0)
+	eps := epsilon(T)
+	epsHit := eps * 10
+	fourFifth := T(0.8)
 
 	Work :: _BezClipWork(T)
-	stack: [64]Work
-	sp := 1
-	stack[0] = Work {
+	stack := make([dynamic]Work, context.temp_allocator)
+	append(&stack, Work {
 		a       = aIn,
 		b       = bIn,
-		kindA  = kindA,
-		kindB  = kindB,
-		aLo    = zero,
-		aHi    = one,
-		bLo    = zero,
-		bHi    = one,
+		kindA   = kindA,
+		kindB   = kindB,
+		aLo     = zero,
+		aHi     = one,
+		bLo     = zero,
+		bHi     = one,
 		swapped = false,
-	}
+	})
 
-	for sp > 0 {
-		sp -= 1
-		w := stack[sp]
+	for len(stack) > 0 {
+		w := pop(&stack)
 
-		aRange := NumSub(w.aHi, w.aLo)
-		bRange := NumSub(w.bHi, w.bLo)
+		aRange := w.aHi - w.aLo
+		bRange := w.bHi - w.bLo
 
-		if NumLe(aRange, eps) && NumLe(bRange, eps) {
+		if aRange <= eps && bRange <= eps {
 			na := bezierOrder(w.kindA) - 1
-			ip := [2]T{NumMid(w.a[0].x, w.a[na].x), NumMid(w.a[0].y, w.a[na].y)}
+			ip := [2]T{(w.a[0].x + w.a[na].x) * 0.5, (w.a[0].y + w.a[na].y) * 0.5}
 			tA: T
 			tB: T
 			if !w.swapped {
-				tA = NumMid(w.aLo, w.aHi)
-				tB = NumMid(w.bLo, w.bHi)
+				tA = (w.aLo + w.aHi) * 0.5
+				tB = (w.bLo + w.bHi) * 0.5
 			} else {
-				tA = NumMid(w.bLo, w.bHi)
-				tB = NumMid(w.aLo, w.aHi)
+				tA = (w.bLo + w.bHi) * 0.5
+				tB = (w.aLo + w.aHi) * 0.5
 			}
 
 			isDup := false
 			for i in 0 ..< count {
-				if NumLe(NumAbs(NumSub(tAs[i], tA)), epsHit) &&
-				   NumLe(NumAbs(NumSub(tBs[i], tB)), epsHit) {
+				if math.abs(tAs[i] - tA) <= epsHit &&
+				   math.abs(tBs[i] - tB) <= epsHit {
 					isDup = true
 					break
 				}
@@ -451,111 +545,104 @@ GetBezierIntersectPt :: proc "contextless" (
 		na := bezierOrder(w.kindA) - 1
 		ax := w.a[0].x
 		ay := w.a[0].y
-		dx := NumSub(w.a[na].x, ax)
-		dy := NumSub(w.a[na].y, ay)
+		dx := w.a[na].x - ax
+		dy := w.a[na].y - ay
 
-		if NumEq(dx, zero) && NumEq(dy, zero) {
+		if dx == zero && dy == zero {
 			continue
 		}
 
 		dMin := zero
 		dMax := zero
 		for i in 1 ..< na {
-			d := _distToBaseline(w.a[i].x, w.a[i].y, ax, ay, dx, dy)
-			if NumLt(d, dMin) do dMin = d
-			if NumGt(d, dMax) do dMax = d
+			d := (w.a[i].x - ax) * dy - (w.a[i].y - ay) * dx
+			if d < dMin do dMin = d
+			if d > dMax do dMax = d
 		}
 
 		nb := bezierOrder(w.kindB) - 1
 		db: [4]T
 		for i in 0 ..= nb {
-			db[i] = _distToBaseline(w.b[i].x, w.b[i].y, ax, ay, dx, dy)
+			db[i] = (w.b[i].x - ax) * dy - (w.b[i].y - ay) * dx
 		}
 
 		clipLo, clipHi := _clipHull(db, nb, dMin, dMax)
-		if NumGt(clipLo, clipHi) do continue
+		if clipLo > clipHi do continue
 
-		if NumLt(clipLo, zero) do clipLo = zero
-		if NumGt(clipHi, one) do clipHi = one
+		if clipLo < zero do clipLo = zero
+		if clipHi > one do clipHi = one
 
-		bSpan := NumSub(w.bHi, w.bLo)
-		newBLo := NumAdd(w.bLo, NumMul(clipLo, bSpan))
-		newBHi := NumAdd(w.bLo, NumMul(clipHi, bSpan))
+		bSpan := w.bHi - w.bLo
+		newBLo := w.bLo + clipLo * bSpan
+		newBHi := w.bLo + clipHi * bSpan
 		bClipped := _extractSub(w.kindB, w.b, clipLo, clipHi)
 
-		clipRange := NumSub(clipHi, clipLo)
+		clipRange := clipHi - clipLo
 
-		if NumGt(clipRange, fourFifth) {
-			if sp + 2 > len(stack) do continue
-			if NumGe(aRange, bRange) {
+		if clipRange > fourFifth {
+			if aRange >= bRange {
 				aLeft, aRight := _splitHalf(w.kindA, w.a)
-				aMid := NumMid(w.aLo, w.aHi)
-				stack[sp] = Work {
+				aMid := (w.aLo + w.aHi) * 0.5
+				append(&stack, Work {
 					a       = bClipped,
 					b       = aLeft,
-					kindA  = w.kindB,
-					kindB  = w.kindA,
-					aLo    = newBLo,
-					aHi    = newBHi,
-					bLo    = w.aLo,
-					bHi    = aMid,
+					kindA   = w.kindB,
+					kindB   = w.kindA,
+					aLo     = newBLo,
+					aHi     = newBHi,
+					bLo     = w.aLo,
+					bHi     = aMid,
 					swapped = !w.swapped,
-				}
-				sp += 1
-				stack[sp] = Work {
+				})
+				append(&stack, Work {
 					a       = bClipped,
 					b       = aRight,
-					kindA  = w.kindB,
-					kindB  = w.kindA,
-					aLo    = newBLo,
-					aHi    = newBHi,
-					bLo    = aMid,
-					bHi    = w.aHi,
+					kindA   = w.kindB,
+					kindB   = w.kindA,
+					aLo     = newBLo,
+					aHi     = newBHi,
+					bLo     = aMid,
+					bHi     = w.aHi,
 					swapped = !w.swapped,
-				}
-				sp += 1
+				})
 			} else {
 				bLeft, bRight := _splitHalf(w.kindB, bClipped)
-				bMid := NumMid(newBLo, newBHi)
-				stack[sp] = Work {
+				bMid := (newBLo + newBHi) * 0.5
+				append(&stack, Work {
 					a       = bLeft,
 					b       = w.a,
-					kindA  = w.kindB,
-					kindB  = w.kindA,
-					aLo    = newBLo,
-					aHi    = bMid,
-					bLo    = w.aLo,
-					bHi    = w.aHi,
+					kindA   = w.kindB,
+					kindB   = w.kindA,
+					aLo     = newBLo,
+					aHi     = bMid,
+					bLo     = w.aLo,
+					bHi     = w.aHi,
 					swapped = !w.swapped,
-				}
-				sp += 1
-				stack[sp] = Work {
+				})
+				append(&stack, Work {
 					a       = bRight,
 					b       = w.a,
-					kindA  = w.kindB,
-					kindB  = w.kindA,
-					aLo    = bMid,
-					aHi    = newBHi,
-					bLo    = w.aLo,
-					bHi    = w.aHi,
+					kindA   = w.kindB,
+					kindB   = w.kindA,
+					aLo     = bMid,
+					aHi     = newBHi,
+					bLo     = w.aLo,
+					bHi     = w.aHi,
 					swapped = !w.swapped,
-				}
-				sp += 1
+				})
 			}
 		} else {
-			if sp + 1 > len(stack) do continue
-			stack[sp] = Work {
+			append(&stack, Work {
 				a       = bClipped,
 				b       = w.a,
-				kindA  = w.kindB,
-				kindB  = w.kindA,
-				aLo    = newBLo,
-				aHi    = newBHi,
-				bLo    = w.aLo,
-				bHi    = w.aHi,
+				kindA   = w.kindB,
+				kindB   = w.kindA,
+				aLo     = newBLo,
+				aHi     = newBHi,
+				bLo     = w.aLo,
+				bHi     = w.aHi,
 				swapped = !w.swapped,
-			}
-			sp += 1
+			})
 		}
 	}
 	return count, ips, tAs, tBs
@@ -569,38 +656,33 @@ GetBezierTFromPoint :: proc "contextless" (
 ) -> (
 	t: T,
 	ok: bool,
-) where intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
-	intrinsics.type_is_float(T) {
-	zero := T(0) when intrinsics.type_is_float(T) else T{i = 0}
-	one :=
-		T(1) when intrinsics.type_is_float(T) else T {
-			i = 1 << intrinsics.type_polymorphic_record_parameter_value(T, 1),
-		}
-	ten := NumConst(10, T)
+) where intrinsics.type_is_float(T) {
+	zero := T(0)
+	one := T(1)
 	lo := zero
 	hi := one
 
 	for i in 0 ..< 64 {
-		mid := NumMid(lo, hi)
+		mid := (lo + hi) / T(2)
 		p := EvalBezier(kind, pts, mid)
-		diff := Vec2Sub(p, point)
-		if NumEqE(NumAbs(diff[0]), NumAbs(diff[1])) {
+		diff := p - point
+		if math.abs(math.abs(diff[0]) - math.abs(diff[1])) <= epsilon(T) * T(16) {
 			return mid, true
 		}
 
 		// Use tangent direction to choose the next half interval.
 		tangent := EvalBezierTangent(kind, pts, mid)
-		if NumGt(Vec2Dot(tangent, diff), zero) {
+		if tangent[0] * diff[0] + tangent[1] * diff[1] > zero {
 			hi = mid
 		} else {
 			lo = mid
 		}
 	}
 
-	mid := NumMid(lo, hi)
+	mid := (lo + hi) / T(2)
 	p := EvalBezier(kind, pts, mid)
-	diff := Vec2Sub(p, point)
-	if NumEqE(NumAbs(diff[0]), NumAbs(diff[1])) {
+	diff := p - point
+	if math.abs(math.abs(diff[0]) - math.abs(diff[1])) <= epsilon(T) * T(16) {
 		return mid, true
 	}
 
@@ -612,42 +694,32 @@ EvalBezier :: proc "contextless" (
 	kind: BezierKind,
 	pts: [4][2]$T,
 	t: T,
-) -> [2]T where intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
-	intrinsics.type_is_float(T) {
-	one :=
-		T(1) when intrinsics.type_is_float(T) else T {
-			i = 1 << intrinsics.type_polymorphic_record_parameter_value(T, 1),
-		}
-	u := NumSub(one, t)
-	two := NumConst(2, T)
-	three := NumConst(3, T)
+) -> [2]T where intrinsics.type_is_float(T) {
+	one := T(1)
+	u := one - t
+	two := T(2)
+	three := T(3)
 	#partial switch kind {
 	case .Quad:
 		p0, p1, p2 := pts[0], pts[1], pts[2]
-		uu := NumMul(u, u)
-		tt := NumMul(t, t)
-		ut2 := NumMul(NumMul(two, u), t)
+		uu := ((u) * (u))
+		tt := ((t) * (t))
+		ut2 := two * u * t
 		return {
-			NumAdd(NumAdd(NumMul(uu, p0[0]), NumMul(ut2, p1[0])), NumMul(tt, p2[0])),
-			NumAdd(NumAdd(NumMul(uu, p0[1]), NumMul(ut2, p1[1])), NumMul(tt, p2[1])),
+			uu * p0[0] + ut2 * p1[0] + tt * p2[0],
+			uu * p0[1] + ut2 * p1[1] + tt * p2[1],
 		}
 	case .Cubic:
 		p0, p1, p2, p3 := pts[0], pts[1], pts[2], pts[3]
-		uu := NumMul(u, u)
-		tt := NumMul(t, t)
-		uuu := NumMul(uu, u)
-		ttt := NumMul(tt, t)
-		uut3 := NumMul(NumMul(three, uu), t)
-		utt3 := NumMul(NumMul(three, u), tt)
+		uu := ((u) * (u))
+		tt := ((t) * (t))
+		uuu := ((uu) * (u))
+		ttt := ((tt) * (t))
+		uut3 := three * uu * t
+		utt3 := three * u * tt
 		return {
-			NumAdd(
-				NumAdd(NumAdd(NumMul(uuu, p0[0]), NumMul(uut3, p1[0])), NumMul(utt3, p2[0])),
-				NumMul(ttt, p3[0]),
-			),
-			NumAdd(
-				NumAdd(NumAdd(NumMul(uuu, p0[1]), NumMul(uut3, p1[1])), NumMul(utt3, p2[1])),
-				NumMul(ttt, p3[1]),
-			),
+			uuu * p0[0] + uut3 * p1[0] + utt3 * p2[0] + ttt * p3[0],
+			uuu * p0[1] + uut3 * p1[1] + utt3 * p2[1] + ttt * p3[1],
 		}
 	}
 	return {}
@@ -658,52 +730,30 @@ EvalBezierTangent :: proc "contextless" (
 	kind: BezierKind,
 	pts: [4][2]$T,
 	t: T,
-) -> [2]T where intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
-	intrinsics.type_is_float(T) {
-	one :=
-		T(1) when intrinsics.type_is_float(T) else T {
-			i = 1 << intrinsics.type_polymorphic_record_parameter_value(T, 1),
-		}
-	u := NumSub(one, t)
-	two := NumConst(2, T)
-	three := NumConst(3, T)
-	six := NumConst(6, T)
+) -> [2]T where intrinsics.type_is_float(T) {
+	one := T(1)
+	u := one - t
+	two := T(2)
+	three := T(3)
+	six := T(6)
 	switch kind {
 	case .Line:
 		p0, p1 := pts[0], pts[1]
-		return {NumSub(p1[0], p0[0]), NumSub(p1[1], p0[1])}
+		return {p1[0] - p0[0], p1[1] - p0[1]}
 	case .Quad:
 		p0, p1, p2 := pts[0], pts[1], pts[2]
 		return {
-			NumAdd(
-				NumMul(NumMul(two, u), NumSub(p1[0], p0[0])),
-				NumMul(NumMul(two, t), NumSub(p2[0], p1[0])),
-			),
-			NumAdd(
-				NumMul(NumMul(two, u), NumSub(p1[1], p0[1])),
-				NumMul(NumMul(two, t), NumSub(p2[1], p1[1])),
-			),
+			two * u * (p1[0] - p0[0]) + two * t * (p2[0] - p1[0]),
+			two * u * (p1[1] - p0[1]) + two * t * (p2[1] - p1[1]),
 		}
 	case .Cubic:
 		p0, p1, p2, p3 := pts[0], pts[1], pts[2], pts[3]
-		uu := NumMul(u, u)
-		tt := NumMul(t, t)
-		ut6 := NumMul(NumMul(six, u), t)
+		uu := ((u) * (u))
+		tt := ((t) * (t))
+		ut6 := six * u * t
 		return {
-			NumAdd(
-				NumAdd(
-					NumMul(NumMul(three, uu), NumSub(p1[0], p0[0])),
-					NumMul(ut6, NumSub(p2[0], p1[0])),
-				),
-				NumMul(NumMul(three, tt), NumSub(p3[0], p2[0])),
-			),
-			NumAdd(
-				NumAdd(
-					NumMul(NumMul(three, uu), NumSub(p1[1], p0[1])),
-					NumMul(ut6, NumSub(p2[1], p1[1])),
-				),
-				NumMul(NumMul(three, tt), NumSub(p3[1], p2[1])),
-			),
+			three * uu * (p1[0] - p0[0]) + ut6 * (p2[0] - p1[0]) + three * tt * (p3[0] - p2[0]),
+			three * uu * (p1[1] - p0[1]) + ut6 * (p2[1] - p1[1]) + three * tt * (p3[1] - p2[1]),
 		}
 	}
 	return {}
@@ -716,50 +766,47 @@ GetBezierTForXMonotone :: proc(
 ) -> (
 	t0: T,
 	t1: T,
-) where intrinsics.type_is_specialization_of(T, fixed.Fixed) ||
-	intrinsics.type_is_float(T) {
+) where intrinsics.type_is_float(T) {
 	if kind == .Quad {
 		// dx/dt = A + B·t = 0
 		x0, x1, x2 := pts[0], pts[1], pts[2]
-		A: T = NumAdd(NumMul(NumConst(-2, T), x0), NumMul(NumConst(2, T), x1))
-		B: T = NumMul(NumConst(2, T), NumAdd(NumSub(x0, NumMul(NumConst(2, T), x1)), x2))
+		A := T(-2) * x0 + T(2) * x1
+		B := T(2) * (x0 - T(2) * x1 + x2)
 
-		if NumEq(B, NumConst(0, T)) do return NumConst(-1, T), NumConst(-1, T)
-		return NumDiv(NumSign(A), B), NumConst(-1, T)
+		if B == T(0) do return T(-1), T(-1)
+		return (A < T(0) ? T(-1) : T(1)) / B, T(-1)
 	} else if kind == .Cubic {
 		// dx/dt = coef_A·t² + coef_B·t + coef_C = 0 (x component)
-		two := NumConst(2, T)
-		three := NumConst(3, T)
-		six := NumConst(6, T)
-		four := NumConst(4, T)
+		two := T(2)
+		three := T(3)
+		six := T(6)
+		four := T(4)
 		x0, x1, x2, x3 := pts[0], pts[1], pts[2], pts[3]
-		coefA := NumMul(
-			three,
-			NumAdd(NumSub(NumMul(three, x1), x0), NumSub(x3, NumMul(three, x2))),
-		)
-		coefB := NumMul(six, NumAdd(NumSub(x0, NumMul(two, x1)), x2))
-		coefC := NumMul(three, NumSub(x1, x0))
-		zero := NumConst(0, T)
-		twoA := NumMul(two, coefA)
+		coefA := three * (three * x1 - x0 + x3 - three * x2)
+		coefB := six * (x0 - two * x1 + x2)
+		coefC := three * (x1 - x0)
+		zero := T(0)
+		twoA := two * coefA
 
-		if NumEq(coefA, zero) {
-			if NumEq(coefB, zero) do return NumConst(-1, T), NumConst(-1, T)
-			return NumDiv(NumSign(coefC), coefB), NumConst(-1, T)
+		if coefA == zero {
+			if coefB == zero do return T(-1), T(-1)
+			return (coefC < zero ? T(-1) : T(1)) / coefB, T(-1)
 		}
 
-		D := NumSub(NumMul(coefB, coefB), NumMul(NumMul(four, coefA), coefC))
-		if NumLt(D, zero) {
-			return NumConst(-1, T), NumConst(-1, T)
-		} else if NumEq(D, zero) {
-			return NumDiv(NumSign(coefB), twoA), NumConst(-1, T)
+		D := coefB * coefB - four * coefA * coefC
+		if D < zero {
+			return T(-1), T(-1)
+		} else if D == zero {
+			return (coefB < zero ? T(-1) : T(1)) / twoA, T(-1)
 		}
 
-		sqrtD := NumSqrt(D)
-		r0 := NumDiv(NumSub(NumSign(coefB), sqrtD), twoA)
-		r1 := NumDiv(NumAdd(NumSign(coefB), sqrtD), twoA)
-		return NumMin(r0, r1), NumMax(r0, r1)
+		sqrtD := math.sqrt(D)
+		signB := coefB < zero ? T(-1) : T(1)
+		r0 := (signB - sqrtD) / twoA
+		r1 := (signB + sqrtD) / twoA
+		return min(r0, r1), max(r0, r1)
 	}
-	return NumConst(-1, T), NumConst(-1, T)
+	return T(-1), T(-1)
 }
 
 @(test)
@@ -775,3 +822,98 @@ test2quadCurves :: proc(t: ^testing.T) {
 	//fmt.println(ok, pt)
 }
 
+/*
+곡선의 exact axis-aligned bounding box 계산.
+
+x(t), y(t)의 극값(extremum)을 해석적으로 구하고,
+모든 극값 t와 t=0, t=1에서의 값을 평가하여 min/max 계산.
+*/
+BezierAABB :: proc(kind: BezierKind, pts: [4][2]$T) -> Rect_(T) where intrinsics.type_is_float(T) {
+	n := bezierOrder(kind)
+
+	minX := pts[0].x; maxX := pts[0].x
+	minY := pts[0].y; maxY := pts[0].y
+
+	for i in 1 ..< n {
+		minX = min(minX, pts[i].x); maxX = max(maxX, pts[i].x)
+		minY = min(minY, pts[i].y); maxY = max(maxY, pts[i].y)
+	}
+
+	if kind != .Line {
+		xCoords: [4]T = {pts[0].x, pts[1].x, pts[2].x, pts[3].x}
+		tx0, tx1 := GetBezierTForXMonotone(kind, xCoords)
+		if tx0 >= T(0) && tx0 <= T(1) {
+			pt := _evalAnyBezier(kind, pts, tx0)
+			minX = min(minX, pt.x); maxX = max(maxX, pt.x)
+			minY = min(minY, pt.y); maxY = max(maxY, pt.y)
+		}
+		if tx1 >= T(0) && tx1 <= T(1) {
+			pt := _evalAnyBezier(kind, pts, tx1)
+			minX = min(minX, pt.x); maxX = max(maxX, pt.x)
+			minY = min(minY, pt.y); maxY = max(maxY, pt.y)
+		}
+		yCoords: [4]T = {pts[0].y, pts[1].y, pts[2].y, pts[3].y}
+		ty0, ty1 := GetBezierTForXMonotone(kind, yCoords)
+		if ty0 >= T(0) && ty0 <= T(1) {
+			pt := _evalAnyBezier(kind, pts, ty0)
+			minX = min(minX, pt.x); maxX = max(maxX, pt.x)
+			minY = min(minY, pt.y); maxY = max(maxY, pt.y)
+		}
+		if ty1 >= T(0) && ty1 <= T(1) {
+			pt := _evalAnyBezier(kind, pts, ty1)
+			minX = min(minX, pt.x); maxX = max(maxX, pt.x)
+			minY = min(minY, pt.y); maxY = max(maxY, pt.y)
+		}
+	}
+
+	return Rect_(T){left = minX, right = maxX, top = maxY, bottom = minY}
+}
+
+/*
+곡선 에지로 구성된 폴리곤에 대한 점 포함 판정.
+Ray casting (even-odd rule) 방식 — 오른쪽으로 수평선 ray를 발사하여
+GetBezierIntersectPt로 각 곡선 에지와의 교차점을 계산.
+
+edges: 곡선 제어점 배열
+kinds: 각 에지의 타입 (BezierKind)
+*/
+PointInCurvedPolygon :: proc(
+	p: [2]$T,
+	edges: [][4][2]T,
+	kinds: []BezierKind,
+) -> PointInPolygonResult where intrinsics.type_is_float(T) {
+	n := len(edges)
+	if n < 3 do return .Outside
+
+	eps := _rootEps(T)
+
+	maxRight := p.x
+	for i in 0 ..< n {
+		bbox := BezierAABB(kinds[i], edges[i])
+		if bbox.right > maxRight do maxRight = bbox.right
+	}
+	FAR := maxRight + T(100)
+
+	ray: [4][2]T = {p, {FAR, p.y}, {}, {}}
+
+	crossing := 0
+	for i in 0 ..< n {
+		bbox := BezierAABB(kinds[i], edges[i])
+		if p.y < bbox.bottom - eps || p.y > bbox.top + eps do continue
+		if p.x > bbox.right do continue
+
+		count, ips, _, _ := GetBezierIntersectPt(.Line, ray, kinds[i], edges[i])
+
+		for j in 0 ..< count {
+			pt := ips[j]
+			if math.abs(pt.x - p.x) <= eps && math.abs(pt.y - p.y) <= eps {
+				return .On
+			}
+			if pt.x >= p.x {
+				crossing += 1
+			}
+		}
+	}
+
+	return (crossing % 2) == 1 ? .Inside : .Outside
+}

@@ -4,6 +4,7 @@ import "../linalg_ex"
 import "base:intrinsics"
 import "base:runtime"
 import "core:math"
+import "core:slice"
 import "shared:utils_private"
 
 __ClipperError :: enum {
@@ -52,13 +53,8 @@ Segment :: struct {
 
 @(private = "file")
 Piece :: struct {
-	pts:       [4][2]f64,
-	kind:      linalg_ex.BezierKind,
-	pathType: PathType,
-	isOpen:   bool,
-	pathIdx:  int,
-	order:     int,
-	used:      bool,
+	using base: Segment,
+	used: bool,
 }
 
 @(private = "file")
@@ -68,11 +64,21 @@ ParamList :: [dynamic]f64
 EPS :: 1e-9
 
 @(private = "file")
+_SNAP_INV :: 1.0 / EPS
+
+@(private = "file")
 SideEps :: 1e-7
 
 @(private = "file")
+_snapPt :: #force_inline proc "contextless" (p: [2]f64) -> u128 {
+	x := u64(i64(math.round(p.x * _SNAP_INV)))
+	y := u64(i64(math.round(p.y * _SNAP_INV)))
+	return (u128(x) << 64) | u128(y)
+}
+
+@(private = "file")
 _endIndex :: #force_inline proc "contextless" (kind: linalg_ex.BezierKind) -> int {
-	switch kind {
+	#partial switch kind {
 	case .Line:
 		return 1
 	case .Quad:
@@ -84,11 +90,6 @@ _endIndex :: #force_inline proc "contextless" (kind: linalg_ex.BezierKind) -> in
 }
 
 @(private = "file")
-_ptEq :: #force_inline proc "contextless" (a, b: [2]f64) -> bool {
-	return math.abs(a.x - b.x) <= EPS && math.abs(a.y - b.y) <= EPS
-}
-
-@(private = "file")
 _ptAdd :: #force_inline proc "contextless" (a, b: [2]f64) -> [2]f64 {
 	return {a.x + b.x, a.y + b.y}
 }
@@ -96,11 +97,6 @@ _ptAdd :: #force_inline proc "contextless" (a, b: [2]f64) -> [2]f64 {
 @(private = "file")
 _ptSub :: #force_inline proc "contextless" (a, b: [2]f64) -> [2]f64 {
 	return {a.x - b.x, a.y - b.y}
-}
-
-@(private = "file")
-_ptMul :: #force_inline proc "contextless" (a: [2]f64, s: f64) -> [2]f64 {
-	return {a.x * s, a.y * s}
 }
 
 @(private = "file")
@@ -121,11 +117,6 @@ _segStart :: #force_inline proc "contextless" (p: Piece) -> [2]f64 {
 @(private = "file")
 _segEndPiece :: #force_inline proc "contextless" (p: Piece) -> [2]f64 {
 	return p.pts[_endIndex(p.kind)]
-}
-
-@(private = "file")
-_segEnd :: #force_inline proc "contextless" (s: Segment) -> [2]f64 {
-	return s.pts[_endIndex(s.kind)]
 }
 
 @(private = "file")
@@ -236,11 +227,11 @@ _appendSegmentFromParams :: proc(
 	seg: Segment,
 	params: ParamList,
 ) -> ClipperError {
-	paramsSorted := params
-	_sortParams(&paramsSorted)
-	for i in 0 ..< len(paramsSorted) - 1 {
-		t0 := paramsSorted[i]
-		t1 := paramsSorted[i + 1]
+	sorted := params
+	_sortParams(&sorted)
+	for i in 0 ..< len(sorted) - 1 {
+		t0 := sorted[i]
+		t1 := sorted[i + 1]
 		if t1 - t0 <= EPS do continue
 		s := seg
 		s.pts = _extractSub(seg.kind, seg.pts, t0, t1)
@@ -469,7 +460,7 @@ _filledFromWind :: #force_inline proc "contextless" (wind: int, fillRule: FillRu
 
 @(private = "file")
 _windingAt :: proc(point: [2]f64, segs: []Segment, pathType: PathType) -> int {
-	queryY := point.y + SideEps * 0.37
+	queryY := point.y + SideEps * 0.382
 	maxX := point.x + 1.0
 	for s in segs {
 		if s.isOpen || s.pathType != pathType do continue
@@ -496,7 +487,7 @@ _windingAt :: proc(point: [2]f64, segs: []Segment, pathType: PathType) -> int {
 		for i in 0 ..< count {
 			if tRay[i] <= EPS || tRay[i] > 1.0 + EPS do continue
 			tSeg := tCurve[i]
-			if tSeg <= 1e-12 || tSeg >= 1.0 - 1e-12 do continue
+			if tSeg <= EPS || tSeg >= 1.0 - EPS do continue
 			ip := _eval(s.kind, s.pts, tSeg)
 			if ip.x <= point.x + EPS do continue
 			tan := _tangent(s.kind, s.pts, tSeg)
@@ -567,7 +558,7 @@ _appendPiecePoints :: proc(
 
 @(private = "file")
 _trimDuplicateClosure :: proc(path: ^[dynamic][2]f64, curves: ^[dynamic]bool) -> ClipperError {
-	if len(path^) > 1 && _ptEq(path^[0], path^[len(path^) - 1]) {
+	if len(path^) > 1 && _snapPt(path^[0]) == _snapPt(path^[len(path^) - 1]) {
 		non_zero_resize_dynamic_array(path, len(path^) - 1) or_return
 		if curves != nil do non_zero_resize_dynamic_array(curves, len(curves^) - 1) or_return
 	}
@@ -586,6 +577,13 @@ _buildClosedPaths :: proc(
 	paths = make([dynamic][dynamic][2]f64, context.temp_allocator) or_return
 	if hasCurves do curvesOut = make([dynamic][dynamic]bool, context.temp_allocator) or_return
 
+	startMap := make(map[u128]int, context.temp_allocator)
+	for i in 0 ..< len(pieces) {
+		if !pieces[i].used {
+			startMap[_snapPt(_segStart(pieces[i]))] = i
+		}
+	}
+
 	for i in 0 ..< len(pieces) {
 		if pieces[i].used do continue
 
@@ -593,21 +591,15 @@ _buildClosedPaths :: proc(
 		curves: [dynamic]bool
 		if hasCurves do curves = make([dynamic]bool, context.temp_allocator) or_return
 
-		firstPt := _segStart(pieces[i])
+		firstKey := _snapPt(_segStart(pieces[i]))
 		current := _segEndPiece(pieces[i])
 		pieces[i].used = true
 		_appendPiecePoints(&path, hasCurves ? &curves : nil, pieces[i], true) or_return
 
-		for !_ptEq(current, firstPt) {
-			nextIdx := -1
-			for j in 0 ..< len(pieces) {
-				if pieces[j].used do continue
-				if _ptEq(_segStart(pieces[j]), current) {
-					nextIdx = j
-					break
-				}
-			}
-			if nextIdx < 0 do break
+		for _snapPt(current) != firstKey {
+			if _snapPt(current) not_in startMap do break
+			nextIdx := startMap[_snapPt(current)]
+			if pieces[nextIdx].used do break
 			pieces[nextIdx].used = true
 			_appendPiecePoints(&path, hasCurves ? &curves : nil, pieces[nextIdx], false) or_return
 			current = _segEndPiece(pieces[nextIdx])
@@ -641,7 +633,7 @@ _buildOpenPaths :: proc(
 	current: [2]f64
 
 	for piece in pieces {
-		if !havePath || !_ptEq(current, _segStart(piece)) {
+		if !havePath || _snapPt(current) != _snapPt(_segStart(piece)) {
 			if havePath && len(path) >= 2 {
 				non_zero_append(&paths, path) or_return
 				if hasCurves do non_zero_append(&curvesOut, curves) or_return
@@ -662,6 +654,45 @@ _buildOpenPaths :: proc(
 	return
 }
 
+// --- sweep line helpers (x-단조 분할된 세그먼트에 대한 이벤트/활성목록) ---
+
+@(private = "file")
+_sweepSegMinMaxX :: #force_inline proc "contextless" (s: Segment) -> (minX, maxX: f64) {
+	endIdx := _endIndex(s.kind)
+	a := s.pts[0].x
+	b := s.pts[endIdx].x
+	return min(a, b), max(a, b)
+}
+
+@(private = "file")
+_sweepSegMinMaxY :: proc "contextless" (s: Segment) -> (minY, maxY: f64) {
+	endIdx := _endIndex(s.kind)
+	minY = s.pts[0].y
+	maxY = s.pts[0].y
+	for i in 1 ..= endIdx {
+		minY = min(minY, s.pts[i].y)
+		maxY = max(maxY, s.pts[i].y)
+	}
+	return
+}
+
+@(private = "file")
+_SweepKind :: enum u8 { Start, End }
+
+@(private = "file")
+_SweepEvent :: struct {
+	x:      f64,
+	kind:   _SweepKind,
+	segIdx: int,
+}
+
+@(private = "file")
+_sweepCmpEvent :: proc(a, b: _SweepEvent) -> bool {
+	if math.abs(a.x - b.x) > EPS do return a.x < b.x
+	if a.kind == .Start && b.kind == .End do return true
+	return false
+}
+
 @(private = "file")
 _splitAllSegments :: proc(
 	segs: []Segment,
@@ -669,6 +700,35 @@ _splitAllSegments :: proc(
 	pieces: [dynamic]Piece,
 	err: ClipperError,
 ) {
+	if len(segs) <= 1 {
+		pieces = make([dynamic]Piece, context.temp_allocator) or_return
+		for s in segs {
+			p := Piece {
+				pts       = s.pts,
+				kind      = s.kind,
+				pathType = s.pathType,
+				isOpen   = s.isOpen,
+				pathIdx  = s.pathIdx,
+				order     = s.order,
+			}
+			non_zero_append(&pieces, p) or_return
+		}
+		return
+	}
+
+	events := make([dynamic]_SweepEvent, context.temp_allocator) or_return
+	non_zero_resize(&events, len(segs) * 2) or_return
+	nEvents := 0
+	for s, i in segs {
+		minX, maxX := _sweepSegMinMaxX(s)
+		events[nEvents] = _SweepEvent{x = minX, kind = .Start, segIdx = i}
+		nEvents += 1
+		events[nEvents] = _SweepEvent{x = maxX + EPS * 2, kind = .End, segIdx = i}
+		nEvents += 1
+	}
+	non_zero_resize(&events, nEvents) or_return
+	slice.sort_by(events[:], _sweepCmpEvent)
+
 	params := make([dynamic]ParamList, context.temp_allocator) or_return
 	non_zero_resize(&params, len(segs)) or_return
 	for i in 0 ..< len(segs) {
@@ -677,10 +737,42 @@ _splitAllSegments :: proc(
 		_appendParam(&params[i], 1.0) or_return
 	}
 
-	for i in 0 ..< len(segs) {
-		for j in i + 1 ..< len(segs) {
-			if segs[i].isOpen && segs[j].isOpen do continue
-			_appendIntersections(segs[i], segs[j], &params[i], &params[j]) or_return
+	active := make([dynamic]int, context.temp_allocator) or_return
+
+	for ev in events {
+		if ev.kind == .Start {
+			segA := ev.segIdx
+			_, maxXA := _sweepSegMinMaxX(segs[segA])
+
+			clean := 0
+			for i in 0 ..< len(active) {
+				segIdx := active[i]
+				_, maxX := _sweepSegMinMaxX(segs[segIdx])
+				if maxX + EPS < ev.x do continue
+				active[clean] = active[i]
+				clean += 1
+			}
+			non_zero_resize(&active, clean) or_return
+
+			minYA, maxYA := _sweepSegMinMaxY(segs[segA])
+
+			for aSegIdx in active[:] {
+				if segs[segA].isOpen && segs[aSegIdx].isOpen do continue
+
+				minYB, maxYB := _sweepSegMinMaxY(segs[aSegIdx])
+				if maxYA + EPS < minYB || maxYB + EPS < minYA do continue
+
+				_appendIntersections(segs[segA], segs[aSegIdx], &params[segA], &params[aSegIdx]) or_return
+			}
+
+			non_zero_append(&active, segA) or_return
+		} else {
+			for i in 0 ..< len(active) {
+				if active[i] == ev.segIdx {
+					ordered_remove(&active, i)
+					break
+				}
+			}
 		}
 	}
 

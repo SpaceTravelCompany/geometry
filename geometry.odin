@@ -10,8 +10,6 @@ import "core:math"
 import "core:math/linalg"
 import "core:mem"
 
-import "shared:utils_private/fixed_bcd"
-
 import "shared:utils_private"
 
 
@@ -33,7 +31,6 @@ RawShape :: struct {
 	rect:     linalg_ex.Rectf32,
 }
 
-@(private)
 CurveType :: enum u8 {
 	Line,
 	Unknown,

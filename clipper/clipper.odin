@@ -1097,6 +1097,161 @@ _popHorz :: proc(cb: ^_ClipperBase($Z), e: ^^_Active(Z)) -> bool {
 	return true
 }
 
+// ──── Wind count + Contribution ──────────────────────────────────────────────
+
+@(private = "file")
+_isContributingClosed :: proc(cb: ^_ClipperBase($Z), e: ^_Active(Z)) -> bool {
+	#partial switch cb.fillrule_ {
+	case .EvenOdd:
+		break
+	case .NonZero:
+		if abs(e.wind_cnt) != 1 { return false }
+	case .Positive:
+		if e.wind_cnt != 1 { return false }
+	case .Negative:
+		if e.wind_cnt != -1 { return false }
+	}
+
+	#partial switch cb.cliptype_ {
+	case .NoClip:
+		return false
+	case .Intersection:
+		#partial switch cb.fillrule_ {
+		case .Positive: return e.wind_cnt2 > 0
+		case .Negative: return e.wind_cnt2 < 0
+		case: return e.wind_cnt2 != 0
+		}
+	case .Union:
+		#partial switch cb.fillrule_ {
+		case .Positive: return e.wind_cnt2 <= 0
+		case .Negative: return e.wind_cnt2 >= 0
+		case: return e.wind_cnt2 == 0
+		}
+	case .Difference:
+		result := false
+		#partial switch cb.fillrule_ {
+		case .Positive: result = e.wind_cnt2 <= 0
+		case .Negative: result = e.wind_cnt2 >= 0
+		case: result = e.wind_cnt2 == 0
+		}
+		if _getPolyType(e) == .Subject { return result }
+		else { return !result }
+	case .Xor:
+		return true
+	}
+	return false
+}
+
+@(private = "file")
+_isContributingOpen :: proc(cb: ^_ClipperBase($Z), e: ^_Active(Z)) -> bool {
+	is_in_clip, is_in_subj: bool
+	#partial switch cb.fillrule_ {
+	case .Positive:
+		is_in_clip = e.wind_cnt2 > 0
+		is_in_subj = e.wind_cnt > 0
+	case .Negative:
+		is_in_clip = e.wind_cnt2 < 0
+		is_in_subj = e.wind_cnt < 0
+	case:
+		is_in_clip = e.wind_cnt2 != 0
+		is_in_subj = e.wind_cnt != 0
+	}
+
+	#partial switch cb.cliptype_ {
+	case .Intersection: return is_in_clip
+	case .Union: return !is_in_subj && !is_in_clip
+	case: return !is_in_clip
+	}
+}
+
+@(private = "file")
+_setWindCountForClosedPathEdge :: proc(cb: ^_ClipperBase($Z), e: ^_Active(Z)) {
+	// find the nearest closed path edge of the same PolyType in AEL (heading left)
+	pt := _getPolyType(e)
+	e2 := e.prev_in_ael
+	for e2 != nil && (_getPolyType(e2) != pt || _isOpen(e2)) {
+		e2 = e2.prev_in_ael
+	}
+
+	if e2 == nil {
+		e.wind_cnt = e.wind_dx
+		e2 = cb.actives_
+	} else if cb.fillrule_ == .EvenOdd {
+		e.wind_cnt = e.wind_dx
+		e.wind_cnt2 = e2.wind_cnt2
+		e2 = e2.next_in_ael
+	} else {
+		// NonZero, positive, or negative
+		if e2.wind_cnt * e2.wind_dx < 0 {
+			// opposite directions → e is outside e2
+			if abs(e2.wind_cnt) > 1 {
+				if e2.wind_dx * e.wind_dx < 0 {
+					e.wind_cnt = e2.wind_cnt
+				} else {
+					e.wind_cnt = e2.wind_cnt + e.wind_dx
+				}
+			} else {
+				e.wind_cnt = e.wind_dx
+			}
+		} else {
+			// e must be inside e2
+			if e2.wind_dx * e.wind_dx < 0 {
+				e.wind_cnt = e2.wind_cnt
+			} else {
+				e.wind_cnt = e2.wind_cnt + e.wind_dx
+			}
+		}
+		e.wind_cnt2 = e2.wind_cnt2
+		e2 = e2.next_in_ael
+	}
+
+	// update wind_cnt2
+	#partial switch cb.fillrule_ {
+	case .EvenOdd:
+		for e2 != e {
+			if _getPolyType(e2) != pt && !_isOpen(e2) {
+				e.wind_cnt2 = (e.wind_cnt2 == 0 ? 1 : 0)
+			}
+			e2 = e2.next_in_ael
+		}
+	case:
+		for e2 != e {
+			if _getPolyType(e2) != pt && !_isOpen(e2) {
+				e.wind_cnt2 += e2.wind_dx
+			}
+			e2 = e2.next_in_ael
+		}
+	}
+}
+
+@(private = "file")
+_setWindCountForOpenPathEdge :: proc(cb: ^_ClipperBase($Z), e: ^_Active(Z)) {
+	if cb.fillrule_ == .EvenOdd {
+		cnt1, cnt2: int
+		e2 := cb.actives_
+		for e2 != e {
+			if _getPolyType(e2) == .Clip {
+				cnt2 += 1
+			} else if !_isOpen(e2) {
+				cnt1 += 1
+			}
+			e2 = e2.next_in_ael
+		}
+		e.wind_cnt = (_isOdd(cnt1) ? 1 : 0)
+		e.wind_cnt2 = (_isOdd(cnt2) ? 1 : 0)
+	} else {
+		e2 := cb.actives_
+		for e2 != e {
+			if _getPolyType(e2) == .Clip {
+				e.wind_cnt2 += e2.wind_dx
+			} else if !_isOpen(e2) {
+				e.wind_cnt += e2.wind_dx
+			}
+			e2 = e2.next_in_ael
+		}
+	}
+}
+
 // ──── Public API Stubs (to be implemented in later phases) ───────────────────
 
 BooleanOp :: proc(

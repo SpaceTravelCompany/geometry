@@ -760,7 +760,7 @@ _addLocMin :: proc(
 ) {
 	if _hasFlag(vert, .LocalMin) { return }
 	_setFlag(vert, .LocalMin)
-	lm := new(_LocalMinima(Z))
+	lm := new(_LocalMinima(Z), context.temp_allocator)
 	if lm == nil { return }
 	lm.vertex = vert
 	lm.polytype = polytype
@@ -776,7 +776,6 @@ _addPaths_ :: proc(
 	is_open: bool,
 	vertexLists: ^[dynamic]^_Vertex(Z),
 	locMinList: ^[dynamic]^_LocalMinima(Z),
-	allocator := context.allocator,
 ) {
 	// count total vertices
 	total_vertex_count := 0
@@ -785,8 +784,8 @@ _addPaths_ :: proc(
 	}
 	if total_vertex_count == 0 { return }
 
-	// allocate one contiguous block for all vertices
-	allVertices := make([]_Vertex(Z), total_vertex_count, allocator)
+	// allocate one contiguous block for all vertices (temp allocator)
+	allVertices := make([]_Vertex(Z), total_vertex_count, context.temp_allocator)
 	if allVertices == nil { return }
 	vi := 0 // global vertex index into allVertices
 
@@ -898,114 +897,29 @@ _addPaths_ :: proc(
 }
 
 // ──── ClipperBase lifecycle + scanline ops ───────────────────────────────────
+// All internal allocations use context.temp_allocator — no manual free needed.
+// Only output paths use context.allocator.
 
 @(private = "file")
 _clipperBase_init :: proc(cb: ^_ClipperBase($Z)) {
-	cb.cliptype_ = .NoClip
-	cb.fillrule_ = .EvenOdd
-	cb.fillpos = .Positive
-	cb.bot_y_ = 0
-	cb.minima_list_sorted_ = false
-	cb.using_polytree_ = false
-	cb.actives_ = nil
-	cb.sel_ = nil
-	cb.minima_list_ = make([dynamic]^_LocalMinima(Z))
-	cb.current_locmin_iter_ = 0
-	cb.vertex_lists_ = make([dynamic]^_Vertex(Z))
-	cb.scanline_list_ = make([dynamic]f64)
-	cb.intersect_nodes_ = make([dynamic]_IntersectNode(Z))
-	cb.horz_seg_list_ = make([dynamic]_HorzSegment(Z))
-	cb.horz_join_list_ = make([dynamic]_HorzJoin(Z))
-	cb.outrec_list_ = make([dynamic]^_OutRec(Z))
+	cb^ = {}
+	cb.minima_list_ = make([dynamic]^_LocalMinima(Z), context.temp_allocator)
+	cb.vertex_lists_ = make([dynamic]^_Vertex(Z), context.temp_allocator)
+	cb.scanline_list_ = make([dynamic]f64, context.temp_allocator)
+	cb.intersect_nodes_ = make([dynamic]_IntersectNode(Z), context.temp_allocator)
+	cb.horz_seg_list_ = make([dynamic]_HorzSegment(Z), context.temp_allocator)
+	cb.horz_join_list_ = make([dynamic]_HorzJoin(Z), context.temp_allocator)
+	cb.outrec_list_ = make([dynamic]^_OutRec(Z), context.temp_allocator)
 	cb.preserve_collinear_ = true
-	cb.reverse_solution_ = false
-	cb.error_code_ = 0
-	cb.has_open_paths_ = false
 	cb.succeeded_ = true
-	cb.defaultZ = 0
-	cb.zCallback_ = nil
 }
 
 @(private = "file")
 _clipperBase_destroy :: proc(cb: ^_ClipperBase($Z)) {
-	_clear(cb)
-	delete(cb.minima_list_)
-	delete(cb.vertex_lists_)
-	delete(cb.scanline_list_)
-	delete(cb.intersect_nodes_)
-	delete(cb.horz_seg_list_)
-	delete(cb.horz_join_list_)
-	delete(cb.outrec_list_)
+	cb^ = {}
 }
 
-// delete all Active edges in the AEL
-@(private = "file")
-_deleteEdges :: proc(e: ^_Active($Z)) {
-	for e != nil {
-		nxt := e.next_in_ael
-		free(e)
-		e = nxt
-	}
-}
-
-// free OutPt circular list
-@(private = "file")
-_disposeOutPts :: proc(outrec: ^_OutRec($Z)) {
-	op := outrec.pts
-	if op == nil { return }
-	op.prev.next = nil // break circular link so we can iterate
-	for op != nil {
-		tmp := op.next
-		free(op)
-		op = tmp
-	}
-	outrec.pts = nil
-}
-
-@(private = "file")
-_disposeAllOutRecs :: proc(cb: ^_ClipperBase($Z)) {
-	for outrec in cb.outrec_list_ {
-		if outrec.pts != nil {
-			_disposeOutPts(outrec)
-		}
-		delete(outrec.path)
-		free(outrec)
-	}
-	clear(&cb.outrec_list_)
-}
-
-@(private = "file")
-_disposeVerticesAndLocalMinima :: proc(cb: ^_ClipperBase($Z)) {
-	for lm in cb.minima_list_ {
-		free(lm)
-	}
-	clear(&cb.minima_list_)
-	for v in cb.vertex_lists_ {
-		free(v)
-	}
-	clear(&cb.vertex_lists_)
-}
-
-@(private = "file")
-_cleanUp :: proc(cb: ^_ClipperBase($Z)) {
-	_deleteEdges(cb.actives_)
-	cb.actives_ = nil
-	cb.sel_ = nil
-	clear(&cb.scanline_list_)
-	clear(&cb.intersect_nodes_)
-	_disposeAllOutRecs(cb)
-	clear(&cb.horz_seg_list_)
-	clear(&cb.horz_join_list_)
-}
-
-@(private = "file")
-_clear :: proc(cb: ^_ClipperBase($Z)) {
-	_cleanUp(cb)
-	_disposeVerticesAndLocalMinima(cb)
-	cb.current_locmin_iter_ = 0
-	cb.minima_list_sorted_ = false
-	cb.has_open_paths_ = false
-}
+// ──── scanline ops ───────────────────────────────────────────────────────────
 
 @(private = "file")
 _insertScanline :: proc(cb: ^_ClipperBase($Z), y: f64) {

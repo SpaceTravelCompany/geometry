@@ -348,7 +348,7 @@ _pointZ :: #force_inline proc "contextless" (p: $PointT) -> f64 {
 }
 
 @(private = "file")
-_makePoint :: #force_inline proc "contextless" ($PointT: typeid, x, y: f64, z: f64 = 0) -> PointT {
+_makePoint :: #force_inline proc "contextless" ($PointT: typeid, x, y: f64, z: $Z) -> PointT {
 	HasZ ::
 		len(PointT) >=
 		3 when intrinsics.type_is_array(PointT) else intrinsics.type_has_field(
@@ -359,7 +359,7 @@ _makePoint :: #force_inline proc "contextless" ($PointT: typeid, x, y: f64, z: f
 	p.x = type_of(p.x)(x)
 	p.y = type_of(p.y)(y)
 	when HasZ {
-		p.z = type_of(p.z)(z)
+		p.z = z
 	}
 	return p
 }
@@ -1926,9 +1926,9 @@ _intersectEdges :: proc(cb: ^_ClipperBase($Z), e1, e2: ^_Active(Z), pt: _Point(Z
 				if cb.zCallback_ != nil {
 					if result_op != nil {_setZ(cb, e1, e2, &result_op.pt)}
 					if op2 != nil {_setZ(cb, e1, e2, &op2.pt)}
-				}
-			}
-		} else {
+		}
+		}
+	} else {
 			result_op = _addOutPt(cb, e1, pt)
 			op2 := _addOutPt(cb, e2, pt)
 			_swapOutrecs(e1, e2)
@@ -2542,7 +2542,696 @@ _cleanCollinear :: proc(cb: ^_ClipperBase($Z), outrec: ^_OutRec(Z)) {
 	_ = cb
 }
 
-// ──── Public API Stubs (to be implemented in later phases) ───────────────────
+// ──── InflatePaths (Offset) Implementation ───────────────────────────────────
+// Port of Clipper2 clipper.offset.cpp
+
+@(private = "file")
+_getLowestClosedPathInfo :: proc(
+	paths: [dynamic][dynamic]_Point($Z),
+	idx: ^int,
+	is_neg_area: ^bool,
+) {
+	idx^ = -1
+	botPt := _Point(Z_None) {
+		x = math.F64_MAX,
+		y = -math.F64_MAX,
+	}
+	for i in 0 ..< len(paths) {
+		a := math.F64_MAX
+		for pt in paths[i] {
+			if pt.y < botPt.y || (pt.y == botPt.y && pt.x >= botPt.x) {continue}
+			if a == math.F64_MAX {
+				area: f64
+				path := paths[i]
+				for j in 0 ..< len(path) {
+					k := (j + 1) % len(path)
+					area += path[j].x * path[k].y - path[k].x * path[j].y
+				}
+				a = area * 0.5
+				if a == 0 {break}
+				is_neg_area^ = a < 0
+			}
+			idx^ = i
+			botPt.x = pt.x
+			botPt.y = pt.y
+		}
+	}
+}
+
+@(private = "file")
+_hypot :: #force_inline proc "contextless" (x, y: f64) -> f64 {
+	return math.sqrt(x * x + y * y)
+}
+
+@(private = "file")
+_getUnitNormal :: proc(p1, p2: _Point(Z_None)) -> _Point(Z_None) {
+	if p1 == p2 {return {}}
+	dx := p2.x - p1.x
+	dy := p2.y - p1.y
+	inv := 1.0 / _hypot(dx, dy)
+	return {x = dy * inv, y = -dx * inv}
+}
+
+@(private = "file")
+_almostZero :: #force_inline proc "contextless" (v: f64, eps: f64 = 0.001) -> bool {
+	return abs(v) < eps
+}
+
+@(private = "file")
+_normalizeVector :: proc(v: _Point(Z_None)) -> _Point(Z_None) {
+	h := _hypot(v.x, v.y)
+	if _almostZero(h) {return {}}
+	inv := 1.0 / h
+	return {x = v.x * inv, y = v.y * inv}
+}
+
+@(private = "file")
+_getAvgUnitVector :: proc(v1, v2: _Point(Z_None)) -> _Point(Z_None) {
+	return _normalizeVector({x = v1.x + v2.x, y = v1.y + v2.y})
+}
+
+@(private = "file")
+_isClosedPath :: #force_inline proc(et: EndType) -> bool {
+	return et == .Polygon || et == .Joined
+}
+
+@(private = "file")
+_getPerpendic :: proc(pt: _Point(Z_None), norm: _Point(Z_None), delta: f64) -> _Point(Z_None) {
+	return {x = pt.x + norm.x * delta, y = pt.y + norm.y * delta}
+}
+
+@(private = "file")
+_negatePath :: proc(path: ^[dynamic]_Point(Z_None)) {
+	for i in 0 ..< len(path) {
+		path[i].x = -path[i].x
+		path[i].y = -path[i].y
+	}
+}
+
+// ──── Group init ─────────────────────────────────────────────────────────────
+
+@(private = "file")
+_group_init :: proc(
+	g: ^_Group($Z),
+	paths: [dynamic][dynamic]_Point(Z),
+	jt: JoinType,
+	et: EndType,
+) {
+	g.paths_in = paths
+	g.join_type = jt
+	g.end_type = et
+	g.is_reversed = false
+	g.lowest_path_idx = -1
+
+	// strip duplicates
+	is_joined := et == .Polygon || et == .Joined
+	for _, i in g.paths_in {
+		_stripDuplicates(&g.paths_in[i], is_joined)
+	}
+
+	if et == .Polygon {
+		is_neg_area: bool
+		_getLowestClosedPathInfo(g.paths_in, &g.lowest_path_idx, &is_neg_area)
+		g.is_reversed = g.lowest_path_idx >= 0 && is_neg_area
+	}
+}
+
+@(private = "file")
+_stripDuplicates :: proc(path: ^[dynamic]_Point($Z), is_closed: bool) {
+	if len(path) <= 1 {return}
+	j := 1
+	for i in 1 ..< len(path) {
+		if path[i].x != path[j - 1].x || path[i].y != path[j - 1].y {
+			path[j] = path[i]
+			j += 1
+		}
+	}
+	for is_closed && j > 1 && path[j - 1].x == path[0].x && path[j - 1].y == path[0].y {
+		j -= 1
+	}
+	resize(path, j)
+}
+
+// ──── Offset methods ─────────────────────────────────────────────────────────
+
+@(private = "file")
+_buildNormals :: proc(co: ^_ClipperOffset($Z), path: []_Point(Z)) {
+	clear(&co.norms)
+	if len(path) == 0 {return}
+	reserve(&co.norms, len(path))
+	for i in 0 ..< len(path) - 1 {
+		append(&co.norms, _getUnitNormal(_xy(path[i]), _xy(path[i + 1])))
+	}
+	append(&co.norms, _getUnitNormal(_xy(path[len(path) - 1]), _xy(path[0])))
+}
+
+@(private = "file")
+_doBevel :: proc(co: ^_ClipperOffset($Z), path: []_Point(Z), j, k: int) {
+	p1, p2: _Point(Z_None)
+	abs_delta := abs(co.group_delta_)
+	if j == k {
+		p1 = {
+			x = path[j].x - abs_delta * co.norms[j].x,
+			y = path[j].y - abs_delta * co.norms[j].y,
+		}
+		p2 = {
+			x = path[j].x + abs_delta * co.norms[j].x,
+			y = path[j].y + abs_delta * co.norms[j].y,
+		}
+	} else {
+		p1 = {
+			x = path[j].x + co.group_delta_ * co.norms[k].x,
+			y = path[j].y + co.group_delta_ * co.norms[k].y,
+		}
+		p2 = {
+			x = path[j].x + co.group_delta_ * co.norms[j].x,
+			y = path[j].y + co.group_delta_ * co.norms[j].y,
+		}
+	}
+	append(&co.path_out, _Point(Z){x = p1.x, y = p1.y})
+	append(&co.path_out, _Point(Z){x = p2.x, y = p2.y})
+}
+
+@(private = "file")
+_doSquare :: proc(co: ^_ClipperOffset($Z), path: []_Point(Z), j, k: int) {
+	vec: _Point(Z_None)
+	if j == k {
+		vec = {
+			x = co.norms[j].y,
+			y = -co.norms[j].x,
+		}
+	} else {
+		vec = _getAvgUnitVector(
+			{x = -co.norms[k].y, y = co.norms[k].x},
+			{x = co.norms[j].y, y = -co.norms[j].x},
+		)
+	}
+	abs_delta := abs(co.group_delta_)
+	ptQ := _translatePoint(_xy(path[j]), abs_delta * vec.x, abs_delta * vec.y)
+	pt1 := _translatePoint(ptQ, co.group_delta_ * vec.y, co.group_delta_ * -vec.x)
+	pt2 := _translatePoint(ptQ, co.group_delta_ * -vec.y, co.group_delta_ * vec.x)
+	pt3 := _getPerpendic(_xy(path[k]), co.norms[k], co.group_delta_)
+	if j == k {
+		pt4 := _translatePoint(pt3, vec.x * co.group_delta_, vec.y * co.group_delta_)
+		pt := ptQ
+		_getLineIntersectPt(pt1, pt2, pt3, pt4, &pt)
+		r1 := _reflectPoint(pt, ptQ)
+		append(&co.path_out, _Point(Z){x = r1.x, y = r1.y})
+		append(&co.path_out, _Point(Z){x = pt.x, y = pt.y})
+	} else {
+		pt4 := _getPerpendic(_xy(path[j]), co.norms[k], co.group_delta_)
+		pt := ptQ
+		_getLineIntersectPt(pt1, pt2, pt3, pt4, &pt)
+		r2 := _reflectPoint(pt, ptQ)
+		append(&co.path_out, _Point(Z){x = pt.x, y = pt.y})
+		append(&co.path_out, _Point(Z){x = r2.x, y = r2.y})
+	}
+}
+
+@(private = "file")
+_doMiter :: proc(co: ^_ClipperOffset($Z), path: []_Point(Z), j, k: int, cos_a: f64) {
+	q := co.group_delta_ / (cos_a + 1)
+	append(
+		&co.path_out,
+		_Point(Z) {
+			x = path[j].x + (co.norms[k].x + co.norms[j].x) * q,
+			y = path[j].y + (co.norms[k].y + co.norms[j].y) * q,
+		},
+	)
+}
+
+@(private = "file")
+_doRound :: proc(co: ^_ClipperOffset($Z), path: []_Point(Z), j, k: int, angle: f64) {
+	pt := path[j]
+	offsetVec := _Point(Z_None) {
+		x = co.norms[k].x * co.group_delta_,
+		y = co.norms[k].y * co.group_delta_,
+	}
+	if j == k {
+		offsetVec.x = -offsetVec.x
+		offsetVec.y = -offsetVec.y
+	}
+	append(&co.path_out, _Point(Z){x = pt.x + offsetVec.x, y = pt.y + offsetVec.y})
+	steps := int(math.ceil(co.steps_per_rad_ * abs(angle)))
+	for i in 1 ..< steps {
+		newX := offsetVec.x * co.step_cos_ - co.step_sin_ * offsetVec.y
+		offsetVec.y = offsetVec.x * co.step_sin_ + offsetVec.y * co.step_cos_
+		offsetVec.x = newX
+		append(&co.path_out, _Point(Z){x = pt.x + offsetVec.x, y = pt.y + offsetVec.y})
+	}
+	perp := _getPerpendic(_xy(path[j]), co.norms[j], co.group_delta_)
+	append(&co.path_out, _Point(Z){x = perp.x, y = perp.y})
+}
+
+@(private = "file")
+_offsetPoint :: proc(co: ^_ClipperOffset($Z), group: ^_Group(Z), path: []_Point(Z), j, k: int) {
+	if path[j].x == path[k].x && path[j].y == path[k].y {return}
+	sin_a := _cross(co.norms[j], co.norms[k])
+	cos_a := _dot(co.norms[j], co.norms[k])
+	if sin_a > 1 {sin_a = 1} else if sin_a < -1 {sin_a = -1}
+
+	if abs(co.group_delta_) <= 1e-12 {
+		append(&co.path_out, _Point(Z){x = path[j].x, y = path[j].y})
+		return
+	}
+
+	if cos_a > -0.999 && (sin_a * co.group_delta_ < 0) {
+		// concave — use averaged normal for spike tip (matches C++ Clipper2)
+		perpK := _getPerpendic(_xy(path[j]), co.norms[k], co.group_delta_)
+		avgNorm := _Point(Z_None){
+			x = (co.norms[j].x + co.norms[k].x) * 0.5,
+			y = (co.norms[j].y + co.norms[k].y) * 0.5,
+		}
+		perpMid := _getPerpendic(_xy(path[j]), avgNorm, co.group_delta_)
+		perpJ := _getPerpendic(_xy(path[j]), co.norms[j], co.group_delta_)
+		append(&co.path_out, _Point(Z){x = perpK.x, y = perpK.y})
+		append(&co.path_out, _Point(Z){x = perpMid.x, y = perpMid.y})
+		append(&co.path_out, _Point(Z){x = perpJ.x, y = perpJ.y})
+	} else if cos_a > 0.999 && co.join_type_ != .Round {
+		// almost straight
+		_doMiter(co, path, j, k, cos_a)
+		_doMiter(co, path, j, k, cos_a)
+	} else if co.join_type_ == .Miter {
+		if cos_a >
+		   co.temp_lim_ - 1 {_doMiter(co, path, j, k, cos_a)} else {_doSquare(co, path, j, k)}
+	} else if co.join_type_ == .Round {
+		_doRound(co, path, j, k, math.atan2(sin_a, cos_a))
+	} else if co.join_type_ == .Bevel {
+		_doBevel(co, path, j, k)
+	} else {
+		_doSquare(co, path, j, k)
+	}
+}
+
+@(private = "file")
+_offsetPolygon :: proc(co: ^_ClipperOffset($Z), group: ^_Group(Z), path: []_Point(Z)) {
+	clear(&co.path_out)
+	k := len(path) - 1
+	for j := 0; j < len(path); j += 1 {
+		_offsetPoint(co, group, path, j, k)
+		k = j
+	}
+	outCopy := make([]_Point(Z), len(co.path_out), context.temp_allocator)
+	copy(outCopy, co.path_out[:])
+	append(co.solution, outCopy)
+}
+
+@(private = "file")
+_offsetOpenJoined :: proc(co: ^_ClipperOffset($Z), group: ^_Group(Z), path: []_Point(Z)) {
+	_offsetPolygon(co, group, path)
+	// reverse path
+	rev := make([dynamic]_Point(Z), len(path), context.temp_allocator)
+	for i in 0 ..< len(path) {
+		rev[len(path) - 1 - i] = path[i]
+	}
+	// reverse normals
+	// reverse normals (cyclic shift left by 1 after reverse)
+	reverse_slice(&co.norms)
+	first := co.norms[0]
+	for i in 0 ..< len(co.norms) - 1 {
+		co.norms[i] = co.norms[i+1]
+	}
+	co.norms[len(co.norms)-1] = first
+	_negatePath(&co.norms)
+	_negatePath(&co.norms)
+	_offsetPolygon(co, group, rev[:])
+}
+
+@(private = "file")
+_offsetOpenPath :: proc(co: ^_ClipperOffset($Z), group: ^_Group(Z), path: []_Point(Z)) {
+	clear(&co.path_out)
+	// start cap
+	if abs(co.group_delta_) <= 1e-12 {
+		append(&co.path_out, path[0])
+	} else {
+		#partial switch co.end_type_ {
+		case .Butt:
+			_doBevel(co, path, 0, 0)
+		case .Round:
+			_doRound(co, path, 0, 0, math.PI)
+		case:
+			_doSquare(co, path, 0, 0)
+		}
+	}
+	// left side forward
+	highI := len(path) - 1
+	for j := 1; j < highI; j += 1 {
+		_offsetPoint(co, group, path, j, j - 1)
+	}
+	// reverse normals for return pass
+	for i := highI; i > 0; i -= 1 {
+		co.norms[i] = {
+			x = -co.norms[i - 1].x,
+			y = -co.norms[i - 1].y,
+		}
+	}
+	co.norms[0] = co.norms[highI]
+	// end cap
+	if abs(co.group_delta_) <= 1e-12 {
+		append(&co.path_out, path[highI])
+	} else {
+		#partial switch co.end_type_ {
+		case .Butt:
+			_doBevel(co, path, highI, highI)
+		case .Round:
+			_doRound(co, path, highI, highI, math.PI)
+		case:
+			_doSquare(co, path, highI, highI)
+		}
+	}
+	// right side reverse
+	for j := highI - 1; j > 0; j -= 1 {
+		_offsetPoint(co, group, path, j, j + 1)
+	}
+	outCopy2 := make([]_Point(Z), len(co.path_out), context.temp_allocator)
+	copy(outCopy2, co.path_out[:])
+	append(co.solution, outCopy2)
+}
+
+@(private = "file")
+_doGroupOffset :: proc(co: ^_ClipperOffset($Z), group: ^_Group(Z)) {
+	if group.end_type == .Polygon {
+		if group.lowest_path_idx < 0 {co.delta_ = abs(co.delta_)}
+		co.group_delta_ = group.is_reversed ? -co.delta_ : co.delta_
+	} else {
+		co.group_delta_ = abs(co.delta_)
+	}
+
+	abs_delta := abs(co.group_delta_)
+	co.join_type_ = group.join_type
+	co.end_type_ = group.end_type
+
+	if group.join_type == .Round || group.end_type == .Round {
+		arcTol := abs_delta < 0.35 ? 0.15 : abs_delta * 0.002
+		if co.arc_tolerance_ > 0.01 {
+			arcTol = min(abs_delta, co.arc_tolerance_)
+		}
+		steps_per_360 := min(math.PI / math.acos(1 - arcTol / abs_delta), abs_delta * math.PI)
+		co.step_sin_ = math.sin(2 * math.PI / steps_per_360)
+		co.step_cos_ = math.cos(2 * math.PI / steps_per_360)
+		if co.group_delta_ < 0 {co.step_sin_ = -co.step_sin_}
+		co.steps_per_rad_ = steps_per_360 / (2 * math.PI)
+	}
+
+	for path_in in group.paths_in {
+		pathLen := len(path_in)
+		clear(&co.path_out)
+		if pathLen == 0 {continue}
+
+		if pathLen == 1 {
+			pt := path_in[0]
+			if co.group_delta_ < 1 {continue}
+			if group.join_type == .Round {
+				radius := abs_delta
+				steps := int(math.ceil_f64(co.steps_per_rad_ * 2 * math.PI))
+				_ellipsePoints(&co.path_out, pt, radius, radius, steps)
+			} else {
+				d := int(math.ceil(abs_delta))
+				_pathRect(&co.path_out, pt, d)
+			}
+			append(co.solution, co.path_out[:])
+			continue
+		}
+
+		if pathLen == 2 && group.end_type == .Joined {
+			if group.join_type == .Round {
+				co.end_type_ = .Round
+			} else {
+				co.end_type_ = .Square
+			}
+		}
+
+		_buildNormals(co, path_in[:])
+		#partial switch co.end_type_ {
+		case .Polygon:
+			_offsetPolygon(co, group, path_in[:])
+		case .Joined:
+			_offsetOpenJoined(co, group, path_in[:])
+		case:
+			_offsetOpenPath(co, group, path_in[:])
+		}
+	}
+}
+
+@(private = "file")
+_ellipsePoints :: proc(out: ^[dynamic]_Point($Z), center: _Point(Z), rx, ry: f64, steps: int) {
+	clear(out)
+	si := math.sin(2 * math.PI / f64(steps))
+	co := math.cos(2 * math.PI / f64(steps))
+	dx, dy := co, si
+	for i in 0 ..< steps {
+		append(out, _Point(Z){x = center.x + rx * dx, y = center.y + ry * dy})
+		x2 := dx * co - dy * si
+		dy = dy * co + dx * si
+		dx = x2
+	}
+}
+
+@(private = "file")
+_pathRect :: proc(out: ^[dynamic]_Point($Z), center: _Point(Z), d: int) {
+	fd := f64(d)
+	append(out, _Point(Z){x = center.x - fd, y = center.y - fd})
+	append(out, _Point(Z){x = center.x + fd, y = center.y - fd})
+	append(out, _Point(Z){x = center.x + fd, y = center.y + fd})
+	append(out, _Point(Z){x = center.x - fd, y = center.y + fd})
+}
+
+@(private = "file")
+_same2D :: #force_inline proc(a, b: _Point(Z_None)) -> bool {
+	return a.x == b.x && a.y == b.y
+}
+
+@(private = "file")
+_toNeutral :: #force_inline proc(p: _Point($Z)) -> _Point(Z_None) {
+	return {x = p.x, y = p.y}
+}
+
+@(private = "file")
+reverse_slice :: proc(s: ^[dynamic]$T) {
+	for i in 0 ..< len(s) / 2 {
+		j := len(s) - 1 - i
+		s[i], s[j] = s[j], s[i]
+	}
+}
+
+// ──── InflatePaths public proc ───────────────────────────────────────────────
+
+InflatePaths :: proc(
+	$PointT: typeid,
+	closePaths: [][]PointT,
+	openPaths: [][]PointT = nil,
+	delta: f64,
+	joinType: JoinType,
+	endType: EndType = .Polygon,
+	miterLimit: f64 = 2.0,
+	arcTolerance: f64 = 0.0,
+	preserveCollinear: bool = false,
+	reverseSolution: bool = false,
+	zCallback: proc(e1Bot, e1Top, e2Bot, e2Top: PointT, outPoint: ^PointT) = nil,
+	allocator := context.allocator,
+) -> (
+	res: [][]PointT,
+	err: ClipperError,
+) {
+	context.allocator = allocator
+	HasZ ::
+		intrinsics.type_has_field(PointT, "z") when intrinsics.type_is_struct(PointT) else len(
+			PointT,
+		) >=
+		3 when intrinsics.type_is_array(PointT) else false
+
+	when HasZ {
+		co: _ClipperOffset(f64)
+		co.miter_limit_ = miterLimit
+		co.arc_tolerance_ = arcTolerance
+		co.preserve_collinear_ = preserveCollinear
+		co.reverse_solution_ = reverseSolution
+		co.temp_lim_ = miterLimit > 1 ? 2.0 / (miterLimit * miterLimit) : 0.5
+		co.solution = new([dynamic][]_Point(f64), context.temp_allocator)
+
+		paths_reversed := false
+		for path in closePaths {
+			if len(path) == 0 {continue}
+			ipath := make([dynamic]_Point(f64), len(path), context.temp_allocator)
+			for pt, i in path {
+				ipath[i] = {
+					x = f64(pt.x),
+					y = f64(pt.y),
+					z = f64(pt.z),
+				}
+			}
+			g: _Group(f64)
+			gpaths := make([dynamic][dynamic]_Point(f64), 1, context.temp_allocator)
+			gpaths[0] = ipath
+			_group_init(&g, gpaths, joinType, .Polygon)
+			if g.is_reversed { paths_reversed = true }
+			append(&co.groups_, g)
+		}
+		for path in openPaths {
+			if len(path) == 0 {continue}
+			ipath := make([dynamic]_Point(f64), len(path), context.temp_allocator)
+			for pt, i in path {
+				ipath[i] = {
+					x = f64(pt.x),
+					y = f64(pt.y),
+					z = f64(pt.z),
+				}
+			}
+			g: _Group(f64)
+			gpaths := make([dynamic][dynamic]_Point(f64), 1, context.temp_allocator)
+			gpaths[0] = ipath
+			_group_init(&g, gpaths, joinType, endType)
+			append(&co.groups_, g)
+		}
+
+		_offsetExecuteInternal(&co, delta)
+
+		if len(co.solution^) > 0 {
+			cleanFill := FillRule.Positive
+			cleaned, _, cerr := BooleanOp(
+				.Union,
+				PointT,
+				_pathsFromOffset(co.solution^, PointT, context.temp_allocator),
+				nil,
+				nil,
+				cleanFill,
+				zCallback,
+				context.temp_allocator,
+			)
+			if cerr != nil {
+				return nil, cerr
+			}
+			if reverseSolution != paths_reversed {
+				for path in cleaned {_reversePath(path)}
+			}
+			res = make([][]PointT, len(cleaned), allocator)
+			for i in 0 ..< len(cleaned) {
+				res[i] = make([]PointT, len(cleaned[i]), allocator)
+				copy(res[i], cleaned[i])
+			}
+			return
+		}
+		return nil, nil
+	} else {
+		co: _ClipperOffset(struct {})
+		co.miter_limit_ = miterLimit
+		co.arc_tolerance_ = arcTolerance
+		co.preserve_collinear_ = preserveCollinear
+		co.reverse_solution_ = reverseSolution
+		co.temp_lim_ = miterLimit > 1 ? 2.0 / (miterLimit * miterLimit) : 0.5
+		co.solution = new([dynamic][]_Point(struct {}), context.temp_allocator)
+
+		paths_reversed := false
+		for path in closePaths {
+			if len(path) == 0 {continue}
+			ipath := make([dynamic]_Point(struct {}), len(path), context.temp_allocator)
+			for pt, i in path {
+				ipath[i] = {
+					x = f64(pt.x),
+					y = f64(pt.y),
+				}
+			}
+			g: _Group(struct {})
+			gpaths := make([dynamic][dynamic]_Point(struct {}), 1, context.temp_allocator)
+			gpaths[0] = ipath
+			_group_init(&g, gpaths, joinType, .Polygon)
+			if g.is_reversed { paths_reversed = true }
+			append(&co.groups_, g)
+		}
+		for path in openPaths {
+			if len(path) == 0 {continue}
+			ipath := make([dynamic]_Point(struct {}), len(path), context.temp_allocator)
+			for pt, i in path {
+				ipath[i] = {
+					x = f64(pt.x),
+					y = f64(pt.y),
+				}
+			}
+			g: _Group(struct {})
+			gpaths := make([dynamic][dynamic]_Point(struct {}), 1, context.temp_allocator)
+			gpaths[0] = ipath
+			_group_init(&g, gpaths, joinType, endType)
+			append(&co.groups_, g)
+		}
+
+		_offsetExecuteInternal(&co, delta)
+
+		if abs(delta) < 0.5 {
+			res = make([][]PointT, len(co.solution^), allocator)
+			for i in 0 ..< len(co.solution^) {
+				ipath := co.solution^[i]
+				dst := make([]PointT, len(ipath), allocator)
+				for pt, j in ipath {
+					dst[j] = _makePoint(PointT, pt.x, pt.y, 0)
+				}
+				res[i] = dst
+			}
+			return
+		}
+
+		if len(co.solution^) > 0 {
+			cleanFill := FillRule.Positive
+			cleaned, _, cerr := BooleanOp(
+				.Union,
+				PointT,
+				_pathsFromOffset(co.solution^, PointT, context.temp_allocator),
+				nil,
+				nil,
+				cleanFill,
+				nil,
+				context.temp_allocator,
+			)
+			if cerr != nil {
+				return nil, cerr
+			}
+			if reverseSolution != paths_reversed {
+				for path in cleaned {_reversePath(path)}
+			}
+			res = make([][]PointT, len(cleaned), allocator)
+			for i in 0 ..< len(cleaned) {
+				res[i] = make([]PointT, len(cleaned[i]), allocator)
+				copy(res[i], cleaned[i])
+			}
+			return
+		}
+		return nil, nil
+	}
+}
+
+@(private = "file")
+_offsetExecuteInternal :: proc(co: ^_ClipperOffset($Z), delta: f64) {
+	if len(co.groups_) == 0 {return}
+	co.delta_ = delta
+	for _, i in co.groups_ {
+		_doGroupOffset(co, &co.groups_[i])
+	}
+}
+
+@(private = "file")
+_pathsFromOffset :: proc(
+	paths: [dynamic][]_Point($Z),
+	$PointT: typeid,
+	allocator := context.allocator,
+) -> [][]PointT {
+	res := make([][]PointT, len(paths), allocator)
+	HasZ ::
+		intrinsics.type_has_field(PointT, "z") when intrinsics.type_is_struct(PointT) else len(
+			PointT,
+		) >=
+		3 when intrinsics.type_is_array(PointT) else false
+	for p, i in paths {
+		dst := make([]PointT, len(p), allocator)
+		for pt, j in p {
+			when size_of(Z) != 0 && HasZ {
+				dst[j] = _makePoint(PointT, pt.x, pt.y, pt.z)
+			} else {
+				dst[j] = _makePoint(PointT, pt.x, pt.y, 0)
+			}
+		}
+		res[i] = dst
+	}
+	return res
+}
 
 BooleanOp :: proc(
 	clipType: ClipType,
@@ -2598,7 +3287,7 @@ BooleanOp :: proc(
 				ipath[i] = {
 					x = f64(pt.x),
 					y = f64(pt.y),
-					z = f64(pt.z),
+					z = pt.z,
 				}
 			}
 			paths := make([dynamic][dynamic]_Point(T), 1, context.temp_allocator)
@@ -2612,7 +3301,7 @@ BooleanOp :: proc(
 				ipath[i] = {
 					x = f64(pt.x),
 					y = f64(pt.y),
-					z = f64(pt.z),
+					z = pt.z,
 				}
 			}
 			paths := make([dynamic][dynamic]_Point(T), 1, context.temp_allocator)
@@ -2629,7 +3318,7 @@ BooleanOp :: proc(
 				ipath[i] = {
 					x = f64(pt.x),
 					y = f64(pt.y),
-					z = f64(pt.z),
+					z = pt.z,
 				}
 			}
 			paths := make([dynamic][dynamic]_Point(T), 1, context.temp_allocator)
@@ -2721,7 +3410,7 @@ BooleanOp :: proc(
 		for ipath, i in closed {
 			opath := make([]PointT, len(ipath), allocator)
 			for pt, j in ipath {
-				opath[j] = _makePoint(PointT, pt.x, pt.y)
+				opath[j] = _makePoint(PointT, pt.x, pt.y, 0)
 			}
 			res[i] = opath
 		}
@@ -2729,7 +3418,7 @@ BooleanOp :: proc(
 		for ipath, i in open {
 			opath := make([]PointT, len(ipath), allocator)
 			for pt, j in ipath {
-				opath[j] = _makePoint(PointT, pt.x, pt.y)
+				opath[j] = _makePoint(PointT, pt.x, pt.y, 0)
 			}
 			resOpen[i] = opath
 		}
@@ -2749,41 +3438,30 @@ RectClip :: proc(
 	open: [][]PointT,
 	err: ClipperError,
 ) {
-	_ = rect
-	_ = closePaths
-	_ = openPaths
-	_ = zCallback
-	_ = allocator
-	return nil, nil, __ClipperError.FAILED
-}
+	context.allocator = allocator
+	// build rectangle polygon from rect bounds
+	pts := make([]PointT, 4, context.temp_allocator)
+	l, t, r, b := f64(rect.left), f64(rect.top), f64(rect.right), f64(rect.bottom)
+	pts[0] = _makePoint(PointT, l, t, 0)
+	pts[1] = _makePoint(PointT, r, t, 0)
+	pts[2] = _makePoint(PointT, r, b, 0)
+	pts[3] = _makePoint(PointT, l, b, 0)
+	rectPath := [][]PointT{pts}
 
-InflatePaths :: proc(
-	$PointT: typeid,
-	closePaths: [][]PointT,
-	openPaths: [][]PointT = nil,
-	delta: f64,
-	joinType: JoinType,
-	endType: EndType = .Polygon,
-	miterLimit: f64 = 2.0,
-	arcTolerance: f64 = 0.0,
-	preserveCollinear: bool = false,
-	reverseSolution: bool = false,
-	zCallback: proc(e1Bot, e1Top, e2Bot, e2Top: PointT, outPoint: ^PointT) = nil,
-	allocator := context.allocator,
-) -> (
-	res: [][]PointT,
-	err: ClipperError,
-) {
-	_ = closePaths
-	_ = openPaths
-	_ = delta
-	_ = joinType
-	_ = endType
-	_ = miterLimit
-	_ = arcTolerance
-	_ = preserveCollinear
-	_ = reverseSolution
-	_ = zCallback
-	_ = allocator
-	return nil, __ClipperError.FAILED
+	if len(closePaths) > 0 && len(openPaths) > 0 {
+		closed, open, err = BooleanOp(.Intersection, PointT, closePaths, rectPath, nil, .NonZero, zCallback, allocator)
+		_, open2, _ := BooleanOp(.Intersection, PointT, nil, rectPath, openPaths, .NonZero, zCallback, context.temp_allocator)
+		// merge open paths
+		allOpen := make([][]PointT, len(open)+len(open2), allocator)
+		copy(allOpen, open)
+		copy(allOpen[len(open):], open2)
+		open = allOpen
+		return
+	} else if len(closePaths) > 0 {
+		closed, open, err = BooleanOp(.Intersection, PointT, closePaths, rectPath, nil, .NonZero, zCallback, allocator)
+		return
+	} else {
+		_, open, err = BooleanOp(.Intersection, PointT, nil, rectPath, openPaths, .NonZero, zCallback, allocator)
+		return
+	}
 }

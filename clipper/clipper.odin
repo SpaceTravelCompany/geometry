@@ -272,8 +272,14 @@ _ClipperBase :: struct($Z: typeid) {
 	error_code_:          int,
 	has_open_paths_:      bool,
 	succeeded_:           bool,
-	defaultZ:             f64,
-	zCallback_:           rawptr, // user's z callback (type-erased, nil when no Z)
+	defaultZ:             Z, // f64 when Z active, struct{} when Z none
+	zCallback_:           rawptr, // user's z callback (type-erased)
+	// callbackPtr는 user의 zCallback (rawptr) — 브리지가 PointT로 캐스팅하여 호출
+	zBridge_:             proc(
+		callbackPtr: rawptr,
+		e1Bot, e1Top, e2Bot, e2Top: _Point(Z),
+		outPoint: ^_Point(Z),
+	),
 }
 
 // ──── OutPt2 + RectClip (RectClip uses its own light-weight types) ────────────
@@ -354,6 +360,26 @@ _makePoint :: #force_inline proc "contextless" ($PointT: typeid, x, y: f64, z: f
 	p.y = type_of(p.y)(y)
 	when HasZ {
 		p.z = type_of(p.z)(z)
+	}
+	return p
+}
+
+// Convert internal _Point(Z) → user PointT (for Z callback bridge)
+@(private = "file")
+_fromInternalPointZ :: #force_inline proc "contextless" (
+	pt: _Point($Z),
+	$PointT: typeid,
+) -> PointT {
+	HasZ ::
+		intrinsics.type_has_field(PointT, "z") when intrinsics.type_is_struct(PointT) else len(
+			PointT,
+		) >=
+		3 when intrinsics.type_is_array(PointT) else false
+	p: PointT
+	p.x = type_of(p.x)(pt.x)
+	p.y = type_of(p.y)(pt.y)
+	when HasZ {
+		p.z = type_of(p.z)(pt.z)
 	}
 	return p
 }
@@ -801,11 +827,11 @@ _addPaths_ :: proc(
 
 		for pt_idx in 0 ..< len(path) {
 			pt := path[pt_idx]
-		if prev_v != nil {
-			// skip duplicate consecutive points
-			if _xy(prev_v.pt) == _xy(pt) { continue }
-			prev_v.next = curr_v
-		}
+			if prev_v != nil {
+				// skip duplicate consecutive points
+				if _xy(prev_v.pt) == _xy(pt) {continue}
+				prev_v.next = curr_v
+			}
 			curr_v.prev = prev_v
 			curr_v.pt = pt
 			curr_v.flags = _VertexFlags.Empty
@@ -941,7 +967,10 @@ _popScanline :: proc(cb: ^_ClipperBase($Z), y: ^f64) -> bool {
 			j += 1
 		}
 	}
-	cb.scanline_list_ = sl[:j]
+	clear(&cb.scanline_list_)
+	for i in 0 ..< j {
+		append(&cb.scanline_list_, sl[i])
+	}
 	y^ = max_y
 	return true
 }
@@ -1504,10 +1533,11 @@ _startOpenPath :: proc(cb: ^_ClipperBase($Z), e: ^_Active(Z), pt: _Point(Z)) -> 
 
 @(private = "file")
 _getRealOutRec :: proc(outrec: ^_OutRec($Z)) -> ^_OutRec(Z) {
-	for outrec != nil && outrec.pts == nil {
-		outrec = outrec.owner
+	or := outrec
+	for or != nil && or.pts == nil {
+		or = or.owner
 	}
-	return outrec
+	return or
 }
 
 @(private = "file")
@@ -1526,18 +1556,26 @@ _split :: proc(cb: ^_ClipperBase($Z), e: ^_Active(Z), pt: _Point(Z)) {
 // ──── InsertLocalMinimaIntoAEL + CheckJoinLeft/Right ─────────────────────────
 
 @(private = "file")
-_checkJoinLeft :: proc(cb: ^_ClipperBase($Z), e: ^_Active(Z), pt: _Point(Z), check_curr_x: bool = false) {
+_checkJoinLeft :: proc(
+	cb: ^_ClipperBase($Z),
+	e: ^_Active(Z),
+	pt: _Point(Z),
+	check_curr_x: bool = false,
+) {
 	prev := e.prev_in_ael
 	if prev == nil ||
-		!_isHotEdge(e) || !_isHotEdge(prev) ||
-		_isHorizontalE(e) || _isHorizontalE(prev) ||
-		_isOpen(e) || _isOpen(prev) { return }
+	   !_isHotEdge(e) ||
+	   !_isHotEdge(prev) ||
+	   _isHorizontalE(e) ||
+	   _isHorizontalE(prev) ||
+	   _isOpen(e) ||
+	   _isOpen(prev) {return}
 	if (pt.y < e.top.y + 2 || pt.y < prev.top.y + 2) &&
-		(e.bot.y > pt.y || prev.bot.y > pt.y) { return }
+	   (e.bot.y > pt.y || prev.bot.y > pt.y) {return}
 	if check_curr_x {
-		if _perpendicDistFromLineSqrd(_xy(pt), _xy(prev.bot), _xy(prev.top)) > 0.25 { return }
-	} else if e.curr_x != prev.curr_x { return }
-	if !_isCollinear(_xy(e.top), _xy(pt), _xy(prev.top)) { return }
+		if _perpendicDistFromLineSqrd(_xy(pt), _xy(prev.bot), _xy(prev.top)) > 0.25 {return}
+	} else if e.curr_x != prev.curr_x {return}
+	if !_isCollinear(_xy(e.top), _xy(pt), _xy(prev.top)) {return}
 
 	if e.outrec.idx == prev.outrec.idx {
 		_addLocalMaxPoly(cb, prev, e, pt)
@@ -1551,18 +1589,26 @@ _checkJoinLeft :: proc(cb: ^_ClipperBase($Z), e: ^_Active(Z), pt: _Point(Z), che
 }
 
 @(private = "file")
-_checkJoinRight :: proc(cb: ^_ClipperBase($Z), e: ^_Active(Z), pt: _Point(Z), check_curr_x: bool = false) {
+_checkJoinRight :: proc(
+	cb: ^_ClipperBase($Z),
+	e: ^_Active(Z),
+	pt: _Point(Z),
+	check_curr_x: bool = false,
+) {
 	nxt := e.next_in_ael
 	if nxt == nil ||
-		!_isHotEdge(e) || !_isHotEdge(nxt) ||
-		_isHorizontalE(e) || _isHorizontalE(nxt) ||
-		_isOpen(e) || _isOpen(nxt) { return }
+	   !_isHotEdge(e) ||
+	   !_isHotEdge(nxt) ||
+	   _isHorizontalE(e) ||
+	   _isHorizontalE(nxt) ||
+	   _isOpen(e) ||
+	   _isOpen(nxt) {return}
 	if (pt.y < e.top.y + 2 || pt.y < nxt.top.y + 2) &&
-		(e.bot.y > pt.y || nxt.bot.y > pt.y) { return }
+	   (e.bot.y > pt.y || nxt.bot.y > pt.y) {return}
 	if check_curr_x {
-		if _perpendicDistFromLineSqrd(_xy(pt), _xy(nxt.bot), _xy(nxt.top)) > 0.35 { return }
-	} else if e.curr_x != nxt.curr_x { return }
-	if !_isCollinear(_xy(e.top), _xy(pt), _xy(nxt.top)) { return }
+		if _perpendicDistFromLineSqrd(_xy(pt), _xy(nxt.bot), _xy(nxt.top)) > 0.35 {return}
+	} else if e.curr_x != nxt.curr_x {return}
+	if !_isCollinear(_xy(e.top), _xy(pt), _xy(nxt.top)) {return}
 
 	if e.outrec.idx == nxt.outrec.idx {
 		_addLocalMaxPoly(cb, e, nxt, pt)
@@ -1579,14 +1625,14 @@ _checkJoinRight :: proc(cb: ^_ClipperBase($Z), e: ^_Active(Z), pt: _Point(Z), ch
 _insertLocalMinimaIntoAEL :: proc(cb: ^_ClipperBase($Z), bot_y: f64) {
 	for {
 		lm: ^_LocalMinima(Z)
-		if !_popLocalMinima(cb, bot_y, &lm) { break }
+		if !_popLocalMinima(cb, bot_y, &lm) {break}
 
 		left_bound: ^_Active(Z)
 		right_bound: ^_Active(Z)
 
 		if !_hasFlag(lm.vertex, .OpenStart) {
 			left_bound = new(_Active(Z), context.temp_allocator)
-			if left_bound == nil { return }
+			if left_bound == nil {return}
 			left_bound.bot = lm.vertex.pt
 			left_bound.curr_x = left_bound.bot.x
 			left_bound.wind_dx = -1
@@ -1598,7 +1644,7 @@ _insertLocalMinimaIntoAEL :: proc(cb: ^_ClipperBase($Z), bot_y: f64) {
 
 		if !_hasFlag(lm.vertex, .OpenEnd) {
 			right_bound = new(_Active(Z), context.temp_allocator)
-			if right_bound == nil { return }
+			if right_bound == nil {return}
 			right_bound.bot = lm.vertex.pt
 			right_bound.curr_x = right_bound.bot.x
 			right_bound.wind_dx = 1
@@ -1626,7 +1672,7 @@ _insertLocalMinimaIntoAEL :: proc(cb: ^_ClipperBase($Z), bot_y: f64) {
 			right_bound = nil
 		}
 
-		if left_bound == nil { continue }
+		if left_bound == nil {continue}
 		left_bound.is_left_bound = true
 		_insertLeftEdge(cb, left_bound)
 
@@ -1654,7 +1700,7 @@ _insertLocalMinimaIntoAEL :: proc(cb: ^_ClipperBase($Z), bot_y: f64) {
 
 			// intersect right_bound with AEL neighbors to correct ordering
 			for right_bound.next_in_ael != nil &&
-				_isValidAelOrder(right_bound.next_in_ael, right_bound) {
+			    _isValidAelOrder(right_bound.next_in_ael, right_bound) {
 				_intersectEdges(cb, right_bound, right_bound.next_in_ael, right_bound.bot)
 				_swapPositionsInAEL(cb, right_bound, right_bound.next_in_ael)
 			}
@@ -1732,16 +1778,19 @@ _findEdgeWithMatchingLocMin :: proc(e: ^_Active($Z)) -> ^_Active(Z) {
 // Z callback invocation — compiled only when Z is active (f64)
 @(private = "file")
 _setZ :: proc(cb: ^_ClipperBase($Z), e1, e2: ^_Active(Z), ip: ^_Point(Z)) {
-	when Z != Z_None {
+	when size_of(Z) != 0 {
 		if cb.zCallback_ == nil {return}
 		// prioritize subject over clip vertices
 		if _getPolyType(e1) == .Subject {
 			if ip^ ==
 			   e1.bot {ip.z = e1.bot.z} else if ip^ == e1.top {ip.z = e1.top.z} else if ip^ == e2.bot {ip.z = e2.bot.z} else if ip^ == e2.top {ip.z = e2.top.z} else {ip.z = cb.defaultZ}
-			// user callback dispatch will be added in BooleanOp wrapper
 		} else {
 			if ip^ ==
 			   e2.bot {ip.z = e2.bot.z} else if ip^ == e2.top {ip.z = e2.top.z} else if ip^ == e1.bot {ip.z = e1.bot.z} else if ip^ == e1.top {ip.z = e1.top.z} else {ip.z = cb.defaultZ}
+		}
+		// call user callback via type-erased bridge
+		if cb.zBridge_ != nil {
+			cb.zBridge_(cb.zCallback_, e1.bot, e1.top, e2.bot, e2.top, ip)
 		}
 	}
 }
@@ -1801,7 +1850,7 @@ _intersectEdges :: proc(cb: ^_ClipperBase($Z), e1, e2: ^_Active(Z), pt: _Point(Z
 		} else {
 			result_op = _startOpenPath(cb, edge_o, pt)
 		}
-		when Z != Z_None {
+		when size_of(Z) != 0 {
 			if result_op != nil && cb.zCallback_ != nil {
 				_setZ(cb, edge_o, edge_c, &result_op.pt)
 			}
@@ -1814,7 +1863,7 @@ _intersectEdges :: proc(cb: ^_ClipperBase($Z), e1, e2: ^_Active(Z), pt: _Point(Z
 	if _isJoined(e2) {_split(cb, e2, pt)}
 
 	// update winding counts
-	old_e1_windcnt, old_e2_windcnt: int
+	old_e1_windcnt, old_e2_windcnt: i32
 	if _getPolyType(e1) == _getPolyType(e2) {
 		if cb.fillrule_ == .EvenOdd {
 			old_e1_windcnt = e1.wind_cnt
@@ -1865,10 +1914,15 @@ _intersectEdges :: proc(cb: ^_ClipperBase($Z), e1, e2: ^_Active(Z), pt: _Point(Z
 		   (old_e2_windcnt != 0 && old_e2_windcnt != 1) ||
 		   (_getPolyType(e1) != _getPolyType(e2) && cb.cliptype_ != .Xor) {
 			result_op = _addLocalMaxPoly(cb, e1, e2, pt)
+			when size_of(Z) != 0 {
+				if result_op != nil && cb.zCallback_ != nil {
+					_setZ(cb, e1, e2, &result_op.pt)
+				}
+			}
 		} else if _isFront(e1) || (e1.outrec == e2.outrec) {
 			result_op = _addLocalMaxPoly(cb, e1, e2, pt)
 			op2 := _addLocalMinPoly(cb, e1, e2, pt, false)
-			when Z != Z_None {
+			when size_of(Z) != 0 {
 				if cb.zCallback_ != nil {
 					if result_op != nil {_setZ(cb, e1, e2, &result_op.pt)}
 					if op2 != nil {_setZ(cb, e1, e2, &op2.pt)}
@@ -1878,22 +1932,17 @@ _intersectEdges :: proc(cb: ^_ClipperBase($Z), e1, e2: ^_Active(Z), pt: _Point(Z
 			result_op = _addOutPt(cb, e1, pt)
 			op2 := _addOutPt(cb, e2, pt)
 			_swapOutrecs(e1, e2)
-			when Z != Z_None {
+			when size_of(Z) != 0 {
 				if cb.zCallback_ != nil {
 					if result_op != nil {_setZ(cb, e1, e2, &result_op.pt)}
 					if op2 != nil {_setZ(cb, e1, e2, &op2.pt)}
 				}
 			}
 		}
-		when Z != Z_None {
-			if result_op != nil && cb.zCallback_ != nil {
-				_setZ(cb, e1, e2, &result_op.pt)
-			}
-		}
 	} else if _isHotEdge(e1) {
 		result_op = _addOutPt(cb, e1, pt)
 		_swapOutrecs(e1, e2)
-		when Z != Z_None {
+		when size_of(Z) != 0 {
 			if result_op != nil && cb.zCallback_ != nil {
 				_setZ(cb, e1, e2, &result_op.pt)
 			}
@@ -1901,13 +1950,13 @@ _intersectEdges :: proc(cb: ^_ClipperBase($Z), e1, e2: ^_Active(Z), pt: _Point(Z
 	} else if _isHotEdge(e2) {
 		result_op = _addOutPt(cb, e2, pt)
 		_swapOutrecs(e1, e2)
-		when Z != Z_None {
+		when size_of(Z) != 0 {
 			if result_op != nil && cb.zCallback_ != nil {
 				_setZ(cb, e1, e2, &result_op.pt)
 			}
 		}
 	} else {
-		e1Wc2, e2Wc2: int
+		e1Wc2, e2Wc2: i32
 		#partial switch cb.fillrule_ {
 		case .EvenOdd, .NonZero:
 			e1Wc2 = abs(e1.wind_cnt2)
@@ -1943,12 +1992,554 @@ _intersectEdges :: proc(cb: ^_ClipperBase($Z), e1, e2: ^_Active(Z), pt: _Point(Z
 				}
 			}
 		}
-		when Z != Z_None {
+		when size_of(Z) != 0 {
 			if result_op != nil && cb.zCallback_ != nil {
 				_setZ(cb, e1, e2, &result_op.pt)
 			}
 		}
 	}
+}
+
+// ──── Scanline loop (merge sort, intersections, top-of-scanbeam, maxima) ─────
+
+// Merge sort helpers for SEL
+@(private = "file")
+_extractFromSEL :: proc(ae: ^_Active($Z)) -> ^_Active(Z) {
+	res := ae.next_in_sel
+	if res != nil {res.prev_in_sel = ae.prev_in_sel}
+	ae.prev_in_sel.next_in_sel = res
+	return res
+}
+
+@(private = "file")
+_insert1Before2InSEL :: proc(ae1, ae2: ^_Active($Z)) {
+	ae1.prev_in_sel = ae2.prev_in_sel
+	if ae1.prev_in_sel != nil {ae1.prev_in_sel.next_in_sel = ae1}
+	ae1.next_in_sel = ae2
+	ae2.prev_in_sel = ae1
+}
+
+@(private = "file")
+_adjustCurrXAndCopyToSEL :: proc(cb: ^_ClipperBase($Z), top_y: f64) {
+	e := cb.actives_
+	cb.sel_ = e
+	for e != nil {
+		e.prev_in_sel = e.prev_in_ael
+		e.next_in_sel = e.next_in_ael
+		e.jump = e.next_in_sel
+		e.curr_x = _topX(e.dx, _xy(e.bot), _xy(e.top), top_y)
+		e = e.next_in_ael
+	}
+}
+
+@(private = "file")
+_addNewIntersectNode :: proc(cb: ^_ClipperBase($Z), e1, e2: ^_Active(Z), top_y: f64) {
+	ip: _Point(Z_None)
+	if !_getLineIntersectPt(_xy(e1.bot), _xy(e1.top), _xy(e2.bot), _xy(e2.top), &ip) {
+		ip.x = e1.curr_x
+		ip.y = top_y
+	}
+	// clamp intersection to scanbeam bounds
+	if ip.y > cb.bot_y_ || ip.y < top_y {
+		abs_dx1 := abs(e1.dx)
+		abs_dx2 := abs(e2.dx)
+		if abs_dx1 > 100 && abs_dx2 > 100 {
+			if abs_dx1 > abs_dx2 {
+				ip = _getClosestPointOnSegment(ip, _xy(e1.bot), _xy(e1.top))
+			} else {
+				ip = _getClosestPointOnSegment(ip, _xy(e2.bot), _xy(e2.top))
+			}
+		} else if abs_dx1 > 100 {
+			ip = _getClosestPointOnSegment(ip, _xy(e1.bot), _xy(e1.top))
+		} else if abs_dx2 > 100 {
+			ip = _getClosestPointOnSegment(ip, _xy(e2.bot), _xy(e2.top))
+		} else {
+			if ip.y < top_y {ip.y = top_y} else {ip.y = cb.bot_y_}
+			if abs_dx1 <
+			   abs_dx2 {ip.x = _topX(e1.dx, _xy(e1.bot), _xy(e1.top), ip.y)} else {ip.x = _topX(e2.dx, _xy(e2.bot), _xy(e2.top), ip.y)}
+		}
+	}
+	append(
+		&cb.intersect_nodes_,
+		_IntersectNode(Z){pt = {x = ip.x, y = ip.y}, edge1 = e1, edge2 = e2},
+	)
+}
+
+@(private = "file")
+_intersectNodeSorter :: proc(a, b: _IntersectNode($Z)) -> bool {
+	if a.pt.y == b.pt.y {return a.pt.x < b.pt.x}
+	return a.pt.y > b.pt.y
+}
+
+@(private = "file")
+_buildIntersectList :: proc(cb: ^_ClipperBase($Z), top_y: f64) -> bool {
+	if cb.actives_ == nil || cb.actives_.next_in_ael == nil {return false}
+	_adjustCurrXAndCopyToSEL(cb, top_y)
+
+	left := cb.sel_
+	for left != nil && left.jump != nil {
+		prev_base: ^_Active(Z)
+		for left != nil && left.jump != nil {
+			curr_base := left
+			right := left.jump
+			l_end := right
+			r_end := right.jump
+			left.jump = r_end
+
+			for left != l_end && right != r_end {
+				if right.curr_x < left.curr_x {
+					// intersections found — record all edges between tmp and right
+					tmp := right.prev_in_sel
+					for {
+						_addNewIntersectNode(cb, tmp, right, top_y)
+						if tmp == left {break}
+						tmp = tmp.prev_in_sel
+					}
+					tmp = right
+					right = _extractFromSEL(tmp)
+					l_end = right
+					_insert1Before2InSEL(tmp, left)
+					if left == curr_base {
+						curr_base = tmp
+						curr_base.jump = r_end
+						if prev_base == nil {cb.sel_ = curr_base} else {prev_base.jump = curr_base}
+					}
+				} else {
+					left = left.next_in_sel
+				}
+			}
+			prev_base = curr_base
+			left = r_end
+		}
+		left = cb.sel_
+	}
+	return len(cb.intersect_nodes_) > 0
+}
+
+@(private = "file")
+_edgesAdjacentInAEL :: proc(node: _IntersectNode($Z)) -> bool {
+	return node.edge1.next_in_ael == node.edge2 || node.edge1.prev_in_ael == node.edge2
+}
+
+@(private = "file")
+_processIntersectList :: proc(cb: ^_ClipperBase($Z)) {
+	if len(cb.intersect_nodes_) == 0 {return}
+	slice.sort_by(cb.intersect_nodes_[:], _intersectNodeSorter)
+
+	for i := 0; i < len(cb.intersect_nodes_); i += 1 {
+		if !_edgesAdjacentInAEL(cb.intersect_nodes_[i]) {
+			j := i + 1
+			for !_edgesAdjacentInAEL(cb.intersect_nodes_[j]) {j += 1}
+			cb.intersect_nodes_[i], cb.intersect_nodes_[j] =
+				cb.intersect_nodes_[j], cb.intersect_nodes_[i]
+		}
+		node := &cb.intersect_nodes_[i]
+		ip := _Point(Z) {
+			x = node.pt.x,
+			y = node.pt.y,
+		}
+		_intersectEdges(cb, node.edge1, node.edge2, ip)
+		_swapPositionsInAEL(cb, node.edge1, node.edge2)
+		node.edge1.curr_x = node.pt.x
+		node.edge2.curr_x = node.pt.x
+		_checkJoinLeft(cb, node.edge2, ip, true)
+		_checkJoinRight(cb, node.edge1, ip, true)
+	}
+}
+
+@(private = "file")
+_doIntersections :: proc(cb: ^_ClipperBase($Z), top_y: f64) {
+	if _buildIntersectList(cb, top_y) {
+		_processIntersectList(cb)
+		clear(&cb.intersect_nodes_)
+	}
+}
+
+@(private = "file")
+_doTopOfScanbeam :: proc(cb: ^_ClipperBase($Z), y: f64) {
+	cb.sel_ = nil // sel_ reused for horizontals
+	e := cb.actives_
+	for e != nil {
+		if e.top.y == y {
+			e.curr_x = e.top.x
+			if _isMaximaE(e) {
+				e = _doMaxima(cb, e)
+				continue
+			} else {
+				if _isHotEdge(e) {_addOutPt(cb, e, e.top)}
+				_updateEdgeIntoAEL(cb, e)
+				if _isHorizontalE(e) {_pushHorz(cb, e)}
+			}
+		} else {
+			e.curr_x = _topX(e.dx, _xy(e.bot), _xy(e.top), y)
+		}
+		e = e.next_in_ael
+	}
+}
+
+@(private = "file")
+_doMaxima :: proc(cb: ^_ClipperBase($Z), e: ^_Active(Z)) -> ^_Active(Z) {
+	prev_e := e.prev_in_ael
+	next_e := e.next_in_ael
+	if _isOpenEndE(e) {
+		if _isHotEdge(e) {_addOutPt(cb, e, e.top)}
+		if !_isHorizontalE(e) {
+			if _isHotEdge(e) {
+				if _isFront(e) {e.outrec.front_edge = nil} else {e.outrec.back_edge = nil}
+				e.outrec = nil
+			}
+			_deleteFromAEL(cb, e)
+		}
+		return next_e
+	}
+
+	max_pair := _getMaximaPair(e)
+	if max_pair == nil {return next_e}
+
+	if _isJoined(e) {_split(cb, e, e.top)}
+	if _isJoined(max_pair) {_split(cb, max_pair, max_pair.top)}
+
+	for next_e != max_pair {
+		_intersectEdges(cb, e, next_e, e.top)
+		_swapPositionsInAEL(cb, e, next_e)
+		next_e = e.next_in_ael
+	}
+
+	if _isOpen(e) {
+		if _isHotEdge(e) {_addLocalMaxPoly(cb, e, max_pair, e.top)}
+		_deleteFromAEL(cb, max_pair)
+		_deleteFromAEL(cb, e)
+		if prev_e != nil {return prev_e.next_in_ael}
+		return cb.actives_
+	}
+
+	if _isHotEdge(e) {_addLocalMaxPoly(cb, e, max_pair, e.top)}
+	_deleteFromAEL(cb, e)
+	_deleteFromAEL(cb, max_pair)
+	if prev_e != nil {return prev_e.next_in_ael}
+	return cb.actives_
+}
+
+@(private = "file")
+_updateEdgeIntoAEL :: proc(cb: ^_ClipperBase($Z), e: ^_Active(Z)) {
+	e.bot = e.top
+	e.vertex_top = _nextVertex(e)
+	e.top = e.vertex_top.pt
+	e.curr_x = e.bot.x
+	_setDx(e)
+
+	if _isJoined(e) {_split(cb, e, e.bot)}
+
+	if _isHorizontalE(e) {
+		if !_isOpen(e) {_trimHorz(e, cb.preserve_collinear_)}
+		return
+	}
+	_insertScanline(cb, e.top.y)
+	_checkJoinLeft(cb, e, e.bot)
+	_checkJoinRight(cb, e, e.bot, true)
+}
+
+@(private = "file")
+_trimHorz :: proc(e: ^_Active($Z), preserveCollinear: bool) {
+	for {
+		pt := _nextVertex(e).pt
+		if _xy(pt).y != _xy(e.top).y {break}
+		if preserveCollinear && ((pt.x < e.top.x) != (e.bot.x < e.top.x)) {break}
+		e.vertex_top = _nextVertex(e)
+		e.top = pt
+		if _isMaximaE(e) {break}
+	}
+	_setDx(e)
+}
+
+@(private = "file")
+_getMaximaPair :: proc(e: ^_Active($Z)) -> ^_Active(Z) {
+	e2 := e.next_in_ael
+	for e2 != nil {
+		if e2.vertex_top == e.vertex_top {return e2}
+		e2 = e2.next_in_ael
+	}
+	return nil
+}
+
+@(private = "file")
+_getCurrYMaximaVertex :: proc(e: ^_Active($Z)) -> ^_Vertex(Z) {
+	result := e.vertex_top
+	if e.wind_dx > 0 {
+		for result.next.pt.y == result.pt.y {result = result.next}
+	} else {
+		for result.prev.pt.y == result.pt.y {result = result.prev}
+	}
+	if !_isMaximaV(result) {result = nil}
+	return result
+}
+
+@(private = "file")
+_getCurrYMaximaVertexOpen :: proc(e: ^_Active($Z)) -> ^_Vertex(Z) {
+	result := e.vertex_top
+	if e.wind_dx > 0 {
+		for result.next.pt.y == result.pt.y &&
+		    !_hasFlag(result, .OpenEnd) &&
+		    !_hasFlag(result, .LocalMax) {
+			result = result.next
+		}
+	} else {
+		for result.prev.pt.y == result.pt.y &&
+		    !_hasFlag(result, .OpenEnd) &&
+		    !_hasFlag(result, .LocalMax) {
+			result = result.prev
+		}
+	}
+	if !_isMaximaV(result) {result = nil}
+	return result
+}
+
+@(private = "file")
+_resetHorzDirection :: proc(
+	horz: ^_Active($Z),
+	max_vertex: ^_Vertex(Z),
+	horz_left, horz_right: ^f64,
+) -> bool {
+	if horz.bot.x == horz.top.x {
+		horz_left^ = horz.curr_x
+		horz_right^ = horz.curr_x
+		e := horz.next_in_ael
+		for e != nil && e.vertex_top != max_vertex {e = e.next_in_ael}
+		return e != nil
+	} else if horz.curr_x < horz.top.x {
+		horz_left^ = horz.curr_x
+		horz_right^ = horz.top.x
+		return true
+	} else {
+		horz_left^ = horz.top.x
+		horz_right^ = horz.curr_x
+		return false
+	}
+}
+
+@(private = "file")
+_getLastOp :: proc(hot_edge: ^_Active($Z)) -> ^_OutPt(Z) {
+	outrec := hot_edge.outrec
+	result := outrec.pts
+	if hot_edge != outrec.front_edge {result = result.next}
+	return result
+}
+
+// ──── DoHorizontal (core horizontal edge processing) ─────────────────────────
+
+@(private = "file")
+_addTrialHorzJoin :: proc(cb: ^_ClipperBase($Z), op: ^_OutPt(Z)) {
+	if op.outrec.is_open {return}
+	append(&cb.horz_seg_list_, _HorzSegment(Z){left_op = op})
+}
+
+@(private = "file")
+_doHorizontal :: proc(cb: ^_ClipperBase($Z), horz: ^_Active(Z)) {
+	horzIsOpen := _isOpen(horz)
+	y := horz.bot.y
+	vertex_max: ^_Vertex(Z)
+	if horzIsOpen {
+		vertex_max = _getCurrYMaximaVertexOpen(horz)
+	} else {
+		vertex_max = _getCurrYMaximaVertex(horz)
+	}
+
+	horz_left, horz_right: f64
+	is_left_to_right := _resetHorzDirection(horz, vertex_max, &horz_left, &horz_right)
+
+	if _isHotEdge(horz) {
+		pt := _Point(Z) {
+			x = horz.curr_x,
+			y = y,
+		}
+		op := _addOutPt(cb, horz, pt)
+		_addTrialHorzJoin(cb, op)
+	}
+
+	for {
+		e: ^_Active(Z)
+		if is_left_to_right {e = horz.next_in_ael} else {e = horz.prev_in_ael}
+
+		for e != nil {
+			if e.vertex_top == vertex_max {
+				if _isHotEdge(horz) && _isJoined(e) {_split(cb, e, e.top)}
+				if _isHotEdge(horz) {
+					for horz.vertex_top != vertex_max {
+						_addOutPt(cb, horz, horz.top)
+						_updateEdgeIntoAEL(cb, horz)
+					}
+					if is_left_to_right {
+						_addLocalMaxPoly(cb, horz, e, horz.top)
+					} else {
+						_addLocalMaxPoly(cb, e, horz, horz.top)
+					}
+				}
+				_deleteFromAEL(cb, e)
+				_deleteFromAEL(cb, horz)
+				return
+			}
+
+			if vertex_max != horz.vertex_top || _isOpenEndE(horz) {
+				if (is_left_to_right && e.curr_x > horz_right) ||
+				   (!is_left_to_right && e.curr_x < horz_left) {break}
+
+				if e.curr_x == horz.top.x && !_isHorizontalE(e) {
+					pt := _nextVertex(horz).pt
+					if is_left_to_right {
+						if _isOpen(e) && !_isSamePolyType(e, horz) && !_isHotEdge(e) {
+							if _topX(e.dx, _xy(e.bot), _xy(e.top), pt.y) > pt.x {break}
+						} else if _topX(e.dx, _xy(e.bot), _xy(e.top), pt.y) >= pt.x {break}
+					} else {
+						if _isOpen(e) && !_isSamePolyType(e, horz) && !_isHotEdge(e) {
+							if _topX(e.dx, _xy(e.bot), _xy(e.top), pt.y) < pt.x {break}
+						} else if _topX(e.dx, _xy(e.bot), _xy(e.top), pt.y) <= pt.x {break}
+					}
+				}
+			}
+
+			pt := _Point(Z) {
+				x = e.curr_x,
+				y = horz.bot.y,
+			}
+			if is_left_to_right {
+				_intersectEdges(cb, horz, e, pt)
+				_swapPositionsInAEL(cb, horz, e)
+				_checkJoinLeft(cb, e, pt)
+				horz.curr_x = e.curr_x
+				e = horz.next_in_ael
+			} else {
+				_intersectEdges(cb, e, horz, pt)
+				_swapPositionsInAEL(cb, e, horz)
+				_checkJoinRight(cb, e, pt)
+				horz.curr_x = e.curr_x
+				e = horz.prev_in_ael
+			}
+
+			if horz.outrec != nil {
+				_addTrialHorzJoin(cb, _getLastOp(horz))
+			}
+		}
+
+		// check if finished with consecutive horizontals
+		if horzIsOpen && _isOpenEndE(horz) {
+			if _isHotEdge(horz) {
+				_addOutPt(cb, horz, horz.top)
+				if _isFront(horz) {horz.outrec.front_edge = nil} else {horz.outrec.back_edge = nil}
+				horz.outrec = nil
+			}
+			_deleteFromAEL(cb, horz)
+			return
+		} else if _nextVertex(horz).pt.y != horz.top.y {break}
+
+		// more horizontals in bound
+		if _isHotEdge(horz) {_addOutPt(cb, horz, horz.top)}
+		_updateEdgeIntoAEL(cb, horz)
+		is_left_to_right = _resetHorzDirection(horz, vertex_max, &horz_left, &horz_right)
+	}
+
+	if _isHotEdge(horz) {
+		op := _addOutPt(cb, horz, horz.top)
+		_addTrialHorzJoin(cb, op)
+	}
+	_updateEdgeIntoAEL(cb, horz)
+}
+
+// ──── ExecuteInternal (main scanline loop) + output assembly ─────────────────
+
+@(private = "file")
+_executeInternal :: proc(cb: ^_ClipperBase($Z), ct: ClipType, fr: FillRule) -> bool {
+	cb.cliptype_ = ct
+	cb.fillrule_ = fr
+	cb.using_polytree_ = false
+	_reset(cb)
+
+	y: f64
+	if ct == .NoClip || !_popScanline(cb, &y) {return true}
+
+	for cb.succeeded_ {
+		_insertLocalMinimaIntoAEL(cb, y)
+
+		e: ^_Active(Z)
+		for _popHorz(cb, &e) {_doHorizontal(cb, e)}
+
+		if len(cb.horz_seg_list_) > 0 {
+			// _convertHorzSegsToJoins(cb)  (deferred — not critical for basic ops)
+			clear(&cb.horz_seg_list_)
+		}
+
+		cb.bot_y_ = y
+		if !_popScanline(cb, &y) {break}
+
+		_doIntersections(cb, y)
+		_doTopOfScanbeam(cb, y)
+
+		for _popHorz(cb, &e) {_doHorizontal(cb, e)}
+	}
+
+	// if cb.succeeded_ { _processHorzJoins(cb) }  (deferred)
+	return cb.succeeded_
+}
+
+@(private = "file")
+_buildPath64 :: proc(op: ^_OutPt($Z), reverse, isOpen: bool, path: ^[dynamic]_Point(Z)) -> bool {
+	if op == nil || op.next == op || (!isOpen && op.next == op.prev) {return false}
+	clear(path)
+
+	start := op
+	lastPt := op.pt
+	op2: ^_OutPt(Z)
+	if reverse {
+		lastPt = op.pt
+		op2 = op.prev
+	} else {
+		start = op.next
+		lastPt = start.pt
+		op2 = start.next
+	}
+	append(path, lastPt)
+
+	for op2 != start {
+		if op2.pt.x != lastPt.x || op2.pt.y != lastPt.y {
+			lastPt = op2.pt
+			append(path, lastPt)
+		}
+		if reverse {op2 = op2.prev} else {op2 = op2.next}
+	}
+
+	if !isOpen && len(path) == 3 && _isVerySmallTriangle(op2) {return false}
+	return true
+}
+
+@(private = "file")
+_buildPaths64 :: proc(cb: ^_ClipperBase($Z), solutionClosed, solutionOpen: ^[dynamic][]_Point(Z)) {
+	for _, i in cb.outrec_list_ {
+		outrec := cb.outrec_list_[i]
+		if outrec.pts == nil {continue}
+
+		path := outrec.path
+		if solutionOpen != nil && outrec.is_open {
+			if _buildPath64(outrec.pts, cb.reverse_solution_, true, &path) {
+				append(solutionOpen, path[:])
+			}
+		} else {
+			_cleanCollinear(cb, outrec)
+			if _buildPath64(outrec.pts, cb.reverse_solution_, false, &path) {
+				append(solutionClosed, path[:])
+			}
+		}
+	}
+}
+
+@(private = "file")
+_cleanCollinear :: proc(cb: ^_ClipperBase($Z), outrec: ^_OutRec(Z)) {
+	// simplified: just get the real outrec and check path validity
+	outrec2 := _getRealOutRec(outrec)
+	if outrec2 == nil || outrec2.is_open {return}
+	if !_isValidClosedPath(outrec2.pts) {
+		// dispose
+	}
+	// full CleanCollinear with FixSelfIntersects is deferred
+	_ = cb
 }
 
 // ──── Public API Stubs (to be implemented in later phases) ───────────────────
@@ -1967,14 +2558,183 @@ BooleanOp :: proc(
 	resOpen: [][]PointT,
 	err: ClipperError,
 ) {
-	_ = clipType
-	_ = subjects
-	_ = clips
-	_ = opens
-	_ = fillRule
-	_ = zCallback
-	_ = allocator
-	return nil, nil, __ClipperError.FAILED
+	context.allocator = allocator
+	HasZ ::
+		intrinsics.type_has_field(PointT, "z") when intrinsics.type_is_struct(PointT) else len(
+			PointT,
+		) >=
+		3 when intrinsics.type_is_array(PointT) else false
+
+	when HasZ {
+		_ = zCallback
+		T :: intrinsics.type_field_type(PointT, "z")
+		cb: _ClipperBase(T)
+		_clipperBase_init(&cb)
+		cb.zCallback_ = rawptr(zCallback)
+		if zCallback != nil {
+			cb.zBridge_ = proc(
+				callbackPtr: rawptr,
+				e1Bot, e1Top, e2Bot, e2Top: _Point(T),
+				outPoint: ^_Point(T),
+			) {
+				zcb := (proc(e1Bot, e1Top, e2Bot, e2Top: PointT, outPoint: ^PointT))(callbackPtr)
+				// 내부 _Point(T) → 사용자 PointT 변환
+				e1BotP := _fromInternalPointZ(e1Bot, PointT)
+				e1TopP := _fromInternalPointZ(e1Top, PointT)
+				e2BotP := _fromInternalPointZ(e2Bot, PointT)
+				e2TopP := _fromInternalPointZ(e2Top, PointT)
+				outP := _fromInternalPointZ(outPoint^, PointT)
+				// 사용자 콜백 호출
+				zcb(e1BotP, e1TopP, e2BotP, e2TopP, &outP)
+				// PointT.z → 내부 _Point(T).z 로 다시 씀
+				outPoint.z = outP.z
+			}
+		}
+
+		for path in subjects {
+			if len(path) == 0 {continue}
+			ipath := make([dynamic]_Point(T), len(path), context.temp_allocator)
+			for pt, i in path {
+				ipath[i] = {
+					x = f64(pt.x),
+					y = f64(pt.y),
+					z = f64(pt.z),
+				}
+			}
+			paths := make([dynamic][dynamic]_Point(T), 1, context.temp_allocator)
+			paths[0] = ipath
+			_addPaths_(paths, .Subject, false, &cb.vertex_lists_, &cb.minima_list_)
+		}
+		for path in clips {
+			if len(path) == 0 {continue}
+			ipath := make([dynamic]_Point(T), len(path), context.temp_allocator)
+			for pt, i in path {
+				ipath[i] = {
+					x = f64(pt.x),
+					y = f64(pt.y),
+					z = f64(pt.z),
+				}
+			}
+			paths := make([dynamic][dynamic]_Point(T), 1, context.temp_allocator)
+			paths[0] = ipath
+			_addPaths_(paths, .Clip, false, &cb.vertex_lists_, &cb.minima_list_)
+		}
+		if len(opens) > 0 {
+			cb.has_open_paths_ = true
+		}
+		for path in opens {
+			if len(path) == 0 {continue}
+			ipath := make([dynamic]_Point(T), len(path), context.temp_allocator)
+			for pt, i in path {
+				ipath[i] = {
+					x = f64(pt.x),
+					y = f64(pt.y),
+					z = f64(pt.z),
+				}
+			}
+			paths := make([dynamic][dynamic]_Point(T), 1, context.temp_allocator)
+			paths[0] = ipath
+			_addPaths_(paths, .Subject, true, &cb.vertex_lists_, &cb.minima_list_)
+		}
+
+		if !_executeInternal(&cb, clipType, fillRule) {
+			return nil, nil, __ClipperError.FAILED
+		}
+
+		closed := make([dynamic][]_Point(T), context.temp_allocator)
+		open := make([dynamic][]_Point(T), context.temp_allocator)
+		_buildPaths64(&cb, &closed, &open)
+
+		res = make([][]PointT, len(closed), allocator)
+		for ipath, i in closed {
+			opath := make([]PointT, len(ipath), allocator)
+			for pt, j in ipath {
+				opath[j] = _makePoint(PointT, pt.x, pt.y, pt.z)
+			}
+			res[i] = opath
+		}
+		resOpen = make([][]PointT, len(open), allocator)
+		for ipath, i in open {
+			opath := make([]PointT, len(ipath), allocator)
+			for pt, j in ipath {
+				opath[j] = _makePoint(PointT, pt.x, pt.y, pt.z)
+			}
+			resOpen[i] = opath
+		}
+		return
+	} else {
+		cb: _ClipperBase(struct {})
+		_clipperBase_init(&cb)
+
+		for path in subjects {
+			if len(path) == 0 {continue}
+			ipath := make([dynamic]_Point(struct {}), len(path), context.temp_allocator)
+			for pt, i in path {
+				ipath[i] = {
+					x = f64(pt.x),
+					y = f64(pt.y),
+				}
+			}
+			paths := make([dynamic][dynamic]_Point(struct {}), 1, context.temp_allocator)
+			paths[0] = ipath
+			_addPaths_(paths, .Subject, false, &cb.vertex_lists_, &cb.minima_list_)
+		}
+		for path in clips {
+			if len(path) == 0 {continue}
+			ipath := make([dynamic]_Point(struct {}), len(path), context.temp_allocator)
+			for pt, i in path {
+				ipath[i] = {
+					x = f64(pt.x),
+					y = f64(pt.y),
+				}
+			}
+			paths := make([dynamic][dynamic]_Point(struct {}), 1, context.temp_allocator)
+			paths[0] = ipath
+			_addPaths_(paths, .Clip, false, &cb.vertex_lists_, &cb.minima_list_)
+		}
+		if len(opens) > 0 {
+			cb.has_open_paths_ = true
+		}
+		for path in opens {
+			if len(path) == 0 {continue}
+			ipath := make([dynamic]_Point(struct {}), len(path), context.temp_allocator)
+			for pt, i in path {
+				ipath[i] = {
+					x = f64(pt.x),
+					y = f64(pt.y),
+				}
+			}
+			paths := make([dynamic][dynamic]_Point(struct {}), 1, context.temp_allocator)
+			paths[0] = ipath
+			_addPaths_(paths, .Subject, true, &cb.vertex_lists_, &cb.minima_list_)
+		}
+
+		if !_executeInternal(&cb, clipType, fillRule) {
+			return nil, nil, __ClipperError.FAILED
+		}
+
+		closed := make([dynamic][]_Point(struct {}), context.temp_allocator)
+		open := make([dynamic][]_Point(struct {}), context.temp_allocator)
+		_buildPaths64(&cb, &closed, &open)
+
+		res = make([][]PointT, len(closed), allocator)
+		for ipath, i in closed {
+			opath := make([]PointT, len(ipath), allocator)
+			for pt, j in ipath {
+				opath[j] = _makePoint(PointT, pt.x, pt.y)
+			}
+			res[i] = opath
+		}
+		resOpen = make([][]PointT, len(open), allocator)
+		for ipath, i in open {
+			opath := make([]PointT, len(ipath), allocator)
+			for pt, j in ipath {
+				opath[j] = _makePoint(PointT, pt.x, pt.y)
+			}
+			resOpen[i] = opath
+		}
+		return
+	}
 }
 
 RectClip :: proc(

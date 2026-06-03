@@ -233,7 +233,7 @@ testZCallback :: proc(t: ^testing.T) {
 	defer _deletePaths(res)
 	defer _deletePaths(resOpen)
 	testing.expect_value(t, err, nil)
-	testing.expect(t, len(res) > 0)
+	testing.expect(t, len(res) > 0, "expected at least one closed path")
 
 	found := false
 	for path in res {
@@ -242,6 +242,22 @@ testZCallback :: proc(t: ^testing.T) {
 		}
 	}
 	testing.expect(t, found)
+}
+
+// Quick diagnostic: verify BooleanOp returns non-empty for simple union
+@(test)
+testBooleanQuickDiag :: proc(t: ^testing.T) {
+	square := _makeSquarePath(f64(0), 0, 100)
+	defer delete(square)
+	res, resOpen, err := BooleanOp(.Union, [2]f64, [][][2]f64{square}, nil, nil)
+	defer _deletePaths(res)
+	defer _deletePaths(resOpen)
+	testing.expect_value(t, err, nil)
+	testing.expect(t, len(res) > 0, "Union of one square should produce one path")
+	testing.expectf(t, len(res) == 1, "expected 1 path, got %v", len(res))
+	if len(res) > 0 {
+		testing.expectf(t, len(res[0]) >= 3, "path should have >= 3 points, got %v", len(res[0]))
+	}
 }
 
 @(test)

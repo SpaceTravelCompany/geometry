@@ -684,6 +684,11 @@ _isOpenEnd :: #force_inline proc "contextless" (v: ^_Vertex($Z)) -> bool {
 }
 
 @(private = "file")
+_isOpenEndE :: #force_inline proc "contextless" (e: ^_Active($Z)) -> bool {
+	return _isOpenEnd(e.vertex_top)
+}
+
+@(private = "file")
 _getPrevHotEdge :: proc(e: ^_Active($Z)) -> ^_Active(Z) {
 	prev := e.prev_in_ael
 	for prev != nil && (_isOpen(prev) || !_isHotEdge(prev)) {
@@ -1249,6 +1254,251 @@ _setWindCountForOpenPathEdge :: proc(cb: ^_ClipperBase($Z), e: ^_Active(Z)) {
 			}
 			e2 = e2.next_in_ael
 		}
+	}
+}
+
+// ──── Output path construction ───────────────────────────────────────────────
+
+@(private = "file")
+_newOutRec :: proc(cb: ^_ClipperBase($Z)) -> ^_OutRec(Z) {
+	rec := new(_OutRec(Z), context.temp_allocator)
+	if rec == nil { return nil }
+	rec.idx = len(cb.outrec_list_)
+	rec.path = make([dynamic]_Point(Z), context.temp_allocator)
+	append(&cb.outrec_list_, rec)
+	return rec
+}
+
+@(private = "file")
+_setSides :: proc(outrec: ^_OutRec($Z), start_edge, end_edge: ^_Active(Z)) {
+	outrec.front_edge = start_edge
+	outrec.back_edge = end_edge
+}
+
+@(private = "file")
+_outrecIsAscending :: #force_inline proc "contextless" (hotEdge: ^_Active($Z)) -> bool {
+	return hotEdge == hotEdge.outrec.front_edge
+}
+
+@(private = "file")
+_swapFrontBackSides :: proc(outrec: ^_OutRec($Z)) {
+	tmp := outrec.front_edge
+	outrec.front_edge = outrec.back_edge
+	outrec.back_edge = tmp
+	if outrec.pts != nil {
+		outrec.pts = outrec.pts.next
+	}
+}
+
+@(private = "file")
+_uncoupleOutRec :: proc(ae: ^_Active($Z)) {
+	outrec := ae.outrec
+	if outrec == nil { return }
+	if outrec.front_edge != nil { outrec.front_edge.outrec = nil }
+	if outrec.back_edge != nil { outrec.back_edge.outrec = nil }
+	outrec.front_edge = nil
+	outrec.back_edge = nil
+}
+
+@(private = "file")
+_addOutPt :: proc(cb: ^_ClipperBase($Z), e: ^_Active(Z), pt: _Point(Z)) -> ^_OutPt(Z) {
+	outrec := e.outrec
+	to_front := _isFront(e)
+	op_front := outrec.pts
+	if op_front == nil { return nil }
+	op_back := op_front.next
+
+	if to_front {
+		if _samePoint(_xy(op_front.pt), _xy(pt)) { return op_front }
+	} else if _samePoint(_xy(op_back.pt), _xy(pt)) {
+		return op_back
+	}
+
+	new_op := new(_OutPt(Z), context.temp_allocator)
+	if new_op == nil { return nil }
+	new_op.pt = pt
+	new_op.outrec = outrec
+
+	op_back.prev = new_op
+	new_op.prev = op_front
+	new_op.next = op_back
+	op_front.next = new_op
+	if to_front { outrec.pts = new_op }
+	return new_op
+}
+
+@(private = "file")
+_addLocalMinPoly :: proc(cb: ^_ClipperBase($Z), e1, e2: ^_Active(Z), pt: _Point(Z), is_new: bool) -> ^_OutPt(Z) {
+	outrec := _newOutRec(cb)
+	if outrec == nil { return nil }
+	e1.outrec = outrec
+	e2.outrec = outrec
+
+	if _isOpen(e1) {
+		outrec.owner = nil
+		outrec.is_open = true
+		if e1.wind_dx > 0 {
+			_setSides(outrec, e1, e2)
+		} else {
+			_setSides(outrec, e2, e1)
+		}
+	} else {
+		prevHotEdge := _getPrevHotEdge(e1)
+		if prevHotEdge != nil {
+			if _outrecIsAscending(prevHotEdge) == is_new {
+				_setSides(outrec, e2, e1)
+			} else {
+				_setSides(outrec, e1, e2)
+			}
+		} else {
+			outrec.owner = nil
+			if is_new {
+				_setSides(outrec, e1, e2)
+			} else {
+				_setSides(outrec, e2, e1)
+			}
+		}
+	}
+
+	op := new(_OutPt(Z), context.temp_allocator)
+	if op == nil { return nil }
+	op.pt = pt
+	op.outrec = outrec
+	op.next = op
+	op.prev = op
+	outrec.pts = op
+	return op
+}
+
+@(private = "file")
+_addLocalMaxPoly :: proc(cb: ^_ClipperBase($Z), e1, e2: ^_Active(Z), pt: _Point(Z)) -> ^_OutPt(Z) {
+	if _isJoined(e1) { _split(cb, e1, pt) }
+	if _isJoined(e2) { _split(cb, e2, pt) }
+
+	if _isFront(e1) == _isFront(e2) {
+		if _isOpenEndE(e1) {
+			_swapFrontBackSides(e1.outrec)
+		} else if _isOpenEndE(e2) {
+			_swapFrontBackSides(e2.outrec)
+		} else {
+			cb.succeeded_ = false
+			return nil
+		}
+	}
+
+	result := _addOutPt(cb, e1, pt)
+	if e1.outrec == e2.outrec {
+		outrec := e1.outrec
+		outrec.pts = result
+		_uncoupleOutRec(e1)
+		result = outrec.pts
+		if outrec.owner != nil && outrec.owner.front_edge == nil {
+			outrec.owner = _getRealOutRec(outrec.owner)
+		}
+	} else if _isOpen(e1) {
+		if e1.wind_dx < 0 {
+			_joinOutrecPaths(cb, e1, e2)
+		} else {
+			_joinOutrecPaths(cb, e2, e1)
+		}
+	} else if e1.outrec.idx < e2.outrec.idx {
+		_joinOutrecPaths(cb, e1, e2)
+	} else {
+		_joinOutrecPaths(cb, e2, e1)
+	}
+	return result
+}
+
+@(private = "file")
+_joinOutrecPaths :: proc(cb: ^_ClipperBase($Z), e1, e2: ^_Active(Z)) {
+	p1_st := e1.outrec.pts
+	p2_st := e2.outrec.pts
+	p1_end := p1_st.next
+	p2_end := p2_st.next
+	if _isFront(e1) {
+		p2_end.prev = p1_st
+		p1_st.next = p2_end
+		p2_st.next = p1_end
+		p1_end.prev = p2_st
+		e1.outrec.pts = p2_st
+		e1.outrec.front_edge = e2.outrec.front_edge
+		if e1.outrec.front_edge != nil {
+			e1.outrec.front_edge.outrec = e1.outrec
+		}
+	} else {
+		p1_end.prev = p2_st
+		p2_st.next = p1_end
+		p1_st.next = p2_end
+		p2_end.prev = p1_st
+		e1.outrec.back_edge = e2.outrec.back_edge
+		if e1.outrec.back_edge != nil {
+			e1.outrec.back_edge.outrec = e1.outrec
+		}
+	}
+
+	e2.outrec.front_edge = nil
+	e2.outrec.back_edge = nil
+	e2.outrec.pts = nil
+
+	if _isOpenEndE(e1) {
+		e2.outrec.pts = e1.outrec.pts
+		e1.outrec.pts = nil
+	} else {
+		// SetOwner with cycle detection (port of C++ SetOwner)
+		owner := e1.outrec
+		for owner != nil && owner.pts == nil { owner = owner.owner }
+		tmp := owner
+		for tmp != nil && tmp != e2.outrec { tmp = tmp.owner }
+		if tmp != nil { owner = e2.outrec.owner }
+		e2.outrec.owner = owner
+	}
+
+	e1.outrec = nil
+	e2.outrec = nil
+}
+
+@(private = "file")
+_startOpenPath :: proc(cb: ^_ClipperBase($Z), e: ^_Active(Z), pt: _Point(Z)) -> ^_OutPt(Z) {
+	outrec := _newOutRec(cb)
+	if outrec == nil { return nil }
+	outrec.is_open = true
+	if e.wind_dx > 0 {
+		outrec.front_edge = e
+		outrec.back_edge = nil
+	} else {
+		outrec.front_edge = nil
+		outrec.back_edge = e
+	}
+	e.outrec = outrec
+
+	op := new(_OutPt(Z), context.temp_allocator)
+	if op == nil { return nil }
+	op.pt = pt
+	op.outrec = outrec
+	op.next = op
+	op.prev = op
+	outrec.pts = op
+	return op
+}
+
+@(private = "file")
+_getRealOutRec :: proc(outrec: ^_OutRec($Z)) -> ^_OutRec(Z) {
+	for outrec != nil && outrec.pts == nil {
+		outrec = outrec.owner
+	}
+	return outrec
+}
+
+@(private = "file")
+_split :: proc(cb: ^_ClipperBase($Z), e: ^_Active(Z), pt: _Point(Z)) {
+	if e.join_with == .Right {
+		e.join_with = .NoJoin
+		e.next_in_ael.join_with = .NoJoin
+		_addLocalMinPoly(cb, e, e.next_in_ael, pt, true)
+	} else {
+		e.join_with = .NoJoin
+		e.prev_in_ael.join_with = .NoJoin
+		_addLocalMinPoly(cb, e.prev_in_ael, e, pt, true)
 	}
 }
 

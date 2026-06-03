@@ -1,4 +1,3 @@
-//!Not working
 package clipper
 
 import "../linalg_ex"
@@ -8,10 +7,10 @@ import "core:math"
 import "core:slice"
 import "shared:utils_private"
 
+// ──── Error ──────────────────────────────────────────────────────────────────
+
 __ClipperError :: enum {
 	FAILED,
-	CANT_FIRST_CURVE,
-	OPEN_CURVE_END,
 	TOO_SMALL,
 	LENGTH_MISMATCH,
 }
@@ -21,6 +20,8 @@ ClipperError :: union #shared_nil {
 	runtime.Allocator_Error,
 }
 
+// ──── Public Enums ───────────────────────────────────────────────────────────
+
 FillRule :: enum u8 {
 	EvenOdd,
 	NonZero,
@@ -29,11 +30,29 @@ FillRule :: enum u8 {
 }
 
 ClipType :: enum u8 {
-	Union,
+	NoClip,
 	Intersection,
+	Union,
 	Difference,
 	Xor,
 }
+
+JoinType :: enum u8 {
+	Square,
+	Bevel,
+	Round,
+	Miter,
+}
+
+EndType :: enum u8 {
+	Polygon,
+	Joined,
+	Butt,
+	Square,
+	Round,
+}
+
+// ──── Private Enums ──────────────────────────────────────────────────────────
 
 @(private = "file")
 PathType :: enum u8 {
@@ -42,1148 +61,1085 @@ PathType :: enum u8 {
 }
 
 @(private = "file")
-Segment :: struct {
-	pts:      [4][2]f64,
-	kind:     linalg_ex.BezierKind,
-	pathType: PathType,
-	isOpen:   bool,
-	pathIdx:  int,
-	segIdx:   int,
-	order:    int,
+_VertexFlags :: enum u32 {
+	Empty     = 0,
+	OpenStart = 1,
+	OpenEnd   = 2,
+	LocalMax  = 4,
+	LocalMin  = 8,
 }
 
 @(private = "file")
-Piece :: struct {
-	using base: Segment,
-	used:       bool,
+_JoinWith :: enum u8 {
+	NoJoin,
+	Left,
+	Right,
 }
 
 @(private = "file")
-ParamList :: [dynamic]f64
+_Location :: enum u8 {
+	Left   = 0,
+	Top    = 1,
+	Right  = 2,
+	Bottom = 3,
+	Inside = 4,
+}
+
+@(private = "file")
+_PointInPolygonResult :: enum u8 {
+	IsOn,
+	IsInside,
+	IsOutside,
+}
+
+// ──── Constants ──────────────────────────────────────────────────────────────
 
 @(private = "file")
 EPS :: 1e-9
 
 @(private = "file")
-_SNAP_INV :: 1.0 / EPS
-
-@(private = "file")
 SideEps :: 1e-7
 
 @(private = "file")
-_snapPt :: #force_inline proc "contextless" (p: [2]f64) -> u128 {
-	// sign bit flip: signed→unsigned 변환 시 순서 보존
-	x := i64(math.round(p.x * _SNAP_INV))
-	y := i64(math.round(p.y * _SNAP_INV))
-	ux := u64(x) ~ (1 << 63)
-	uy := u64(y) ~ (1 << 63)
-	return (u128(ux) << 64) | u128(uy)
+ArcConst :: 0.002
+
+// ──── Z‑type Helper ──────────────────────────────────────────────────────────
+// Z_None is used when the user's point type has no z‑component.
+// Z_Active (f64) is used when the user's point type has z.
+
+@(private = "file")
+Z_None :: struct {}
+
+@(private = "file")
+Z_Active :: f64
+
+// ──── Internal Generic Point ─────────────────────────────────────────────────
+// _Point($Z) is the single internal point representation.
+//   Z = struct{}  →  zero‑size z, no z overhead
+//   Z = f64       →  full z support
+//
+// All geometry math uses only x and y regardless of Z.
+
+@(private = "file")
+_Point :: struct($Z: typeid) {
+	x, y: f64,
+	z:    Z,
+}
+
+// ──── Internal Types (all generic over $Z) ───────────────────────────────────
+
+@(private = "file")
+_Vertex :: struct($Z: typeid) {
+	pt:    _Point(Z),
+	next:  ^_Vertex(Z),
+	prev:  ^_Vertex(Z),
+	flags: _VertexFlags,
 }
 
 @(private = "file")
-_endIndex :: #force_inline proc "contextless" (kind: linalg_ex.BezierKind) -> int {
-	#partial switch kind {
-	case .Line:
-		return 1
-	case .Quad:
-		return 2
-	case .Cubic:
-		return 3
+_LocalMinima :: struct($Z: typeid) {
+	vertex:   ^_Vertex(Z),
+	polytype: PathType,
+	is_open:  bool,
+}
+
+@(private = "file")
+_OutPt :: struct($Z: typeid) {
+	pt:     _Point(Z),
+	next:   ^_OutPt(Z),
+	prev:   ^_OutPt(Z),
+	outrec: ^_OutRec(Z),
+	horz:   ^_HorzSegment(Z),
+}
+
+@(private = "file")
+_OutRec :: struct($Z: typeid) {
+	idx:        int,
+	owner:      ^_OutRec(Z),
+	front_edge: ^_Active(Z),
+	back_edge:  ^_Active(Z),
+	pts:        ^_OutPt(Z),
+	bounds:     _RectF64,
+	path:       [dynamic]_Point(Z),
+	is_open:    bool,
+}
+
+@(private = "file")
+_Active :: struct($Z: typeid) {
+	bot:           _Point(Z),
+	top:           _Point(Z),
+	curr_x:        f64,
+	dx:            f64,
+	wind_dx:       i32,
+	wind_cnt:      i32,
+	wind_cnt2:     i32,
+	outrec:        ^_OutRec(Z),
+	prev_in_ael:   ^_Active(Z),
+	next_in_ael:   ^_Active(Z),
+	prev_in_sel:   ^_Active(Z),
+	next_in_sel:   ^_Active(Z),
+	jump:          ^_Active(Z),
+	vertex_top:    ^_Vertex(Z),
+	local_min:     ^_LocalMinima(Z),
+	is_left_bound: bool,
+	join_with:     _JoinWith,
+}
+
+@(private = "file")
+_IntersectNode :: struct($Z: typeid) {
+	pt:    _Point(Z),
+	edge1: ^_Active(Z),
+	edge2: ^_Active(Z),
+}
+
+@(private = "file")
+_HorzSegment :: struct($Z: typeid) {
+	left_op:       ^_OutPt(Z),
+	right_op:      ^_OutPt(Z),
+	left_to_right: bool,
+}
+
+@(private = "file")
+_HorzJoin :: struct($Z: typeid) {
+	op1: ^_OutPt(Z),
+	op2: ^_OutPt(Z),
+}
+
+// ──── Internal RectF64 (always f64, no Z needed) ─────────────────────────────
+
+@(private = "file")
+_RectF64 :: struct {
+	left, top, right, bottom: f64,
+}
+
+// ──── Group for Offset Engine ────────────────────────────────────────────────
+
+@(private = "file")
+_Group :: struct($Z: typeid) {
+	paths_in:        [dynamic][dynamic]_Point(Z),
+	lowest_path_idx: int, // -1 means none
+	is_reversed:     bool,
+	join_type:       JoinType,
+	end_type:        EndType,
+}
+
+// ──── ClipperOffset (offset engine) ──────────────────────────────────────────
+
+@(private = "file")
+_ClipperOffset :: struct($Z: typeid) {
+	delta_:              f64,
+	group_delta_:        f64,
+	temp_lim_:           f64,
+	steps_per_rad_:      f64,
+	step_sin_:           f64,
+	step_cos_:           f64,
+	norms:               [dynamic]_Point(Z_None), // unit normals: always no z
+	path_out:            [dynamic]_Point(Z),
+	solution:            ^[dynamic][]_Point(Z),
+	groups_:             [dynamic]_Group(Z),
+	join_type_:          JoinType,
+	end_type_:           EndType,
+	miter_limit_:        f64,
+	arc_tolerance_:      f64,
+	preserve_collinear_: bool,
+	reverse_solution_:   bool,
+	error_code_:         int,
+	zCallback_:          rawptr, // user's z callback (type-erased, nil when no Z)
+}
+
+// ──── ClipperBase (boolean engine) ───────────────────────────────────────────
+
+@(private = "file")
+_ClipperBase :: struct($Z: typeid) {
+	cliptype_:            ClipType,
+	fillrule_:            FillRule,
+	fillpos:              FillRule,
+	bot_y_:               f64,
+	minima_list_sorted_:  bool,
+	using_polytree_:      bool,
+	actives_:             ^_Active(Z),
+	sel_:                 ^_Active(Z),
+	minima_list_:         [dynamic]^_LocalMinima(Z),
+	current_locmin_iter_: int,
+	vertex_lists_:        [dynamic]^_Vertex(Z),
+	scanline_list_:       [dynamic]f64,
+	intersect_nodes_:     [dynamic]_IntersectNode(Z),
+	horz_seg_list_:       [dynamic]_HorzSegment(Z),
+	horz_join_list_:      [dynamic]_HorzJoin(Z),
+	outrec_list_:         [dynamic]^_OutRec(Z),
+	preserve_collinear_:  bool,
+	reverse_solution_:    bool,
+	error_code_:          int,
+	has_open_paths_:      bool,
+	succeeded_:           bool,
+
+	defaultZ: f64,
+	zCallback_: rawptr, // user's z callback (type-erased, nil when no Z)
+}
+
+// ──── OutPt2 + RectClip (RectClip uses its own light-weight types) ────────────
+
+@(private = "file")
+_OutPt2 :: struct {
+	pt:        _Point(Z_None), // RectClip always works in 2D
+	owner_idx: int,
+	edge:      ^[dynamic]^_OutPt2,
+	next:      ^_OutPt2,
+	prev:      ^_OutPt2,
+}
+
+@(private = "file")
+_RectClip64 :: struct {
+	rect_:         _RectF64,
+	rect_as_path_: [dynamic]_Point(Z_None),
+	rect_mp_:      _Point(Z_None),
+	path_bounds_:  _RectF64,
+	op_container_: [dynamic]_OutPt2,
+	results_:      [dynamic]^_OutPt2,
+	edges_:        [8][dynamic]^_OutPt2,
+	start_locs_:   [dynamic]_Location,
+}
+
+@(private = "file")
+_RectClipLines64 :: struct {
+	using _: _RectClip64,
+}
+
+// ──── Generic Point Accessors (work on any user PointT) ──────────────────────
+
+@(private = "file")
+_pointHasZ :: proc($PointT: typeid) -> bool {
+	return(
+		len(PointT) >=
+		3 when intrinsics.type_is_array(PointT) else intrinsics.type_has_field(
+			PointT,
+			"z",
+		) when intrinsics.type_is_struct(PointT) else false \
+	)
+}
+
+@(private = "file")
+_pointX :: #force_inline proc "contextless" (p: $PointT) -> f64 {
+	return f64(p.x)
+}
+
+@(private = "file")
+_pointY :: #force_inline proc "contextless" (p: $PointT) -> f64 {
+	return f64(p.y)
+}
+
+@(private = "file")
+_pointZ :: #force_inline proc "contextless" (p: $PointT) -> f64 {
+	HasZ ::
+		len(PointT) >=
+		3 when intrinsics.type_is_array(PointT) else intrinsics.type_has_field(
+			PointT,
+			"z",
+		) when intrinsics.type_is_struct(PointT) else false
+	when HasZ {
+		return f64(p.z)
 	}
-	return 1
+	return 0
 }
 
 @(private = "file")
-_ptAdd :: #force_inline proc "contextless" (a, b: [2]f64) -> [2]f64 {
-	return {a.x + b.x, a.y + b.y}
+_makePoint :: #force_inline proc "contextless" ($PointT: typeid, x, y: f64, z: f64 = 0) -> PointT {
+	HasZ ::
+		len(PointT) >=
+		3 when intrinsics.type_is_array(PointT) else intrinsics.type_has_field(
+			PointT,
+			"z",
+		) when intrinsics.type_is_struct(PointT) else false
+	p: PointT
+	p.x = type_of(p.x)(x)
+	p.y = type_of(p.y)(y)
+	when HasZ {
+		p.z = type_of(p.z)(z)
+	}
+	return p
+}
+
+// Convert user → internal: helpers for Phase 4
+// (implemented when BooleanOp is written)
+
+// ──── Point2 Math Helpers (work on _Point($Z), only x,y used) ────────────────
+
+@(private = "file")
+_xy :: #force_inline proc "contextless" (p: $P) -> _Point(Z_None) {
+	return {x = f64(p.x), y = f64(p.y)}
 }
 
 @(private = "file")
-_ptSub :: #force_inline proc "contextless" (a, b: [2]f64) -> [2]f64 {
-	return {a.x - b.x, a.y - b.y}
+_samePoint :: #force_inline proc "contextless" (a, b: $P) -> bool {
+	dx := f64(a.x) - f64(b.x)
+	dy := f64(a.y) - f64(b.y)
+	return dx * dx + dy * dy <= EPS * EPS
 }
 
 @(private = "file")
-_cross :: #force_inline proc "contextless" (a, b: [2]f64) -> f64 {
+_ptAdd :: #force_inline proc "contextless" (a, b: _Point(Z_None)) -> _Point(Z_None) {
+	return {x = a.x + b.x, y = a.y + b.y}
+}
+
+@(private = "file")
+_ptSub :: #force_inline proc "contextless" (a, b: _Point(Z_None)) -> _Point(Z_None) {
+	return {x = a.x - b.x, y = a.y - b.y}
+}
+
+@(private = "file")
+_ptMul :: #force_inline proc "contextless" (a: _Point(Z_None), s: f64) -> _Point(Z_None) {
+	return {x = a.x * s, y = a.y * s}
+}
+
+@(private = "file")
+_cross :: #force_inline proc "contextless" (a, b: _Point(Z_None)) -> f64 {
 	return a.x * b.y - a.y * b.x
 }
 
 @(private = "file")
-_dot :: #force_inline proc "contextless" (a, b: [2]f64) -> f64 {
+_dot :: #force_inline proc "contextless" (a, b: _Point(Z_None)) -> f64 {
 	return a.x * b.x + a.y * b.y
 }
 
 @(private = "file")
-_segStart :: #force_inline proc "contextless" (p: Piece) -> [2]f64 {
-	return p.pts[0]
+_lenSq :: #force_inline proc "contextless" (a: _Point(Z_None)) -> f64 {
+	return a.x * a.x + a.y * a.y
 }
 
 @(private = "file")
-_segEndPiece :: #force_inline proc "contextless" (p: Piece) -> [2]f64 {
-	return p.pts[_endIndex(p.kind)]
+_crossProduct :: #force_inline proc "contextless" (a, b, c: _Point(Z_None)) -> f64 {
+	return (b.x - a.x) * (c.y - b.y) - (b.y - a.y) * (c.x - b.x)
 }
 
 @(private = "file")
-_eval :: proc "contextless" (kind: linalg_ex.BezierKind, pts: [4][2]f64, t: f64) -> [2]f64 {
-	if kind == .Line {
-		u := 1.0 - t
-		return {pts[0].x * u + pts[1].x * t, pts[0].y * u + pts[1].y * t}
-	}
-	return linalg_ex.EvalBezier(kind, pts, t)
+_dotProduct :: #force_inline proc "contextless" (a, b, c: _Point(Z_None)) -> f64 {
+	return (b.x - a.x) * (c.x - b.x) + (b.y - a.y) * (c.y - b.y)
 }
 
 @(private = "file")
-_tangent :: proc "contextless" (kind: linalg_ex.BezierKind, pts: [4][2]f64, t: f64) -> [2]f64 {
-	if kind == .Line {
-		return _ptSub(pts[1], pts[0])
-	}
-	return linalg_ex.EvalBezierTangent(kind, pts, t)
+_distanceSqr :: #force_inline proc "contextless" (a, b: _Point(Z_None)) -> f64 {
+	dx := a.x - b.x
+	dy := a.y - b.y
+	return dx * dx + dy * dy
 }
 
 @(private = "file")
-_extractSub :: proc "contextless" (
-	kind: linalg_ex.BezierKind,
-	pts: [4][2]f64,
-	t0, t1: f64,
-) -> [4][2]f64 {
-	// t=1 경계: 다단계 보간 대신 원본 endpoint 직접 보존
-	if t1 >= 1.0 - EPS {
-		if t0 <= EPS do return pts
-		switch kind {
-		case .Line:
-			p := linalg_ex.SubdivLine([2][2]f64{pts[0], pts[1]}, t0)
-			return {p, pts[1], {}, {}}
-		case .Quad:
-			_, m, p12 := linalg_ex.SubdivQuadraticBezier([3][2]f64{pts[0], pts[1], pts[2]}, t0)
-			return {m, p12, pts[2], {}}
-		case .Cubic:
-			_, _, m, d0, d1 := linalg_ex.SubdivCubicBezier(pts, t0)
-			return {m, d0, d1, pts[3]}
-		}
-		return pts
+_areaPath :: proc "contextless" (path: []$PointT) -> f64 {
+	if len(path) < 3 do return 0
+	area: f64
+	for i in 0 ..< len(path) {
+		j := (i + 1) % len(path)
+		area += _pointX(path[i]) * _pointY(path[j]) - _pointX(path[j]) * _pointY(path[i])
 	}
-
-	result := pts
-	if t0 > EPS {
-		switch kind {
-		case .Line:
-			p := linalg_ex.SubdivLine([2][2]f64{pts[0], pts[1]}, t0)
-			result = {p, pts[1], {}, {}}
-		case .Quad:
-			_, m, p12 := linalg_ex.SubdivQuadraticBezier([3][2]f64{pts[0], pts[1], pts[2]}, t0)
-			result = {m, p12, pts[2], {}}
-		case .Cubic:
-			_, _, m, d0, d1 := linalg_ex.SubdivCubicBezier(pts, t0)
-			result = {m, d0, d1, pts[3]}
-		}
-	}
-
-	// Line: 다단계 보간(tAdj) 대신 직접 _eval 로 endpoint 계산 (정밀도 향상)
-	if kind == .Line {
-		result[1] = _eval(.Line, pts, t1)
-		return result
-	}
-
-	// Curve: 기존 subdivision 로직으로 control point 정확 보존
-	denom := 1.0 - t0
-	if denom <= EPS do return result
-	tAdj := (t1 - t0) / denom
-	if tAdj >= 1.0 - EPS do return result
-
-	#partial switch kind {
-	case .Quad:
-		p01, m, _ := linalg_ex.SubdivQuadraticBezier(
-			[3][2]f64{result[0], result[1], result[2]},
-			tAdj,
-		)
-		result = {result[0], p01, m, {}}
-	case .Cubic:
-		c0, c1, m, _, _ := linalg_ex.SubdivCubicBezier(result, tAdj)
-		result = {result[0], c0, c1, m}
-	}
-	return result
+	return area * 0.5
 }
 
 @(private = "file")
-_reversePiece :: proc "contextless" (p: Piece) -> Piece {
-	res := p
-	switch p.kind {
-	case .Line:
-		res.pts = {p.pts[1], p.pts[0], {}, {}}
-	case .Quad:
-		res.pts = {p.pts[2], p.pts[1], p.pts[0], {}}
-	case .Cubic:
-		res.pts = {p.pts[3], p.pts[2], p.pts[1], p.pts[0]}
-	}
-	return res
-}
-
-@(private = "file")
-_appendParam :: proc(list: ^ParamList, t: f64) -> ClipperError {
-	if t < -EPS || t > 1.0 + EPS do return nil
-	tt := math.clamp(t, 0.0, 1.0)
-	for v in list[:] {
-		if math.abs(v - tt) <= EPS do return nil
-	}
-	non_zero_append(list, tt) or_return
-	return nil
-}
-
-@(private = "file")
-_sortParams :: proc(list: ^ParamList) {
-	for i in 1 ..< len(list) {
-		j := i
-		for j > 0 && list[j - 1] > list[j] {
-			list[j - 1], list[j] = list[j], list[j - 1]
-			j -= 1
-		}
+_reversePath :: proc(path: []$PointT) {
+	for i := 0; i < len(path) / 2; i += 1 {
+		j := len(path) - 1 - i
+		path[i], path[j] = path[j], path[i]
 	}
 }
 
 @(private = "file")
-_appendXMonotoneParams :: proc(
-	list: ^ParamList,
-	kind: linalg_ex.BezierKind,
-	pts: [4][2]f64,
-) -> ClipperError {
-	if kind == .Line do return nil
-	t0, t1 := linalg_ex.GetBezierTForXMonotone(
-		kind,
-		[4]f64{pts[0].x, pts[1].x, pts[2].x, pts[3].x},
+_areaOutPt :: proc(op: ^_OutPt($Z)) -> f64 {
+	if op == nil {return 0}
+	result: f64
+	op2 := op
+	for {
+		result += (op2.prev.pt.y + op2.pt.y) * (op2.prev.pt.x - op2.pt.x)
+		op2 = op2.next
+		if op2 == op {break}
+	}
+	return result * 0.5
+}
+
+@(private = "file")
+_areaTriangle :: #force_inline proc "contextless" (a, b, c: _Point(Z_None)) -> f64 {
+	return (c.y + a.y) * (c.x - a.x) + (a.y + b.y) * (a.x - b.x) + (b.y + c.y) * (b.x - c.x)
+}
+
+// ──── Geometry Predicates ────────────────────────────────────────────────────
+// All work on _Point(Z_None) (i.e. only x,y) since geometry is 2D only.
+
+@(private = "file")
+_getDx :: #force_inline proc "contextless" (pt1, pt2: _Point(Z_None)) -> f64 {
+	dy := pt2.y - pt1.y
+	if abs(dy) > EPS {
+		return (pt2.x - pt1.x) / dy
+	} else if pt2.x > pt1.x {
+		return -math.F64_MAX
+	} else {
+		return math.F64_MAX
+	}
+}
+
+@(private = "file")
+_topX :: #force_inline proc "contextless" (
+	dx: f64,
+	bot, top: _Point(Z_None),
+	currentY: f64,
+) -> f64 {
+	if currentY == top.y || top.x == bot.x {
+		return top.x
+	} else if currentY == bot.y {
+		return bot.x
+	} else {
+		return bot.x + dx * (currentY - bot.y)
+	}
+}
+
+@(private = "file")
+_isHorizontalE :: #force_inline proc "contextless" (e: ^_Active($Z)) -> bool {
+	return abs(e.top.y - e.bot.y) < EPS
+}
+
+@(private = "file")
+_isHorizontalPt :: #force_inline proc "contextless" (p1, p2: _Point(Z_None)) -> bool {
+	return abs(p1.y - p2.y) < EPS
+}
+
+@(private = "file")
+_isHeadingRightHorz :: #force_inline proc "contextless" (e: ^_Active($Z)) -> bool {
+	return e.dx == -math.F64_MAX
+}
+
+@(private = "file")
+_isHeadingLeftHorz :: #force_inline proc "contextless" (e: ^_Active($Z)) -> bool {
+	return e.dx == math.F64_MAX
+}
+
+@(private = "file")
+_setDx :: #force_inline proc "contextless" (e: ^_Active($Z)) {
+	e.dx = _getDx(_xy(e.bot), _xy(e.top))
+}
+
+@(private = "file")
+_nextVertex :: #force_inline proc "contextless" (e: ^_Active($Z)) -> ^_Vertex(Z) {
+	if e.wind_dx > 0 {
+		return e.vertex_top.next
+	} else {
+		return e.vertex_top.prev
+	}
+}
+
+@(private = "file")
+_prevPrevVertex :: #force_inline proc "contextless" (ae: ^_Active($Z)) -> ^_Vertex(Z) {
+	if ae.wind_dx > 0 {
+		return ae.vertex_top.prev.prev
+	} else {
+		return ae.vertex_top.next.next
+	}
+}
+
+@(private = "file")
+_isCollinear :: #force_inline proc "contextless" (a, sharedPt, b: _Point(Z_None)) -> bool {
+	return abs(_crossProduct(a, sharedPt, b)) < EPS
+}
+
+@(private = "file")
+_crossProductSign :: #force_inline proc "contextless" (a, b, c: _Point(Z_None)) -> int {
+	cp := _crossProduct(a, b, c)
+	if cp > EPS {return 1}
+	if cp < -EPS {return -1}
+	return 0
+}
+
+@(private = "file")
+_getLineIntersectPt :: proc(ln1a, ln1b, ln2a, ln2b: _Point(Z_None), ip: ^_Point(Z_None)) -> bool {
+	dx1 := ln1b.x - ln1a.x
+	dy1 := ln1b.y - ln1a.y
+	dx2 := ln2b.x - ln2a.x
+	dy2 := ln2b.y - ln2a.y
+
+	det := dy1 * dx2 - dy2 * dx1
+	if abs(det) < EPS {return false}
+
+	t := ((ln1a.x - ln2a.x) * dy2 - (ln1a.y - ln2a.y) * dx2) / det
+	if t <= 0.0 {
+		ip^ = ln1a
+	} else if t >= 1.0 {
+		ip^ = ln1b
+	} else {
+		ip.x = ln1a.x + t * dx1
+		ip.y = ln1a.y + t * dy1
+	}
+	return true
+}
+
+@(private = "file")
+_segmentsIntersect :: proc(seg1a, seg1b, seg2a, seg2b: _Point(Z_None), inclusive: bool) -> bool {
+	dy1 := seg1b.y - seg1a.y
+	dx1 := seg1b.x - seg1a.x
+	dy2 := seg2b.y - seg2a.y
+	dx2 := seg2b.x - seg2a.x
+	cp := dy1 * dx2 - dy2 * dx1
+	if abs(cp) < EPS {return false}
+
+	t := (seg1a.x - seg2a.x) * dy2 - (seg1a.y - seg2a.y) * dx2
+	if inclusive {
+		if abs(t) < EPS {return true}
+		if t > 0 {
+			if cp < 0 || t > cp {return false}
+		} else if cp > 0 || t < cp {return false}
+	} else {
+		if abs(t) < EPS {return false}
+		if t > 0 {
+			if cp < 0 || t >= cp {return false}
+		} else if cp > 0 || t <= cp {return false}
+	}
+
+	t = (seg1a.x - seg2a.x) * dy1 - (seg1a.y - seg2a.y) * dx1
+	if inclusive {
+		if abs(t) < EPS {return true}
+		if t > 0 {return cp > 0 && t <= cp} else {return cp < 0 && t >= cp}
+	} else {
+		if abs(t) < EPS {return false}
+		if t > 0 {return cp > 0 && t < cp} else {return cp < 0 && t > cp}
+	}
+}
+
+@(private = "file")
+_perpendicDistFromLineSqrd :: proc(pt, line1, line2: _Point(Z_None)) -> f64 {
+	a := pt.x - line1.x
+	b := pt.y - line1.y
+	c := line2.x - line1.x
+	d := line2.y - line1.y
+	if c == 0 && d == 0 {return 0}
+	return (a * d - c * b) * (a * d - c * b) / (c * c + d * d)
+}
+
+@(private = "file")
+_translatePoint :: #force_inline proc "contextless" (
+	pt: _Point(Z_None),
+	dx, dy: f64,
+) -> _Point(Z_None) {
+	return {x = pt.x + dx, y = pt.y + dy}
+}
+
+@(private = "file")
+_reflectPoint :: #force_inline proc "contextless" (pt, pivot: _Point(Z_None)) -> _Point(Z_None) {
+	return {x = pivot.x + (pivot.x - pt.x), y = pivot.y + (pivot.y - pt.y)}
+}
+
+@(private = "file")
+_getClosestPointOnSegment :: proc(offPt, seg1, seg2: _Point(Z_None)) -> _Point(Z_None) {
+	if seg1.x == seg2.x && seg1.y == seg2.y {return seg1}
+	dx := seg2.x - seg1.x
+	dy := seg2.y - seg1.y
+	q := ((offPt.x - seg1.x) * dx + (offPt.y - seg1.y) * dy) / (dx * dx + dy * dy)
+	if q < 0 {q = 0}
+	if q > 1 {q = 1}
+	return {x = seg1.x + q * dx, y = seg1.y + q * dy}
+}
+
+@(private = "file")
+_pointsReallyClose :: #force_inline proc "contextless" (a, b: _Point(Z_None)) -> bool {
+	return abs(a.x - b.x) < SideEps && abs(a.y - b.y) < SideEps
+}
+
+// ──── Vertex flag helpers ────────────────────────────────────────────────────
+
+@(private = "file")
+_hasFlag :: #force_inline proc "contextless" (v: ^_Vertex($Z), f: _VertexFlags) -> bool {
+	return (u32(v.flags) & u32(f)) != 0
+}
+
+@(private = "file")
+_setFlag :: #force_inline proc "contextless" (v: ^_Vertex($Z), f: _VertexFlags) {
+	v.flags = _VertexFlags(u32(v.flags) | u32(f))
+}
+
+// ──── Active edge helpers ────────────────────────────────────────────────────
+
+@(private = "file")
+_getPolyType :: #force_inline proc "contextless" (e: ^_Active($Z)) -> PathType {
+	return e.local_min.polytype
+}
+
+@(private = "file")
+_isSamePolyType :: #force_inline proc "contextless" (e1, e2: ^_Active($Z)) -> bool {
+	return e1.local_min.polytype == e2.local_min.polytype
+}
+
+@(private = "file")
+_isOdd :: #force_inline proc "contextless" (val: int) -> bool {
+	return (val & 1) != 0
+}
+
+@(private = "file")
+_isHotEdge :: #force_inline proc "contextless" (e: ^_Active($Z)) -> bool {
+	return e.outrec != nil
+}
+
+@(private = "file")
+_isOpen :: #force_inline proc "contextless" (e: ^_Active($Z)) -> bool {
+	return e.local_min.is_open
+}
+
+@(private = "file")
+_isOpenEnd :: #force_inline proc "contextless" (v: ^_Vertex($Z)) -> bool {
+	return _hasFlag(v, .OpenStart) || _hasFlag(v, .OpenEnd)
+}
+
+@(private = "file")
+_getPrevHotEdge :: proc(e: ^_Active($Z)) -> ^_Active(Z) {
+	prev := e.prev_in_ael
+	for prev != nil && (_isOpen(prev) || !_isHotEdge(prev)) {
+		prev = prev.prev_in_ael
+	}
+	return prev
+}
+
+@(private = "file")
+_isFront :: #force_inline proc "contextless" (e: ^_Active($Z)) -> bool {
+	return e == e.outrec.front_edge
+}
+
+@(private = "file")
+_isInvalidPath :: #force_inline proc "contextless" (op: ^_OutPt($Z)) -> bool {
+	return op == nil || op.next == op
+}
+
+@(private = "file")
+_isMaximaV :: #force_inline proc "contextless" (v: ^_Vertex($Z)) -> bool {
+	return _hasFlag(v, .LocalMax)
+}
+
+@(private = "file")
+_isMaximaE :: #force_inline proc "contextless" (e: ^_Active($Z)) -> bool {
+	return _isMaximaV(e.vertex_top)
+}
+
+@(private = "file")
+_isJoined :: #force_inline proc "contextless" (e: ^_Active($Z)) -> bool {
+	return e.join_with != .NoJoin
+}
+
+@(private = "file")
+_pointCount :: proc(op: ^_OutPt($Z)) -> int {
+	if op == nil {return 0}
+	op2 := op
+	cnt := 0
+	for {
+		op2 = op2.next
+		cnt += 1
+		if op2 == op {break}
+	}
+	return cnt
+}
+
+@(private = "file")
+_isValidClosedPath :: proc(op: ^_OutPt($Z)) -> bool {
+	if op == nil {return false}
+	if op.next == op {return false}
+	if op.next == op.prev {return false}
+	return !_isVerySmallTriangle(op)
+}
+
+@(private = "file")
+_isVerySmallTriangle :: proc(op: ^_OutPt($Z)) -> bool {
+	if op.next.next != op.prev {return false}
+	return(
+		_pointsReallyClose(_xy(op.prev.pt), _xy(op.next.pt)) ||
+		_pointsReallyClose(_xy(op.pt), _xy(op.next.pt)) ||
+		_pointsReallyClose(_xy(op.pt), _xy(op.prev.pt)) \
 	)
-	_appendParam(list, t0) or_return
-	_appendParam(list, t1) or_return
-	return nil
 }
 
+// ──── ClipperBase Engine Methods ─────────────────────────────────────────────
+
+// _addLocMin: append a local minima vertex (idempotent)
 @(private = "file")
-_appendSegmentFromParams :: proc(
-	out: ^[dynamic]Segment,
-	seg: Segment,
-	params: ParamList,
-) -> ClipperError {
-	sorted := params
-	_sortParams(&sorted)
-	for i in 0 ..< len(sorted) - 1 {
-		t0 := sorted[i]
-		t1 := sorted[i + 1]
-		if t1 - t0 <= EPS do continue
-		s := seg
-		s.pts = _extractSub(seg.kind, seg.pts, t0, t1)
-		non_zero_append(out, s) or_return
+_addLocMin :: proc(
+	locMinList: ^[dynamic]^_LocalMinima($Z),
+	vert: ^_Vertex(Z),
+	polytype: PathType,
+	is_open: bool,
+) {
+	if _hasFlag(vert, .LocalMin) { return }
+	_setFlag(vert, .LocalMin)
+	lm := new(_LocalMinima(Z))
+	if lm == nil { return }
+	lm.vertex = vert
+	lm.polytype = polytype
+	lm.is_open = is_open
+	append(locMinList, lm)
+}
+
+// _addPaths_: convert input paths into internal Vertex linked-list + local minima
+@(private = "file")
+_addPaths_ :: proc(
+	paths: [dynamic][dynamic]_Point($Z),
+	polytype: PathType,
+	is_open: bool,
+	vertexLists: ^[dynamic]^_Vertex(Z),
+	locMinList: ^[dynamic]^_LocalMinima(Z),
+	allocator := context.allocator,
+) {
+	// count total vertices
+	total_vertex_count := 0
+	for path in paths {
+		total_vertex_count += len(path)
 	}
-	return nil
-}
+	if total_vertex_count == 0 { return }
 
-@(private = "file")
-_appendRawSegment :: proc(out: ^[dynamic]Segment, seg: Segment) -> ClipperError {
-	params := make(ParamList, context.temp_allocator) or_return
-	_appendParam(&params, 0.0) or_return
-	_appendParam(&params, 1.0) or_return
-	_appendXMonotoneParams(&params, seg.kind, seg.pts) or_return
-	_appendSegmentFromParams(out, seg, params) or_return
-	return nil
-}
+	// allocate one contiguous block for all vertices
+	allVertices := make([]_Vertex(Z), total_vertex_count, allocator)
+	if allVertices == nil { return }
+	vi := 0 // global vertex index into allVertices
 
-@(private = "file")
-_appendPathSegments :: proc(
-	out: ^[dynamic]Segment,
-	paths: [][][2]f64,
-	isCurves: [][]bool,
-	pathType: PathType,
-	isOpen: bool,
-	order: ^int,
-) -> ClipperError {
-	for path, pathIdx in paths {
-		if isOpen {
-			if len(path) < 2 do return .TOO_SMALL
-		} else {
-			if len(path) < 3 do return .TOO_SMALL
+	for path_idx in 0 ..< len(paths) {
+		path := paths[path_idx]
+		if len(path) == 0 { continue }
+
+		// v0: first vertex index of this path (used to close the circle)
+		v0_idx := vi
+		v0 := &allVertices[v0_idx]
+
+		curr_v := v0
+		prev_v: ^_Vertex(Z) = nil
+		curr_v.prev = nil
+		cnt := 0
+
+		for pt_idx in 0 ..< len(path) {
+			pt := path[pt_idx]
+			if prev_v != nil {
+				// skip duplicate consecutive points (f64: EPS-based)
+				if _samePoint(_xy(prev_v.pt), _xy(pt)) { continue }
+				prev_v.next = curr_v
+			}
+			curr_v.prev = prev_v
+			curr_v.pt = pt
+			curr_v.flags = _VertexFlags.Empty
+			prev_v = curr_v
+			vi += 1
+			cnt += 1
+			if vi < total_vertex_count {
+				curr_v = &allVertices[vi]
+			}
 		}
 
-		curves: []bool
-		if isCurves != nil {
-			if pathIdx >= len(isCurves) || len(isCurves[pathIdx]) != len(path) do return .LENGTH_MISMATCH
-			curves = isCurves[pathIdx]
-			if len(curves) > 0 && curves[0] do return .CANT_FIRST_CURVE
+		// skip degenerate paths
+		if prev_v == nil || prev_v.prev == nil { continue }
+
+		// for closed paths: remove duplicated end vertex
+		if !is_open && _samePoint(_xy(prev_v.pt), _xy(v0.pt)) {
+			prev_v = prev_v.prev
 		}
 
-		j := 0
-		segIdx := 0
-		for j < len(path) {
-			if isOpen && j >= len(path) - 1 do break
+		// close the circular doubly-linked list
+		prev_v.next = v0
+		v0.prev = prev_v
 
-			seg := Segment {
-				kind     = .Line,
-				pathType = pathType,
-				isOpen   = isOpen,
-				pathIdx  = pathIdx,
-				segIdx   = segIdx,
-				order    = order^,
+		if cnt < 2 || (cnt == 2 && !is_open) { continue }
+
+		// ── find and assign local minima ──
+		going_up, going_up0: bool
+
+		if is_open {
+			curr_v = v0.next
+			for curr_v != v0 && abs(curr_v.pt.y - v0.pt.y) < EPS {
+				curr_v = curr_v.next
 			}
-			seg.pts[0] = path[j]
-
-			next := j + 1
-			if next >= len(path) {
-				if isOpen do break
-				next = 0
-			}
-
-			if curves != nil && curves[next] {
-				seg.pts[1] = path[next]
-				next2 := next + 1
-				if next2 >= len(path) {
-					if isOpen do return .OPEN_CURVE_END
-					next2 = 0
-				}
-				if curves[next2] {
-					seg.pts[2] = path[next2]
-					next3 := next2 + 1
-					if next3 >= len(path) {
-						if isOpen do return .OPEN_CURVE_END
-						next3 = 0
-					}
-					if curves[next3] do return .OPEN_CURVE_END
-					seg.pts[3] = path[next3]
-					seg.kind = .Cubic
-					j += 3
-				} else {
-					seg.pts[2] = path[next2]
-					seg.kind = .Quad
-					j += 2
-				}
+			going_up = curr_v.pt.y <= v0.pt.y
+			if going_up {
+				_setFlag(v0, .OpenStart)
+				_addLocMin(locMinList, v0, polytype, true)
 			} else {
-				seg.pts[1] = path[next]
-				j += 1
+				_setFlag(v0, .OpenStart)
+				_setFlag(v0, .LocalMax)
 			}
-
-			if !isOpen && j >= len(path) do j = len(path)
-			_appendRawSegment(out, seg) or_return
-			order^ += 1
-			segIdx += 1
+		} else {
+			// closed path: determine initial direction
+			prev_v = v0.prev
+			for prev_v != v0 && abs(prev_v.pt.y - v0.pt.y) < EPS {
+				prev_v = prev_v.prev
+			}
+			if prev_v == v0 { continue } // completely flat path → skip
+			going_up = prev_v.pt.y > v0.pt.y
 		}
-	}
-	return nil
-}
 
-@(private = "file")
-_toF64Paths :: proc(
-	paths: [][][2]$T,
-) -> (
-	out: [][][2]f64,
-	err: ClipperError,
-) where intrinsics.type_is_float(T) {
-	if paths == nil do return nil, nil
-	out = make([][][2]f64, len(paths), context.temp_allocator) or_return
-	for path, i in paths {
-		out[i] = make([][2]f64, len(path), context.temp_allocator) or_return
-		for p, j in path {
-			out[i][j] = {f64(p.x), f64(p.y)}
+		going_up0 = going_up
+		prev_v = v0
+		curr_v = v0.next
+		for curr_v != v0 {
+			if curr_v.pt.y > prev_v.pt.y && going_up {
+				_setFlag(prev_v, .LocalMax)
+				going_up = false
+			} else if curr_v.pt.y < prev_v.pt.y && !going_up {
+				going_up = true
+				_addLocMin(locMinList, prev_v, polytype, is_open)
+			}
+			prev_v = curr_v
+			curr_v = curr_v.next
 		}
-	}
+
+		if is_open {
+			if going_up {
+				_setFlag(prev_v, .OpenEnd)
+				_setFlag(prev_v, .LocalMax)
+			} else {
+				_setFlag(prev_v, .OpenEnd)
+				_addLocMin(locMinList, prev_v, polytype, is_open)
+			}
+		} else if going_up != going_up0 {
+			if going_up0 {
+				_addLocMin(locMinList, prev_v, polytype, false)
+			} else {
+				_setFlag(prev_v, .LocalMax)
+			}
+		}
+	} // end per-path loop
+
+	append(vertexLists, &allVertices[0])
 	return
 }
 
+// ──── ClipperBase lifecycle + scanline ops ───────────────────────────────────
+
 @(private = "file")
-_fromF64Paths :: proc(
-	$T: typeid,
-	paths: [][][2]f64,
-	allocator := context.allocator,
-) -> (
-	out: [][][2]T,
-	err: ClipperError,
-) where intrinsics.type_is_float(T) {
-	if paths == nil do return nil, nil
-	out = utils_private.makeNonZeroedSlice([][][2]T, len(paths), allocator) or_return
-	for path, i in paths {
-		out[i] = utils_private.makeNonZeroedSlice([][2]T, len(path), allocator) or_return
-		for p, j in path {
-			out[i][j] = {T(p.x), T(p.y)}
+_clipperBase_init :: proc(cb: ^_ClipperBase($Z)) {
+	cb.cliptype_ = .NoClip
+	cb.fillrule_ = .EvenOdd
+	cb.fillpos = .Positive
+	cb.bot_y_ = 0
+	cb.minima_list_sorted_ = false
+	cb.using_polytree_ = false
+	cb.actives_ = nil
+	cb.sel_ = nil
+	cb.minima_list_ = make([dynamic]^_LocalMinima(Z))
+	cb.current_locmin_iter_ = 0
+	cb.vertex_lists_ = make([dynamic]^_Vertex(Z))
+	cb.scanline_list_ = make([dynamic]f64)
+	cb.intersect_nodes_ = make([dynamic]_IntersectNode(Z))
+	cb.horz_seg_list_ = make([dynamic]_HorzSegment(Z))
+	cb.horz_join_list_ = make([dynamic]_HorzJoin(Z))
+	cb.outrec_list_ = make([dynamic]^_OutRec(Z))
+	cb.preserve_collinear_ = true
+	cb.reverse_solution_ = false
+	cb.error_code_ = 0
+	cb.has_open_paths_ = false
+	cb.succeeded_ = true
+	cb.defaultZ = 0
+	cb.zCallback_ = nil
+}
+
+@(private = "file")
+_clipperBase_destroy :: proc(cb: ^_ClipperBase($Z)) {
+	_clear(cb)
+	delete(cb.minima_list_)
+	delete(cb.vertex_lists_)
+	delete(cb.scanline_list_)
+	delete(cb.intersect_nodes_)
+	delete(cb.horz_seg_list_)
+	delete(cb.horz_join_list_)
+	delete(cb.outrec_list_)
+}
+
+// delete all Active edges in the AEL
+@(private = "file")
+_deleteEdges :: proc(e: ^_Active($Z)) {
+	for e != nil {
+		nxt := e.next_in_ael
+		free(e)
+		e = nxt
+	}
+}
+
+// free OutPt circular list
+@(private = "file")
+_disposeOutPts :: proc(outrec: ^_OutRec($Z)) {
+	op := outrec.pts
+	if op == nil { return }
+	op.prev.next = nil // break circular link so we can iterate
+	for op != nil {
+		tmp := op.next
+		free(op)
+		op = tmp
+	}
+	outrec.pts = nil
+}
+
+@(private = "file")
+_disposeAllOutRecs :: proc(cb: ^_ClipperBase($Z)) {
+	for outrec in cb.outrec_list_ {
+		if outrec.pts != nil {
+			_disposeOutPts(outrec)
 		}
+		delete(outrec.path)
+		free(outrec)
 	}
-	return
+	clear(&cb.outrec_list_)
 }
 
 @(private = "file")
-_copyBoolPaths :: proc(
-	paths: [][]bool,
-	allocator := context.allocator,
-) -> (
-	out: [][]bool,
-	err: ClipperError,
-) {
-	if paths == nil do return nil, nil
-	out = utils_private.makeNonZeroedSlice([][]bool, len(paths), allocator) or_return
-	for path, i in paths {
-		out[i] = utils_private.makeNonZeroedSlice([]bool, len(path), allocator) or_return
-		for v, j in path do out[i][j] = v
+_disposeVerticesAndLocalMinima :: proc(cb: ^_ClipperBase($Z)) {
+	for lm in cb.minima_list_ {
+		free(lm)
 	}
-	return
+	clear(&cb.minima_list_)
+	for v in cb.vertex_lists_ {
+		free(v)
+	}
+	clear(&cb.vertex_lists_)
 }
 
 @(private = "file")
-_lineIntersectionParams :: proc "contextless" (
-	a0, a1, b0, b1: [2]f64,
-) -> (
-	kind: linalg_ex.IntersectKind,
-	ta, tb: f64,
-) {
-	r := _ptSub(a1, a0)
-	s := _ptSub(b1, b0)
-	den := _cross(r, s)
-	qp := _ptSub(b0, a0)
-	if math.abs(den) <= EPS {
-		if math.abs(_cross(qp, r)) <= EPS do return .collinear, 0, 0
-		return .none, 0, 0
-	}
-	ta = _cross(qp, s) / den
-	tb = _cross(qp, r) / den
-	if ta >= -EPS && ta <= 1.0 + EPS && tb >= -EPS && tb <= 1.0 + EPS {
-		return .intersect, math.clamp(ta, 0.0, 1.0), math.clamp(tb, 0.0, 1.0)
-	}
-	return .none, ta, tb
+_cleanUp :: proc(cb: ^_ClipperBase($Z)) {
+	_deleteEdges(cb.actives_)
+	cb.actives_ = nil
+	cb.sel_ = nil
+	clear(&cb.scanline_list_)
+	clear(&cb.intersect_nodes_)
+	_disposeAllOutRecs(cb)
+	clear(&cb.horz_seg_list_)
+	clear(&cb.horz_join_list_)
 }
 
 @(private = "file")
-_lineProjectT :: proc "contextless" (a0, a1, p: [2]f64) -> f64 {
-	d := _ptSub(a1, a0)
-	den := _dot(d, d)
-	if den <= EPS do return 0.0
-	return _dot(_ptSub(p, a0), d) / den
+_clear :: proc(cb: ^_ClipperBase($Z)) {
+	_cleanUp(cb)
+	_disposeVerticesAndLocalMinima(cb)
+	cb.current_locmin_iter_ = 0
+	cb.minima_list_sorted_ = false
+	cb.has_open_paths_ = false
 }
 
 @(private = "file")
-_appendIntersections :: proc(
-	a: Segment,
-	b: Segment,
-	paramsA, paramsB: ^ParamList,
-) -> ClipperError {
-	if a.kind == .Line && b.kind == .Line {
-		kind, ta, tb := _lineIntersectionParams(a.pts[0], a.pts[1], b.pts[0], b.pts[1])
-		if kind == .intersect {
-			_appendParam(paramsA, ta) or_return
-			_appendParam(paramsB, tb) or_return
-		} else if kind == .collinear {
-			bPoints := [2][2]f64{b.pts[0], b.pts[1]}
-			for p in bPoints {
-				t := _lineProjectT(a.pts[0], a.pts[1], p)
-				if t >= -EPS && t <= 1.0 + EPS do _appendParam(paramsA, t) or_return
-			}
-			aPoints := [2][2]f64{a.pts[0], a.pts[1]}
-			for p in aPoints {
-				t := _lineProjectT(b.pts[0], b.pts[1], p)
-				if t >= -EPS && t <= 1.0 + EPS do _appendParam(paramsB, t) or_return
-			}
-		}
-		return nil
-	}
-
-	count, _, ta, tb := linalg_ex.GetBezierIntersectPt(a.kind, a.pts, b.kind, b.pts)
-	for i in 0 ..< count {
-		_appendParam(paramsA, ta[i]) or_return
-		_appendParam(paramsB, tb[i]) or_return
-	}
-	return nil
+_insertScanline :: proc(cb: ^_ClipperBase($Z), y: f64) {
+	append(&cb.scanline_list_, y)
 }
 
+// pop the highest y from the scanline list (pops all duplicates at once)
 @(private = "file")
-_filledFromWind :: #force_inline proc "contextless" (wind: int, fillRule: FillRule) -> bool {
-	switch fillRule {
-	case .EvenOdd:
-		return (wind & 1) != 0
-	case .NonZero:
-		return wind != 0
-	case .Positive:
-		return wind > 0
-	case .Negative:
-		return wind < 0
+_popScanline :: proc(cb: ^_ClipperBase($Z), y: ^f64) -> bool {
+	sl := cb.scanline_list_
+	if len(sl) == 0 { return false }
+	max_y := sl[0]
+	for i in 1 ..< len(sl) {
+		if sl[i] > max_y { max_y = sl[i] }
 	}
-	return false
-}
-
-@(private = "file")
-_windingAt :: proc(point: [2]f64, segs: []Segment, pathType: PathType) -> int {
-	queryY := point.y + SideEps * 0.382
-	maxX := point.x + 1.0
-	for s in segs {
-		if s.isOpen || s.pathType != pathType do continue
-		for i in 0 ..= _endIndex(s.kind) {
-			if s.pts[i].x > maxX do maxX = s.pts[i].x
-		}
-	}
-	wind := 0
-	ray := [4][2]f64{{point.x, queryY}, {maxX + 1.0, queryY}, {}, {}}
-	for s in segs {
-		if s.isOpen || s.pathType != pathType do continue
-		if s.kind == .Line {
-			y0 := s.pts[0].y
-			y1 := s.pts[1].y
-			if math.abs(y1 - y0) <= EPS do continue
-			crosses := (y0 <= queryY && y1 > queryY) || (y1 <= queryY && y0 > queryY)
-			if !crosses do continue
-			x := s.pts[0].x + (queryY - y0) * (s.pts[1].x - s.pts[0].x) / (y1 - y0)
-			if x > point.x + EPS do wind += y1 > y0 ? 1 : -1
-			continue
-		}
-
-		count, _, tRay, tCurve := linalg_ex.GetBezierIntersectPt(.Line, ray, s.kind, s.pts)
-		for i in 0 ..< count {
-			if tRay[i] <= EPS || tRay[i] > 1.0 + EPS do continue
-			tSeg := tCurve[i]
-			if tSeg <= EPS || tSeg >= 1.0 - EPS do continue
-			ip := _eval(s.kind, s.pts, tSeg)
-			if ip.x <= point.x + EPS do continue
-			tan := _tangent(s.kind, s.pts, tSeg)
-			if math.abs(tan.y) <= EPS do continue
-			wind += tan.y > 0 ? 1 : -1
-		}
-	}
-	return wind
-}
-
-@(private = "file")
-_filledAt :: proc(point: [2]f64, segs: []Segment, pathType: PathType, fillRule: FillRule) -> bool {
-	return _filledFromWind(_windingAt(point, segs, pathType), fillRule)
-}
-
-@(private = "file")
-_clipResult :: #force_inline proc "contextless" (clipType: ClipType, subj, clip: bool) -> bool {
-	switch clipType {
-	case .Union:
-		return subj || clip
-	case .Intersection:
-		return subj && clip
-	case .Difference:
-		return subj && !clip
-	case .Xor:
-		return subj != clip
-	}
-	return false
-}
-
-@(private = "file")
-_openContributes :: #force_inline proc "contextless" (
-	clipType: ClipType,
-	inSubj, inClip: bool,
-) -> bool {
-	switch clipType {
-	case .Intersection:
-		return inClip
-	case .Union:
-		return !inSubj && !inClip
-	case .Difference, .Xor:
-		return !inClip
-	}
-	return false
-}
-
-@(private = "file")
-_appendPiecePoints :: proc(
-	path: ^[dynamic][2]f64,
-	curves: ^[dynamic]bool,
-	piece: Piece,
-	first: bool,
-) -> ClipperError {
-	if first {
-		non_zero_append(path, piece.pts[0]) or_return
-		if curves != nil do non_zero_append(curves, false) or_return
-	}
-	switch piece.kind {
-	case .Line:
-	case .Quad:
-		non_zero_append(path, piece.pts[1]) or_return
-		if curves != nil do non_zero_append(curves, true) or_return
-	case .Cubic:
-		non_zero_append(path, piece.pts[1], piece.pts[2]) or_return
-		if curves != nil do non_zero_append(curves, true, true) or_return
-	}
-	non_zero_append(path, _segEndPiece(piece)) or_return
-	if curves != nil do non_zero_append(curves, false) or_return
-	return nil
-}
-
-@(private = "file")
-_trimDuplicateClosure :: proc(path: ^[dynamic][2]f64, curves: ^[dynamic]bool) -> ClipperError {
-	if len(path^) > 1 && _snapPt(path^[0]) == _snapPt(path^[len(path^) - 1]) {
-		non_zero_resize_dynamic_array(path, len(path^) - 1) or_return
-		if curves != nil do non_zero_resize_dynamic_array(curves, len(curves^) - 1) or_return
-	}
-	return nil
-}
-
-@(private = "file")
-_snapCleanPath :: proc(path: ^[dynamic][2]f64, curves: ^[dynamic]bool) -> ClipperError {
-	if len(path^) <= 1 do return nil
-	j := 1
-	for i in 1 ..< len(path^) {
-		d := path^[i] - path^[j - 1]
-		if d.x * d.x + d.y * d.y > 1e-8 {
-			path^[j] = path^[i]
-			if curves != nil do curves^[j] = curves^[i]
+	// filter out all entries near max_y (removes duplicates)
+	j := 0
+	for i in 0 ..< len(sl) {
+		if abs(sl[i] - max_y) > EPS {
+			sl[j] = sl[i]
 			j += 1
 		}
 	}
-	non_zero_resize_dynamic_array(path, j) or_return
-	if curves != nil do non_zero_resize_dynamic_array(curves, j) or_return
-	return nil
+	cb.scanline_list_ = sl[:j]
+	y^ = max_y
+	return true
+}
+
+// pop local minima at the given y
+@(private = "file")
+_popLocalMinima :: proc(cb: ^_ClipperBase($Z), y: f64, local_minima: ^^_LocalMinima(Z)) -> bool {
+	if cb.current_locmin_iter_ >= len(cb.minima_list_) { return false }
+	lm := cb.minima_list_[cb.current_locmin_iter_]
+	if abs(lm.vertex.pt.y - y) > EPS { return false }
+	local_minima^ = lm
+	cb.current_locmin_iter_ += 1
+	return true
 }
 
 @(private = "file")
-_buildClosedPaths :: proc(
-	pieces: ^[dynamic]Piece,
-	hasCurves: bool,
-) -> (
-	paths: [dynamic][dynamic][2]f64,
-	curvesOut: [dynamic][dynamic]bool,
-	err: ClipperError,
-) {
-	paths = make([dynamic][dynamic][2]f64, context.temp_allocator) or_return
-	if hasCurves do curvesOut = make([dynamic][dynamic]bool, context.temp_allocator) or_return
-
-	// unused piece 인덱스를 start-point snap 기준으로 정렬
-	indices := make([dynamic]int, 0, len(pieces), context.temp_allocator) or_return
-	for i in 0 ..< len(pieces) {
-		if !pieces[i].used {
-			non_zero_append(&indices, i) or_return
-		}
-	}
-	slice.sort_by_with_data(indices[:], proc(a, b: int, user_data: rawptr) -> bool {
-			p := (^[dynamic]Piece)(user_data)
-			return _snapPt(_segStart(p[a])) < _snapPt(_segStart(p[b]))
-		}, rawptr(pieces))
-
-	for i in 0 ..< len(pieces) {
-		if pieces[i].used do continue
-
-		path := make([dynamic][2]f64, context.temp_allocator) or_return
-		curves: [dynamic]bool
-		if hasCurves do curves = make([dynamic]bool, context.temp_allocator) or_return
-
-		firstKey := _snapPt(_segStart(pieces[i]))
-		current := _segEndPiece(pieces[i])
-		pieces[i].used = true
-		_appendPiecePoints(&path, hasCurves ? &curves : nil, pieces[i], true) or_return
-
-		for _snapPt(current) != firstKey {
-			// 이진탐색으로 current snap-point의 첫 번째 piece 찾기
-			key := _snapPt(current)
-			lo, hi := 0, len(indices)
-			for lo < hi {
-				mid := lo + (hi - lo) / 2
-				if _snapPt(_segStart(pieces[indices[mid]])) < key {
-					lo = mid + 1
-				} else {
-					hi = mid
-				}
+_reset :: proc(cb: ^_ClipperBase($Z)) {
+	if !cb.minima_list_sorted_ {
+		// sort by y descending, x ascending (LocMinSorter)
+		slice.sort_by(cb.minima_list_[:], proc(a, b: ^_LocalMinima(Z)) -> bool {
+			if abs(b.vertex.pt.y - a.vertex.pt.y) > EPS {
+				return b.vertex.pt.y < a.vertex.pt.y // descending y
 			}
-			// 같은 snap-point의 piece들 중 unused 찾기
-			found := false
-			idx := lo
-			for idx < len(indices) && _snapPt(_segStart(pieces[indices[idx]])) == key {
-				if !pieces[indices[idx]].used {
-					nextIdx := indices[idx]
-					pieces[nextIdx].used = true
-					_appendPiecePoints(
-						&path,
-						hasCurves ? &curves : nil,
-						pieces[nextIdx],
-						false,
-					) or_return
-					current = _segEndPiece(pieces[nextIdx])
-					found = true
-					break
-				}
-				idx += 1
-			}
-			if !found do break
-		}
-
-		_snapCleanPath(&path, hasCurves ? &curves : nil) or_return
-		_trimDuplicateClosure(&path, hasCurves ? &curves : nil) or_return
-		if len(path) >= 3 {
-			// 방향 정규화: CW(면적<0)이면 뒤집어서 CCW로
-			area: f64
-			for k in 0 ..< len(path) {
-				j := (k + 1) % len(path)
-				area += path[k].x * path[j].y - path[j].x * path[k].y
-			}
-			if area < 0 {
-				for k := 0; k < len(path) / 2; k += 1 {
-					j := len(path) - 1 - k
-					path[k], path[j] = path[j], path[k]
-				}
-				if hasCurves && len(curves) > 0 {
-					for k := 0; k < len(curves) / 2; k += 1 {
-						j := len(curves) - 1 - k
-						curves[k], curves[j] = curves[j], curves[k]
-					}
-				}
-			}
-			non_zero_append(&paths, path) or_return
-			if hasCurves do non_zero_append(&curvesOut, curves) or_return
-		}
+			return b.vertex.pt.x > a.vertex.pt.x // descending x (for same y)
+		})
+		cb.minima_list_sorted_ = true
 	}
-	return
+	// push all minima y values as scanlines (in reverse)
+	for i := len(cb.minima_list_) - 1; i >= 0; i -= 1 {
+		_insertScanline(cb, cb.minima_list_[i].vertex.pt.y)
+	}
+	cb.current_locmin_iter_ = 0
+	cb.actives_ = nil
+	cb.sel_ = nil
+	cb.succeeded_ = true
 }
 
-@(private = "file")
-_buildOpenPaths :: proc(
-	pieces: []Piece,
-	hasCurves: bool,
-) -> (
-	paths: [dynamic][dynamic][2]f64,
-	curvesOut: [dynamic][dynamic]bool,
-	err: ClipperError,
-) {
-	paths = make([dynamic][dynamic][2]f64, context.temp_allocator) or_return
-	if hasCurves do curvesOut = make([dynamic][dynamic]bool, context.temp_allocator) or_return
-
-	path := make([dynamic][2]f64, context.temp_allocator) or_return
-	curves: [dynamic]bool
-	if hasCurves do curves = make([dynamic]bool, context.temp_allocator) or_return
-	havePath := false
-	current: [2]f64
-
-	for piece in pieces {
-		if !havePath || _snapPt(current) != _snapPt(_segStart(piece)) {
-			if havePath && len(path) >= 2 {
-				_snapCleanPath(&path, hasCurves ? &curves : nil) or_return
-				non_zero_append(&paths, path) or_return
-				if hasCurves do non_zero_append(&curvesOut, curves) or_return
-			}
-			path = make([dynamic][2]f64, context.temp_allocator) or_return
-			if hasCurves do curves = make([dynamic]bool, context.temp_allocator) or_return
-			_appendPiecePoints(&path, hasCurves ? &curves : nil, piece, true) or_return
-			havePath = true
-		} else {
-			_appendPiecePoints(&path, hasCurves ? &curves : nil, piece, false) or_return
-		}
-		current = _segEndPiece(piece)
-	}
-	if havePath && len(path) >= 2 {
-		_snapCleanPath(&path, hasCurves ? &curves : nil) or_return
-		non_zero_append(&paths, path) or_return
-		if hasCurves do non_zero_append(&curvesOut, curves) or_return
-	}
-	return
-}
-
-// --- sweep line helpers (x-단조 분할된 세그먼트에 대한 이벤트/활성목록) ---
-
-@(private = "file")
-_sweepSegMinMaxX :: #force_inline proc "contextless" (s: Segment) -> (minX, maxX: f64) {
-	endIdx := _endIndex(s.kind)
-	a := s.pts[0].x
-	b := s.pts[endIdx].x
-	return min(a, b), max(a, b)
-}
-
-@(private = "file")
-_sweepSegMinMaxY :: proc "contextless" (s: Segment) -> (minY, maxY: f64) {
-	endIdx := _endIndex(s.kind)
-	minY = s.pts[0].y
-	maxY = s.pts[0].y
-	for i in 1 ..= endIdx {
-		minY = min(minY, s.pts[i].y)
-		maxY = max(maxY, s.pts[i].y)
-	}
-	return
-}
-
-@(private = "file")
-_SweepKind :: enum u8 {
-	Start,
-	End,
-}
-
-@(private = "file")
-_SweepEvent :: struct {
-	x:      f64,
-	kind:   _SweepKind,
-	segIdx: int,
-}
-
-@(private = "file")
-_sweepCmpEvent :: proc(a, b: _SweepEvent) -> bool {
-	if math.abs(a.x - b.x) > EPS do return a.x < b.x
-	if a.kind == .Start && b.kind == .End do return true
-	return false
-}
-
-@(private = "file")
-_splitAllSegments :: proc(segs: []Segment) -> (pieces: [dynamic]Piece, err: ClipperError) {
-	if len(segs) <= 1 {
-		pieces = make([dynamic]Piece, context.temp_allocator) or_return
-		for s in segs {
-			p := Piece {
-				pts      = s.pts,
-				kind     = s.kind,
-				pathType = s.pathType,
-				isOpen   = s.isOpen,
-				pathIdx  = s.pathIdx,
-				order    = s.order,
-			}
-			non_zero_append(&pieces, p) or_return
-		}
-		return
-	}
-
-	events := make([dynamic]_SweepEvent, context.temp_allocator) or_return
-	non_zero_resize(&events, len(segs) * 2) or_return
-	nEvents := 0
-	for s, i in segs {
-		minX, maxX := _sweepSegMinMaxX(s)
-		events[nEvents] = _SweepEvent {
-			x      = minX,
-			kind   = .Start,
-			segIdx = i,
-		}
-		nEvents += 1
-		events[nEvents] = _SweepEvent {
-			x      = maxX + EPS * 2,
-			kind   = .End,
-			segIdx = i,
-		}
-		nEvents += 1
-	}
-	non_zero_resize(&events, nEvents) or_return
-	slice.sort_by(events[:], _sweepCmpEvent)
-
-	params := make([dynamic]ParamList, context.temp_allocator) or_return
-	non_zero_resize(&params, len(segs)) or_return
-	for i in 0 ..< len(segs) {
-		params[i] = make(ParamList, context.temp_allocator) or_return
-		_appendParam(&params[i], 0.0) or_return
-		_appendParam(&params[i], 1.0) or_return
-	}
-
-	active := make([dynamic]int, context.temp_allocator) or_return
-
-	for ev in events {
-		if ev.kind == .Start {
-			segA := ev.segIdx
-
-			clean := 0
-			for i in 0 ..< len(active) {
-				segIdx := active[i]
-				_, maxX := _sweepSegMinMaxX(segs[segIdx])
-				if maxX + EPS < ev.x do continue
-				active[clean] = active[i]
-				clean += 1
-			}
-			non_zero_resize(&active, clean) or_return
-
-			minYA, maxYA := _sweepSegMinMaxY(segs[segA])
-
-			for aSegIdx in active[:] {
-				if segs[segA].isOpen && segs[aSegIdx].isOpen do continue
-
-				minYB, maxYB := _sweepSegMinMaxY(segs[aSegIdx])
-				if maxYA + EPS < minYB || maxYB + EPS < minYA do continue
-
-				_appendIntersections(
-					segs[segA],
-					segs[aSegIdx],
-					&params[segA],
-					&params[aSegIdx],
-				) or_return
-			}
-
-			non_zero_append(&active, segA) or_return
-		} else {
-			for i in 0 ..< len(active) {
-				if active[i] == ev.segIdx {
-					ordered_remove(&active, i)
-					break
-				}
-			}
-		}
-	}
-
-	pieces = make([dynamic]Piece, context.temp_allocator) or_return
-	for s, i in segs {
-		_sortParams(&params[i])
-
-		for j in 0 ..< len(params[i]) - 1 {
-			t0 := params[i][j]
-			t1 := params[i][j + 1]
-			if t1 - t0 <= EPS do continue
-			p := Piece {
-				pts      = _extractSub(s.kind, s.pts, t0, t1),
-				kind     = s.kind,
-				pathType = s.pathType,
-				isOpen   = s.isOpen,
-				pathIdx  = s.pathIdx,
-				order    = s.order,
-			}
-			non_zero_append(&pieces, p) or_return
-		}
-	}
-	return
-}
-
-@(private = "file")
-_classifyPieces :: proc(
-	pieces: []Piece,
-	closedSegs: []Segment,
-	clipType: ClipType,
-	fillRule: FillRule,
-) -> (
-	closedPieces: [dynamic]Piece,
-	openPieces: [dynamic]Piece,
-	err: ClipperError,
-) {
-	closedPieces = make([dynamic]Piece, context.temp_allocator) or_return
-	openPieces = make([dynamic]Piece, context.temp_allocator) or_return
-
-	for piece in pieces {
-		mid := _eval(piece.kind, piece.pts, 0.5)
-		tan := _tangent(piece.kind, piece.pts, 0.5)
-		lenSq := _dot(tan, tan)
-		if lenSq <= EPS do continue
-
-		if piece.isOpen {
-			inSubj := _filledAt(mid, closedSegs, .Subject, fillRule)
-			inClip := _filledAt(mid, closedSegs, .Clip, fillRule)
-			if _openContributes(clipType, inSubj, inClip) {
-				non_zero_append(&openPieces, piece) or_return
-			}
-			continue
-		}
-
-		scale := SideEps / math.sqrt(lenSq)
-		normal := [2]f64{-tan.y * scale, tan.x * scale}
-		left := _ptAdd(mid, normal)
-		right := _ptSub(mid, normal)
-
-		leftSubj := _filledAt(left, closedSegs, .Subject, fillRule)
-		leftClip := _filledAt(left, closedSegs, .Clip, fillRule)
-		rightSubj := _filledAt(right, closedSegs, .Subject, fillRule)
-		rightClip := _filledAt(right, closedSegs, .Clip, fillRule)
-
-		leftRes := _clipResult(clipType, leftSubj, leftClip)
-		rightRes := _clipResult(clipType, rightSubj, rightClip)
-		if leftRes == rightRes do continue
-
-		outPiece := piece
-		if !leftRes && rightRes do outPiece = _reversePiece(outPiece)
-		non_zero_append(&closedPieces, outPiece) or_return
-	}
-	return
-}
-
-@(private = "file")
-_copySolutionPaths :: proc(
-	hasCurves: bool,
-	paths: [dynamic][dynamic][2]f64,
-	curves: [dynamic][dynamic]bool,
-	allocator := context.allocator,
-) -> (
-	outPaths: [][][2]f64,
-	outCurves: [][]bool,
-	err: ClipperError,
-) {
-	if len(paths) == 0 do return nil, nil, nil
-	outPaths = utils_private.makeNonZeroedSlice([][][2]f64, len(paths), allocator) or_return
-	if hasCurves do outCurves = utils_private.makeNonZeroedSlice([][]bool, len(paths), allocator) or_return
-	for path, i in paths {
-		outPaths[i] = utils_private.makeNonZeroedSlice([][2]f64, len(path), allocator) or_return
-		for p, j in path do outPaths[i][j] = p
-		if hasCurves {
-			outCurves[i] = utils_private.makeNonZeroedSlice(
-				[]bool,
-				len(curves[i]),
-				allocator,
-			) or_return
-			for v, j in curves[i] do outCurves[i][j] = v
-		}
-	}
-	return
-}
-
-@(private = "file")
-_booleanCurve64 :: proc(
-	clipType: ClipType,
-	subjects: [][][2]f64,
-	clips: [][][2]f64,
-	opens: [][][2]f64,
-	subjectsIsCurves: [][]bool,
-	clipsIsCurves: [][]bool,
-	opensIsCurves: [][]bool,
-	fillRule: FillRule,
-	allocator := context.allocator,
-) -> (
-	res: [][][2]f64,
-	resOpen: [][][2]f64,
-	resIsCurves: [][]bool,
-	resOpenIsCurves: [][]bool,
-	err: ClipperError,
-) {
-	segs := make([dynamic]Segment, context.temp_allocator) or_return
-	order := 0
-	if subjects != nil do _appendPathSegments(&segs, subjects, subjectsIsCurves, .Subject, false, &order) or_return
-	if clips != nil do _appendPathSegments(&segs, clips, clipsIsCurves, .Clip, false, &order) or_return
-	if opens != nil do _appendPathSegments(&segs, opens, opensIsCurves, .Subject, true, &order) or_return
-	if len(segs) == 0 do return nil, nil, nil, nil, nil
-
-	closedSegs := make([dynamic]Segment, context.temp_allocator) or_return
-	for s in segs {
-		if !s.isOpen do non_zero_append(&closedSegs, s) or_return
-	}
-
-	allPieces := _splitAllSegments(segs[:]) or_return
-	closedPieces, openPieces := _classifyPieces(
-		allPieces[:],
-		closedSegs[:],
-		clipType,
-		fillRule,
-	) or_return
-
-	hasClosedCurves := subjectsIsCurves != nil || clipsIsCurves != nil
-	hasOpenCurves := opensIsCurves != nil
-	solutionClosed, solutionClosedCurves := _buildClosedPaths(
-		&closedPieces,
-		hasClosedCurves,
-	) or_return
-	solutionOpen, solutionOpenCurves := _buildOpenPaths(openPieces[:], hasOpenCurves) or_return
-
-	res, resIsCurves = _copySolutionPaths(
-		hasClosedCurves,
-		solutionClosed,
-		solutionClosedCurves,
-		allocator,
-	) or_return
-	resOpen, resOpenIsCurves = _copySolutionPaths(
-		hasOpenCurves,
-		solutionOpen,
-		solutionOpenCurves,
-		allocator,
-	) or_return
-	return
-}
-
-BooleanOpCurve :: proc(
-	clipType: ClipType,
-	subjects: [][][2]$T,
-	clips: [][][2]T,
-	opens: [][][2]T,
-	subjectsIsCurves: [][]bool,
-	clipsIsCurves: [][]bool,
-	opensIsCurves: [][]bool,
-	fillRule: FillRule = .NonZero,
-	allocator := context.allocator,
-) -> (
-	res: [][][2]T,
-	resOpen: [][][2]T,
-	resIsCurves: [][]bool,
-	resOpenIsCurves: [][]bool,
-	err: ClipperError,
-) where intrinsics.type_is_float(T) {
-	sub64 := _toF64Paths(subjects) or_return
-	clip64 := _toF64Paths(clips) or_return
-	open64 := _toF64Paths(opens) or_return
-
-	res64, openRes64, curve64, openCurve64 := _booleanCurve64(
-		clipType,
-		sub64,
-		clip64,
-		open64,
-		subjectsIsCurves,
-		clipsIsCurves,
-		opensIsCurves,
-		fillRule,
-		context.temp_allocator,
-	) or_return
-
-	res = _fromF64Paths(T, res64, allocator) or_return
-	resOpen = _fromF64Paths(T, openRes64, allocator) or_return
-	resIsCurves = _copyBoolPaths(curve64, allocator) or_return
-	resOpenIsCurves = _copyBoolPaths(openCurve64, allocator) or_return
-	return
-}
+// ──── Public API Stubs (to be implemented in later phases) ───────────────────
 
 BooleanOp :: proc(
 	clipType: ClipType,
-	subjects: [][][2]$T,
-	clips: [][][2]T,
-	opens: [][][2]T,
+	$PointT: typeid,
+	subjects: [][]PointT,
+	clips: [][]PointT,
+	opens: [][]PointT,
 	fillRule: FillRule = .NonZero,
+	zCallback: proc(e1Bot, e1Top, e2Bot, e2Top: PointT, outPoint: ^PointT) = nil,
 	allocator := context.allocator,
 ) -> (
-	res: [][][2]T,
-	resOpen: [][][2]T,
+	res: [][]PointT,
+	resOpen: [][]PointT,
 	err: ClipperError,
-) where intrinsics.type_is_float(T) {
-	res, resOpen, _, _ = BooleanOpCurve(
-		clipType,
-		subjects,
-		clips,
-		opens,
-		nil,
-		nil,
-		nil,
-		fillRule,
-		allocator,
-	) or_return
-	return
+) {
+	_ = clipType
+	_ = subjects
+	_ = clips
+	_ = opens
+	_ = fillRule
+	_ = zCallback
+	_ = allocator
+	return nil, nil, __ClipperError.FAILED
 }
 
 RectClip :: proc(
-	rect: linalg_ex.Rect_($T),
-	paths: [][][2]T,
-	pathIsCurves: [][]bool = nil,
+	rect: $RectT,
+	$PointT: typeid,
+	closePaths: [][]PointT,
+	openPaths: [][]PointT = nil,
+	zCallback: proc(e1Bot, e1Top, e2Bot, e2Top: PointT, outPoint: ^PointT) = nil,
 	allocator := context.allocator,
 ) -> (
-	res: [][][2]T,
-	resIsCurves: [][]bool,
+	closed: [][]PointT,
+	open: [][]PointT,
 	err: ClipperError,
-) where intrinsics.type_is_float(T) {
-	rectPath := [4][2]T {
-		{rect.left, rect.bottom},
-		{rect.right, rect.bottom},
-		{rect.right, rect.top},
-		{rect.left, rect.top},
-	}
-	res, _, resIsCurves, _, err = BooleanOpCurve(
-		.Intersection,
-		paths,
-		[][][2]T{rectPath[:]},
-		nil,
-		pathIsCurves,
-		nil,
-		nil,
-		.NonZero,
-		allocator,
-	)
-	return
+) {
+	_ = rect
+	_ = closePaths
+	_ = openPaths
+	_ = zCallback
+	_ = allocator
+	return nil, nil, __ClipperError.FAILED
 }
 
-RectClipLines :: proc(
-	rect: linalg_ex.Rect_($T),
-	lines: [][][2]T,
-	lineIsCurves: [][]bool = nil,
+InflatePaths :: proc(
+	$PointT: typeid,
+	closePaths: [][]PointT,
+	openPaths: [][]PointT = nil,
+	delta: f64,
+	joinType: JoinType,
+	endType: EndType = .Polygon,
+	miterLimit: f64 = 2.0,
+	arcTolerance: f64 = 0.0,
+	preserveCollinear: bool = false,
+	reverseSolution: bool = false,
+	zCallback: proc(e1Bot, e1Top, e2Bot, e2Top: PointT, outPoint: ^PointT) = nil,
 	allocator := context.allocator,
 ) -> (
-	res: [][][2]T,
-	resIsCurves: [][]bool,
+	res: [][]PointT,
 	err: ClipperError,
-) where intrinsics.type_is_float(T) {
-	rectPath := [4][2]T {
-		{rect.left, rect.bottom},
-		{rect.right, rect.bottom},
-		{rect.right, rect.top},
-		{rect.left, rect.top},
-	}
-	_, res, _, resIsCurves, err = BooleanOpCurve(
-		.Intersection,
-		nil,
-		[][][2]T{rectPath[:]},
-		lines,
-		nil,
-		nil,
-		lineIsCurves,
-		.NonZero,
-		allocator,
-	)
-	return
+) {
+	_ = closePaths
+	_ = openPaths
+	_ = delta
+	_ = joinType
+	_ = endType
+	_ = miterLimit
+	_ = arcTolerance
+	_ = preserveCollinear
+	_ = reverseSolution
+	_ = zCallback
+	_ = allocator
+	return nil, __ClipperError.FAILED
 }

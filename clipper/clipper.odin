@@ -981,6 +981,122 @@ _reset :: proc(cb: ^_ClipperBase($Z)) {
 	cb.succeeded_ = true
 }
 
+// ──── AEL operations ─────────────────────────────────────────────────────────
+
+@(private = "file")
+_isValidAelOrder :: proc(resident, newcomer: ^_Active($Z)) -> bool {
+	if abs(newcomer.curr_x - resident.curr_x) > EPS {
+		return newcomer.curr_x > resident.curr_x
+	}
+	// same curr_x → compare turning direction: resident.top → newcomer.bot → newcomer.top
+	i := _crossProductSign(_xy(resident.top), _xy(newcomer.bot), _xy(newcomer.top))
+	if i != 0 { return i < 0 }
+
+	// collinear edges — check next turning direction
+	if !_isMaximaE(resident) && resident.top.y > newcomer.top.y {
+		nv := _nextVertex(resident)
+		return _crossProductSign(_xy(newcomer.bot), _xy(resident.top), _xy(nv.pt)) <= 0
+	} else if !_isMaximaE(newcomer) && newcomer.top.y > resident.top.y {
+		nv := _nextVertex(newcomer)
+		return _crossProductSign(_xy(newcomer.bot), _xy(newcomer.top), _xy(nv.pt)) >= 0
+	}
+
+	y := newcomer.bot.y
+	newcomerIsLeft := newcomer.is_left_bound
+
+	if abs(resident.bot.y - y) > EPS || abs(resident.local_min.vertex.pt.y - y) > EPS {
+		return newcomer.is_left_bound
+	} else if resident.is_left_bound != newcomerIsLeft {
+		return newcomerIsLeft
+	} else if _isCollinear(_xy(_prevPrevVertex(resident).pt), _xy(resident.bot), _xy(resident.top)) {
+		return true
+	} else {
+		return (_crossProductSign(
+			_xy(_prevPrevVertex(resident).pt),
+			_xy(newcomer.bot),
+			_xy(_prevPrevVertex(newcomer).pt)) > 0) == newcomerIsLeft
+	}
+}
+
+@(private = "file")
+_insertLeftEdge :: proc(cb: ^_ClipperBase($Z), e: ^_Active(Z)) {
+	if cb.actives_ == nil {
+		e.prev_in_ael = nil
+		e.next_in_ael = nil
+		cb.actives_ = e
+	} else if !_isValidAelOrder(cb.actives_, e) {
+		e.prev_in_ael = nil
+		e.next_in_ael = cb.actives_
+		cb.actives_.prev_in_ael = e
+		cb.actives_ = e
+	} else {
+		e2 := cb.actives_
+		for e2.next_in_ael != nil && _isValidAelOrder(e2.next_in_ael, e) {
+			e2 = e2.next_in_ael
+		}
+		if e2.join_with == .Right {
+			e2 = e2.next_in_ael
+		}
+		if e2 == nil { return }
+		e.next_in_ael = e2.next_in_ael
+		if e2.next_in_ael != nil { e2.next_in_ael.prev_in_ael = e }
+		e.prev_in_ael = e2
+		e2.next_in_ael = e
+	}
+}
+
+@(private = "file")
+_insertRightEdge :: proc(e, e2: ^_Active($Z)) {
+	e2.next_in_ael = e.next_in_ael
+	if e.next_in_ael != nil { e.next_in_ael.prev_in_ael = e2 }
+	e2.prev_in_ael = e
+	e.next_in_ael = e2
+}
+
+// remove edge from AEL and deallocate (temp allocator — just unlink, no free)
+@(private = "file")
+_deleteFromAEL :: proc(cb: ^_ClipperBase($Z), e: ^_Active(Z)) {
+	prev := e.prev_in_ael
+	nxt := e.next_in_ael
+	if prev == nil && nxt == nil && e != cb.actives_ { return } // already deleted
+	if prev != nil {
+		prev.next_in_ael = nxt
+	} else {
+		cb.actives_ = nxt
+	}
+	if nxt != nil { nxt.prev_in_ael = prev }
+	e.prev_in_ael = nil
+	e.next_in_ael = nil
+}
+
+// precondition: e1 is immediately to the left of e2
+@(private = "file")
+_swapPositionsInAEL :: proc(cb: ^_ClipperBase($Z), e1, e2: ^_Active(Z)) {
+	nxt := e2.next_in_ael
+	if nxt != nil { nxt.prev_in_ael = e1 }
+	prev := e1.prev_in_ael
+	if prev != nil { prev.next_in_ael = e2 }
+	e2.prev_in_ael = prev
+	e2.next_in_ael = e1
+	e1.prev_in_ael = e2
+	e1.next_in_ael = nxt
+	if e2.prev_in_ael == nil { cb.actives_ = e2 }
+}
+
+@(private = "file")
+_pushHorz :: proc(cb: ^_ClipperBase($Z), e: ^_Active(Z)) {
+	e.next_in_sel = cb.sel_
+	cb.sel_ = e
+}
+
+@(private = "file")
+_popHorz :: proc(cb: ^_ClipperBase($Z), e: ^^_Active(Z)) -> bool {
+	if cb.sel_ == nil { return false }
+	e^ = cb.sel_
+	cb.sel_ = cb.sel_.next_in_sel
+	return true
+}
+
 // ──── Public API Stubs (to be implemented in later phases) ───────────────────
 
 BooleanOp :: proc(

@@ -1523,6 +1523,160 @@ _split :: proc(cb: ^_ClipperBase($Z), e: ^_Active(Z), pt: _Point(Z)) {
 	}
 }
 
+// ──── InsertLocalMinimaIntoAEL + CheckJoinLeft/Right ─────────────────────────
+
+@(private = "file")
+_checkJoinLeft :: proc(cb: ^_ClipperBase($Z), e: ^_Active(Z), pt: _Point(Z), check_curr_x: bool = false) {
+	prev := e.prev_in_ael
+	if prev == nil ||
+		!_isHotEdge(e) || !_isHotEdge(prev) ||
+		_isHorizontalE(e) || _isHorizontalE(prev) ||
+		_isOpen(e) || _isOpen(prev) { return }
+	if (pt.y < e.top.y + 2 || pt.y < prev.top.y + 2) &&
+		(e.bot.y > pt.y || prev.bot.y > pt.y) { return }
+	if check_curr_x {
+		if _perpendicDistFromLineSqrd(_xy(pt), _xy(prev.bot), _xy(prev.top)) > 0.25 { return }
+	} else if e.curr_x != prev.curr_x { return }
+	if !_isCollinear(_xy(e.top), _xy(pt), _xy(prev.top)) { return }
+
+	if e.outrec.idx == prev.outrec.idx {
+		_addLocalMaxPoly(cb, prev, e, pt)
+	} else if e.outrec.idx < prev.outrec.idx {
+		_joinOutrecPaths(cb, e, prev)
+	} else {
+		_joinOutrecPaths(cb, prev, e)
+	}
+	prev.join_with = .Right
+	e.join_with = .Left
+}
+
+@(private = "file")
+_checkJoinRight :: proc(cb: ^_ClipperBase($Z), e: ^_Active(Z), pt: _Point(Z), check_curr_x: bool = false) {
+	nxt := e.next_in_ael
+	if nxt == nil ||
+		!_isHotEdge(e) || !_isHotEdge(nxt) ||
+		_isHorizontalE(e) || _isHorizontalE(nxt) ||
+		_isOpen(e) || _isOpen(nxt) { return }
+	if (pt.y < e.top.y + 2 || pt.y < nxt.top.y + 2) &&
+		(e.bot.y > pt.y || nxt.bot.y > pt.y) { return }
+	if check_curr_x {
+		if _perpendicDistFromLineSqrd(_xy(pt), _xy(nxt.bot), _xy(nxt.top)) > 0.35 { return }
+	} else if e.curr_x != nxt.curr_x { return }
+	if !_isCollinear(_xy(e.top), _xy(pt), _xy(nxt.top)) { return }
+
+	if e.outrec.idx == nxt.outrec.idx {
+		_addLocalMaxPoly(cb, e, nxt, pt)
+	} else if e.outrec.idx < nxt.outrec.idx {
+		_joinOutrecPaths(cb, e, nxt)
+	} else {
+		_joinOutrecPaths(cb, nxt, e)
+	}
+	e.join_with = .Right
+	nxt.join_with = .Left
+}
+
+@(private = "file")
+_insertLocalMinimaIntoAEL :: proc(cb: ^_ClipperBase($Z), bot_y: f64) {
+	for {
+		lm: ^_LocalMinima(Z)
+		if !_popLocalMinima(cb, bot_y, &lm) { break }
+
+		left_bound: ^_Active(Z)
+		right_bound: ^_Active(Z)
+
+		if !_hasFlag(lm.vertex, .OpenStart) {
+			left_bound = new(_Active(Z), context.temp_allocator)
+			if left_bound == nil { return }
+			left_bound.bot = lm.vertex.pt
+			left_bound.curr_x = left_bound.bot.x
+			left_bound.wind_dx = -1
+			left_bound.vertex_top = lm.vertex.prev
+			left_bound.top = left_bound.vertex_top.pt
+			left_bound.local_min = lm
+			_setDx(left_bound)
+		}
+
+		if !_hasFlag(lm.vertex, .OpenEnd) {
+			right_bound = new(_Active(Z), context.temp_allocator)
+			if right_bound == nil { return }
+			right_bound.bot = lm.vertex.pt
+			right_bound.curr_x = right_bound.bot.x
+			right_bound.wind_dx = 1
+			right_bound.vertex_top = lm.vertex.next
+			right_bound.top = right_bound.vertex_top.pt
+			right_bound.local_min = lm
+			_setDx(right_bound)
+		}
+
+		// swap left/right if needed (descending bound should be on the left)
+		if left_bound != nil && right_bound != nil {
+			if _isHorizontalE(left_bound) {
+				if _isHeadingRightHorz(left_bound) {
+					left_bound, right_bound = right_bound, left_bound
+				}
+			} else if _isHorizontalE(right_bound) {
+				if _isHeadingLeftHorz(right_bound) {
+					left_bound, right_bound = right_bound, left_bound
+				}
+			} else if left_bound.dx < right_bound.dx {
+				left_bound, right_bound = right_bound, left_bound
+			}
+		} else if left_bound == nil {
+			left_bound = right_bound
+			right_bound = nil
+		}
+
+		if left_bound == nil { continue }
+		left_bound.is_left_bound = true
+		_insertLeftEdge(cb, left_bound)
+
+		contributing: bool
+		if _isOpen(left_bound) {
+			_setWindCountForOpenPathEdge(cb, left_bound)
+			contributing = _isContributingOpen(cb, left_bound)
+		} else {
+			_setWindCountForClosedPathEdge(cb, left_bound)
+			contributing = _isContributingClosed(cb, left_bound)
+		}
+
+		if right_bound != nil {
+			right_bound.is_left_bound = false
+			right_bound.wind_cnt = left_bound.wind_cnt
+			right_bound.wind_cnt2 = left_bound.wind_cnt2
+			_insertRightEdge(left_bound, right_bound)
+
+			if contributing {
+				_addLocalMinPoly(cb, left_bound, right_bound, left_bound.bot, true)
+				if !_isHorizontalE(left_bound) {
+					_checkJoinLeft(cb, left_bound, left_bound.bot)
+				}
+			}
+
+			// intersect right_bound with AEL neighbors to correct ordering
+			for right_bound.next_in_ael != nil &&
+				_isValidAelOrder(right_bound.next_in_ael, right_bound) {
+				_intersectEdges(cb, right_bound, right_bound.next_in_ael, right_bound.bot)
+				_swapPositionsInAEL(cb, right_bound, right_bound.next_in_ael)
+			}
+
+			if _isHorizontalE(right_bound) {
+				_pushHorz(cb, right_bound)
+			} else {
+				_checkJoinRight(cb, right_bound, right_bound.bot)
+				_insertScanline(cb, right_bound.top.y)
+			}
+		} else if contributing {
+			_startOpenPath(cb, left_bound, left_bound.bot)
+		}
+
+		if _isHorizontalE(left_bound) {
+			_pushHorz(cb, left_bound)
+		} else {
+			_insertScanline(cb, left_bound.top.y)
+		}
+	}
+}
+
 // ──── IntersectEdges (core) + helpers ────────────────────────────────────────
 
 @(private = "file")

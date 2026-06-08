@@ -1,4 +1,4 @@
-The implementation derived from [Clipper2](https://github.com/AngusJohnson/Clipper2) by Angus Johnson.  
+The implementation derived from [Clipper2](https://github.com/AngusJohnson/Clipper2), [libtess2](https://github.com/memononen/libtess2).
 Licensed under [Boost Software License 1.0](https://www.boost.org/LICENSE_1_0.txt).
 
 * clipper.odin incomplete.

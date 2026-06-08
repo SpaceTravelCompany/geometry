@@ -369,7 +369,7 @@ GetCubicCurveType :: proc "contextless" (
 	D := 3.0 * d1_ * d1_ - 4.0 * d2_ * d0_ //33 + 36 + 1 = 70
 	discr := d0_ * d0_ * D //27 + 27 + 70 = 124
 
-	EP: f64 = linalg_ex.epsilon(f64)
+	EP: f64 = 1e-12
 	d0 = T(d0_)
 	d1 = T(d1_)
 	d2 = T(d2_)

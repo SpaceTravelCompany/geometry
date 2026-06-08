@@ -640,12 +640,9 @@ AreaPointIn :: #force_inline proc "contextless" (
 @(require_results)
 ShortestLength2Line :: proc "contextless" (
 	pt, l1, l2: [2]$T,
-) -> (
-	T,
-	T,
-) where intrinsics.type_is_float(T) {
+) -> T where intrinsics.type_is_float(T) {
 	zero := T(0)
-	one := T(1)
+
 	dx := ((l2.x) - (l1.x))
 	dy := ((l2.y) - (l1.y))
 	ax := ((pt.x) - (l1.x))
@@ -653,14 +650,14 @@ ShortestLength2Line :: proc "contextless" (
 	qNum := ((((ax) * (dx))) + (((ay) * (dy))))
 	denom := ((((dx) * (dx))) + (((dy) * (dy))))
 	if ((qNum) < (zero)) {
-		return ((((ax) * (ax))) + (((ay) * (ay)))), one
+		return (((ax) * (ax))) + (((ay) * (ay)))
 	} else if ((qNum) > (denom)) {
 		bx := ((pt.x) - (l2.x))
 		by := ((pt.y) - (l2.y))
-		return ((((bx) * (bx))) + (((by) * (by)))), one
+		return (((bx) * (bx))) + (((by) * (by)))
 	} else {
 		cross := ((((ax) * (dy))) - (((dx) * (ay))))
-		return ((cross) * (cross)), denom
+		return ((cross) * (cross)) / denom
 	}
 }
 
